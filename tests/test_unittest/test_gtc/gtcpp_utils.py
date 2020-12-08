@@ -19,6 +19,7 @@ from gt4py.gtc.gtcpp.gtcpp import (
     ParamArg,
     Program,
     Stmt,
+    Temporary,
 )
 
 
@@ -136,6 +137,10 @@ class GTComputationBuilder:
         self._multi_stages[-1] = GTMultiStage(
             loop_order=mss.loop_order, stages=stages, caches=mss.caches
         )
+        return self
+
+    def add_temporary(self, name: str, dtype: DataType) -> "GTComputationBuilder":
+        self._temporaries.append(Temporary(name=name, dtype=dtype))
         return self
 
     def add_parameter(self, name: str) -> "GTComputationBuilder":

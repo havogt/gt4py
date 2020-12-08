@@ -12,7 +12,9 @@ from gt4py.gtc.gtcpp.gtcpp import (
     GTAccessor,
     GTApplyMethod,
     GTExtent,
+    GTStage,
     Intent,
+    ParamArg,
     Program,
     Literal,
 )
@@ -22,6 +24,7 @@ from gt4py.gtc.gtcpp.oir_to_gtcpp import _extract_accessors
 from .gtcpp_utils import (
     AssignStmtBuilder,
     GTApplyMethodBuilder,
+    GTComputationBuilder,
     GTFunctorBuilder,
     IfStmtBuilder,
     ProgramBuilder,
@@ -105,22 +108,21 @@ def build_gridtools_test(tmp_path: Path, code: str):
             r"void\s*apply\(",
         ),
         (ProgramBuilder("test").add_parameter("my_param", DataType.FLOAT64).build(), r"my_param"),
-        # TODO the following test is creating invalid IR (we could check by validating symbols)
-        # (
-        #     ProgramBuilder("test")
-        #     .add_parameter("outer_param")
-        #     .add_functor(
-        #         GTFunctorBuilder("fun").add_apply_method().build(),
-        #     )
-        #     .gt_computation(
-        #         GTComputationBuilder("test")
-        #         .add_stage(GTStage(functor="fun", args=[ParamArg(name="stage_arg")]))
-        #         .add_parameter("gt_comp_param")
-        #         .build()
-        #     )
-        #     .build(),
-        #     r"",
-        # ),
+        (
+            ProgramBuilder("test")
+            .add_parameter("outer_param", DataType.FLOAT64)
+            .add_functor(
+                GTFunctorBuilder("fun").add_apply_method().build(),
+            )
+            .gt_computation(
+                GTComputationBuilder("test")
+                .add_stage(GTStage(functor="fun", args=[ParamArg(name="stage_arg")]))
+                .add_temporary("stage_arg", DataType.FLOAT64)
+                .build()
+            )
+            .build(),
+            r"outer_param",  # rest could be optimized away
+        ),
     ],
 )
 def test_program_compilation_succeeds(tmp_path, gtcpp_program, expected_regex):
