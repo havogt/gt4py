@@ -16,7 +16,7 @@ from gt4py.gtc.gtcpp import oir_to_gtcpp, gtcpp, gtcpp_codegen
 
 from eve import codegen
 from eve.codegen import MakoTemplate as as_mako
-from gt4py.gtc.passes.gtir_set_dtype import GTIRSetDtype
+from gt4py.gtc.passes.gtir_set_dtype import resolve_dtype
 
 
 class GTCGTExtGenerator:
@@ -32,8 +32,7 @@ class GTCGTExtGenerator:
     # TODO here definition IR should be the input
     def __call__(self, definition_ir) -> Dict[str, Dict[str, str]]:
         gtir = passes.FieldsMetadataPass().visit(DefIRToGTIR.apply(definition_ir))
-        dtype_deduced = GTIRSetDtype().visit(gtir)
-        # dtype_deduced = resolve_dtype(gtir) # TODO will come in a next PR
+        dtype_deduced = resolve_dtype(gtir)
         oir = gtir_to_oir.GTIRToOIR().visit(dtype_deduced)
         gtcpp = oir_to_gtcpp.OIRToGTCpp().visit(oir)
         implementation = gtcpp_codegen.GTCppCodegen.apply(gtcpp)
