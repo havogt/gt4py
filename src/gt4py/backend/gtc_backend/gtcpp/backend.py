@@ -15,6 +15,7 @@ from gt4py.backend.gtc_backend.defir_to_gtir import DefIRToGTIR
 from gt4py.gtc import gtir_to_oir, passes
 from gt4py.gtc.common import DataType
 from gt4py.gtc.gtcpp import gtcpp, gtcpp_codegen, oir_to_gtcpp
+from gt4py.gtc.passes.gtir_cast_nodes import GTIRUpcasting
 from gt4py.gtc.passes.gtir_set_dtype import resolve_dtype
 
 
@@ -35,7 +36,8 @@ class GTCGTExtGenerator:
     def __call__(self, definition_ir) -> Dict[str, Dict[str, str]]:
         gtir = passes.FieldsMetadataPass().visit(DefIRToGTIR.apply(definition_ir))
         dtype_deduced = resolve_dtype(gtir)
-        oir = gtir_to_oir.GTIRToOIR().visit(dtype_deduced)
+        upcasted = GTIRUpcasting().visit(dtype_deduced)
+        oir = gtir_to_oir.GTIRToOIR().visit(upcasted)
         gtcpp = oir_to_gtcpp.OIRToGTCpp().visit(oir)
         implementation = gtcpp_codegen.GTCppCodegen.apply(gtcpp)
         bindings = GTCppBindingsCodegen.apply(gtcpp, self.module_name)
