@@ -1,26 +1,15 @@
-from typing import Union
 from eve import NodeTranslator
 
 from gt4py.gtc import gtir
-from gt4py.gtc.common import DataType, LogicalOperator
+from gt4py.gtc.common import LogicalOperator
 
 
-def _upcast(node: gtir.Expr, upcasted_dtype: Union[DataType, None]):
-    if upcasted_dtype and node.dtype != upcasted_dtype:
-        return gtir.Cast(expr=node, dtype=upcasted_dtype)
-    else:
-        return node
-
-
-# TODO tests
-
-
-class GTIRUpcasting(NodeTranslator):
+class _GTIRUpcasting(NodeTranslator):
     """
     Introduces Cast nodes (upcasting) for expr involving different datatypes
 
     Precondition: all dtypes are resolved (no `None`, `Auto`, `Default`)
-    Result: all dtype transitions are explicit via a `Cast` node
+    Postcondition: all dtype transitions are explicit via a `Cast` node
     """
 
     def visit_Expr(self, node: gtir.Expr, **kwargs):
@@ -45,3 +34,7 @@ class GTIRUpcasting(NodeTranslator):
         if isinstance(node.op, LogicalOperator):
             target_dtype = None  # don't cast, if they are not both boolean it's an error
         return self.generic_visit(node, target_dtype=target_dtype)
+
+
+def upcast(node: gtir.Stencil):
+    return _GTIRUpcasting().visit(node)
