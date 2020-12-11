@@ -22,6 +22,8 @@ from eve.type_definitions import SymbolRef
 from pydantic import validator
 from pydantic.class_validators import root_validator
 
+from devtools import debug
+
 
 class AssignmentKind(StrEnum):
     """Kind of assignment: plain or combined with operations."""
@@ -186,6 +188,7 @@ class Expr(LocNode):
 
     dtype: Optional[DataType]
     kind: ExprKind
+    # strict_dtype: bool = True
 
     # TODO Eve could provide support for making a node abstract
     def __init__(self, *args, **kwargs):
@@ -208,20 +211,21 @@ def verify_condition_is_boolean(parent_node_cls, cond: Expr) -> Expr:
     return cond
 
 
-def verify_and_get_common_dtype(node_cls, values: List[Expr]) -> DataType:
+def verify_and_get_common_dtype(node_cls, values: List[Expr], strict: bool = True) -> DataType:
     assert len(values) > 0
     if all([v.dtype for v in values]):
         dtype = values[0].dtype
-        if all([v.dtype == dtype for v in values]):
-            return dtype
-        elif all([v.dtype == DataType.FLOAT64 or v.dtype == DataType.INT64 for v in values]):
-            # TODO remove this is casting INT64 to FLOAT64 we should do this in a pass
-            return DataType.FLOAT64
+        if strict:
+            if all([v.dtype == dtype for v in values]):
+                return dtype
+            else:
+                raise ValueError(
+                    "Type mismatch in `{}`. Types are ".format(node_cls.__name__)
+                    + ", ".join(v.dtype.name for v in values)
+                )
         else:
-            raise ValueError(
-                "Type mismatch in `{}`. Types are ".format(node_cls.__name__)
-                + ", ".join(v.dtype.name for v in values)
-            )
+            upcasted_dtype = max([v.dtype for v in values])
+            return upcasted_dtype
     else:
         return None
 
@@ -334,6 +338,28 @@ class UnaryOp(GenericNode, Generic[ExprT]):
         return values
 
 
+def binary_op_dtype_propagation_and_check(cls, values):
+    common_dtype = verify_and_get_common_dtype(
+        cls, [values["left"], values["right"]], strict=values["strict_dtype"]
+    )
+
+    if common_dtype:
+        if isinstance(values["op"], ArithmeticOperator):
+            if common_dtype is not DataType.BOOL:
+                values["dtype"] = common_dtype
+            else:
+                raise ValueError("Boolean expression is not allowed with arithmetic operation.")
+        elif isinstance(values["op"], LogicalOperator):
+            if common_dtype is DataType.BOOL:
+                values["dtype"] = DataType.BOOL
+            else:
+                raise ValueError("Arithmetic expression is not allowed in boolean operation.")
+        elif isinstance(values["op"], ComparisonOperator):
+            values["dtype"] = DataType.BOOL
+
+    return values
+
+
 class BinaryOp(GenericNode, Generic[ExprT]):
     """Generic binary operation with type propagation.
 
@@ -349,25 +375,8 @@ class BinaryOp(GenericNode, Generic[ExprT]):
 
     @root_validator(pre=True)
     def dtype_propagation_and_check(cls, values):
-        common_dtype = verify_and_get_common_dtype(cls, [values["left"], values["right"]])
-
-        if common_dtype:
-            if isinstance(values["op"], ArithmeticOperator):
-                if common_dtype is not DataType.BOOL:
-                    values["dtype"] = common_dtype
-                else:
-                    raise ValueError(
-                        "Boolean expression is not allowed with arithmetic operation."
-                    )
-            elif isinstance(values["op"], LogicalOperator):
-                if common_dtype is DataType.BOOL:
-                    values["dtype"] = DataType.BOOL
-                else:
-                    raise ValueError("Arithmetic expression is not allowed in boolean operation.")
-            elif isinstance(values["op"], ComparisonOperator):
-                values["dtype"] = DataType.BOOL
-
-        return values
+        debug(values)
+        return binary_op_dtype_propagation_and_check(cls, values)
 
     @root_validator(pre=True)
     def kind_propagation(cls, values):

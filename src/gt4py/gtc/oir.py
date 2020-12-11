@@ -28,10 +28,12 @@ from pydantic import validator
 
 from gt4py.gtc import common
 from gt4py.gtc.common import LocNode
+from pydantic.class_validators import root_validator
 
 
 class Expr(common.Expr):
     dtype: common.DataType
+    strict_dtype: bool = False
 
     # TODO Eve could provide support for making a node abstract
     def __init__(self, *args, **kwargs):
@@ -82,6 +84,9 @@ class UnaryOp(common.UnaryOp[Expr], Expr):
 
 
 class BinaryOp(common.BinaryOp[Expr], Expr):
+    # @root_validator(pre=True)
+    # def dtype_propagation_and_check(cls, values):
+    #     return common.binary_op_dtype_propagation_and_check(cls, values, strict=True)
     pass
 
 

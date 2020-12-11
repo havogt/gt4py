@@ -3,7 +3,7 @@ from typing import List, Tuple, Union
 
 from eve import Str, StrEnum, SymbolName, SymbolTableTrait
 from eve.type_definitions import SymbolRef
-from pydantic.class_validators import validator
+from pydantic.class_validators import root_validator, validator
 
 from gt4py.gtc import common
 from gt4py.gtc.common import LocNode
@@ -11,6 +11,7 @@ from gt4py.gtc.common import LocNode
 
 class Expr(common.Expr):
     dtype: common.DataType
+    strict_dtype: bool = True
 
     # TODO Eve could provide support for making a node abstract
     def __init__(self, *args, **kwargs):
@@ -71,6 +72,9 @@ class UnaryOp(common.UnaryOp[Expr], Expr):
 
 
 class BinaryOp(common.BinaryOp[Expr], Expr):
+    # @root_validator(pre=True)
+    # def dtype_propagation_and_check(cls, values):
+    #     return common.binary_op_dtype_propagation_and_check(cls, values, strict=True)
     pass
 
 
