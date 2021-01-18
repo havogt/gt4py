@@ -122,6 +122,10 @@ class Temporary(FieldDecl):
     pass
 
 
+# class BlockStmt(Stmt, common.BlockStmt[Stmt]):
+#     pass
+
+
 class HorizontalExecution(LocNode):
     body: List[Stmt]
     mask: Optional[Expr]
@@ -134,6 +138,11 @@ class HorizontalExecution(LocNode):
         return v
 
 
+class IfStmt(common.IfStmt[List[HorizontalExecution], Expr], Stmt):
+    # TODO needs to contain at least one HorizontalExecution
+    pass
+
+
 class Interval(LocNode):
     start: AxisBound
     end: AxisBound
@@ -141,7 +150,7 @@ class Interval(LocNode):
 
 class VerticalLoop(LocNode):
     interval: Interval
-    horizontal_executions: List[HorizontalExecution]
+    horizontal_executions: List[Union[HorizontalExecution, IfStmt]]
     loop_order: common.LoopOrder
     declarations: List[Temporary]
 
