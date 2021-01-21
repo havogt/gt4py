@@ -15,12 +15,15 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 from dataclasses import dataclass, field
-from typing import Any, List, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 from devtools import debug  # noqa: F401
 
 import eve
+from eve.concepts import TreeNode
 from eve.utils import XIterator
+from eve.visitors import SymbolTable, SymbolTableStack
+from gt4py.ir.nodes import Node
 from gtc import common, oir
 from gtc.common import CartesianOffset
 from gtc.gtcpp import gtcpp
@@ -30,6 +33,7 @@ from gtc.gtcpp import gtcpp
 
 # - Each HorizontalExecution is a Functor (and a Stage)
 # - Each VerticalLoop is MultiStage
+from devtools import debug
 
 
 def _extract_accessors(node: eve.Node) -> List[gtcpp.GTAccessor]:
@@ -64,29 +68,110 @@ def _extract_accessors(node: eve.Node) -> List[gtcpp.GTAccessor]:
     ]
 
 
+class GTComputationCallBuilder:
+    def __init__(self, *, symbol_tbl_stack: SymbolTableStack):
+        self._arguments: Set[gtcpp.Arg] = set()
+        self._temporaries: List[gtcpp.Temporary] = []
+        self._multi_stages: List[gtcpp.GTMultiStage] = []
+        self._symtable: SymbolTable = SymbolTable()
+        self._symtable_stack_reference = symbol_tbl_stack  # ugly
+        symbol_tbl_stack.push(self._symtable)  # ugly
+
+    def add_argument(self, arg: gtcpp.Arg) -> "GTComputationCallBuilder":
+        self._arguments.add(arg)
+        return self
+
+    def add_arguments(self, args: List[gtcpp.Arg]) -> "GTComputationCallBuilder":
+        for arg in args:
+            self.add_argument(arg)
+        return self
+
+    def add_temporary(self, tmp: gtcpp.Temporary) -> "GTComputationCallBuilder":
+        # TODO automatically generate this register
+        self._symtable[tmp.name] = tmp
+        self._temporaries.append(tmp)
+        return self
+
+    def add_temporaries(self, tmps: List[gtcpp.Temporary]) -> "GTComputationCallBuilder":
+        for tmp in tmps:
+            self.add_temporary(tmp)
+        return self
+
+    def add_multi_stage(self, ms: gtcpp.GTMultiStage) -> "GTComputationCallBuilder":
+        self._multi_stages.append(ms)
+        return self
+
+    def build(self) -> gtcpp.GTComputationCall:
+        self._symtable_stack_reference.pop()
+        return gtcpp.GTComputationCall(
+            arguments=self._arguments,
+            temporaries=self._temporaries,
+            multi_stages=self._multi_stages,
+        )
+
+
+class ProgramBuilder:
+    def __init__(self, name: str, *, symbol_tbl_stack: SymbolTableStack):
+        self._name = name
+        self._parameters: List[gtcpp.ApiParamDecl] = []
+        self._functors: List[gtcpp.GTFunctor] = []
+        self._gt_computation: Optional[gtcpp.GTComputationCall] = None
+        self._symtable: SymbolTable = SymbolTable()
+        self._symtable_stack_reference = symbol_tbl_stack  # ugly
+        symbol_tbl_stack.push(self._symtable)  # ugly
+
+    def add_parameter(self, param: gtcpp.ApiParamDecl) -> "ProgramBuilder":
+        # TODO automatically generate this register
+        # self._symtable[param.name] = param
+        self._parameters.append(param)
+        return self
+
+    def add_functor(self, functor: gtcpp.GTFunctor) -> "ProgramBuilder":
+        # TODO automatically generate this register
+        # self._symtable[functor.name] = functor
+        self._functors.append(functor)
+        return self
+
+    def gt_computation(self, comp: gtcpp.GTComputationCall) -> "ProgramBuilder":
+        self._gt_computation = comp
+
+    def create_symbol(self, node_type, **kwargs):
+        return self._symtable.create_symbol(node_type, **kwargs)
+
+    # def create_symbolref(self, node: gtcpp.GTStage) -> gtcpp.GTStage:
+    #     # TODO generalize
+    #     values = node.dict()
+    #     values["functor"] = self._symtable[node.functor]
+    #     return gtcpp.GTStage.parse_obj(values)
+
+    # def get_symbol(self, name: str) -> gtcpp.SymbolRef2:
+    #     return gtcpp.SymbolRef2(name=name, symbol=self._symtable[name])
+
+    def build(self) -> gtcpp.Program:
+        self._symtable_stack_reference.pop()
+        return gtcpp.Program(
+            name=self._name,
+            parameters=self._parameters,
+            functors=self._functors,
+            gt_computation=self._gt_computation,
+        )
+
+
 class OIRToGTCpp(eve.NodeTranslator):
-    @dataclass
-    class ProgramContext:
-        functors: List[gtcpp.GTFunctor] = field(default_factory=list)
+    # @dataclass
+    # class GTComputationContext:
+    #     temporaries: List[gtcpp.Temporary] = field(default_factory=list)
+    #     arguments: Set[gtcpp.Arg] = field(default_factory=set)
 
-        def add_functor(self, functor: gtcpp.GTFunctor) -> "OIRToGTCpp.ProgramContext":
-            self.functors.append(functor)
-            return self
+    #     def add_temporaries(
+    #         self, temporaries: List[gtcpp.Temporary]
+    #     ) -> "OIRToGTCpp.GTComputationContext":
+    #         self.temporaries.extend(temporaries)
+    #         return self
 
-    @dataclass
-    class GTComputationContext:
-        temporaries: List[gtcpp.Temporary] = field(default_factory=list)
-        arguments: Set[gtcpp.Arg] = field(default_factory=set)
-
-        def add_temporaries(
-            self, temporaries: List[gtcpp.Temporary]
-        ) -> "OIRToGTCpp.GTComputationContext":
-            self.temporaries.extend(temporaries)
-            return self
-
-        def add_arguments(self, arguments: Set[gtcpp.Arg]) -> "OIRToGTCpp.GTComputationContext":
-            self.arguments.update(arguments)
-            return self
+    #     def add_arguments(self, arguments: Set[gtcpp.Arg]) -> "OIRToGTCpp.GTComputationContext":
+    #         self.arguments.update(arguments)
+    #         return self
 
     def visit_Literal(self, node: oir.Literal, **kwargs: Any) -> gtcpp.Literal:
         return gtcpp.Literal(value=node.value, dtype=node.dtype)
@@ -94,7 +179,23 @@ class OIRToGTCpp(eve.NodeTranslator):
     def visit_UnaryOp(self, node: oir.UnaryOp, **kwargs: Any) -> gtcpp.UnaryOp:
         return gtcpp.UnaryOp(op=node.op, expr=self.visit(node.expr, **kwargs))
 
+    # @creates_symbol_table()
     def visit_BinaryOp(self, node: oir.BinaryOp, **kwargs: Any) -> gtcpp.BinaryOp:
+
+        # binop = BinaryOpBuilder(op=node.op)
+        # binop.left = self.visit(node.left, parents=[*parent, binop])
+        # binop.right = self.visit(node.right, parents=...)
+        # return binop.build()
+
+        # binop = register(gtcpp.BinaryOp, parent, field)
+        # # (parent=kwargs["parent"])
+        # # kwargs["parent"][kwargs["field"]] = binop
+
+        # self.visit(node.left, parent=binop, field="left")
+        # self.visit(node.right, parent=binop, field="right")
+
+        # commit(binop)
+
         return gtcpp.BinaryOp(
             op=node.op,
             left=self.visit(node.left, **kwargs),
@@ -159,6 +260,7 @@ class OIRToGTCpp(eve.NodeTranslator):
 
     def visit_AssignStmt(self, node: oir.AssignStmt, **kwargs: Any) -> gtcpp.AssignStmt:
         assert "stencil_symtable" in kwargs
+        assert "symbol_tbl_stack" in kwargs
         return gtcpp.AssignStmt(
             left=self.visit(node.left, **kwargs), right=self.visit(node.right, **kwargs)
         )
@@ -167,17 +269,19 @@ class OIRToGTCpp(eve.NodeTranslator):
         self,
         node: oir.HorizontalExecution,
         *,
-        prog_ctx: ProgramContext,
-        comp_ctx: GTComputationContext,
+        prog_ctx: ProgramBuilder,
+        comp_ctx: GTComputationCallBuilder,
         interval: gtcpp.GTInterval,
+        symbol_tbl_stack: SymbolTableStack,
         **kwargs: Any,
     ) -> gtcpp.GTStage:
         assert "stencil_symtable" in kwargs
-        body = self.visit(node.body, **kwargs)
+        body = self.visit(node.body, symbol_tbl_stack=symbol_tbl_stack, **kwargs)
         mask = self.visit(node.mask, **kwargs)
         if mask:
             body = [gtcpp.IfStmt(cond=mask, true_branch=gtcpp.BlockStmt(body=body))]
         apply_method = gtcpp.GTApplyMethod(interval=self.visit(interval), body=body)
+        # FunctorBuilder()
         accessors = _extract_accessors(apply_method)
         stage_args = [gtcpp.Arg(name=acc.name) for acc in accessors]
 
@@ -185,25 +289,35 @@ class OIRToGTCpp(eve.NodeTranslator):
             {
                 param_arg
                 for param_arg in stage_args
-                if param_arg.name not in [tmp.name for tmp in comp_ctx.temporaries]
+                if param_arg.name not in [tmp.name for tmp in comp_ctx._temporaries]
             }
         )
 
-        prog_ctx.add_functor(
-            gtcpp.GTFunctor(
-                name=node.id_,
-                applies=[apply_method],
-                param_list=gtcpp.GTParamList(accessors=accessors),
-            )
-        ),
+        functor = prog_ctx.create_symbol(
+            gtcpp.GTFunctor,
+            name=node.id_,
+            applies=[apply_method],
+            param_list=gtcpp.GTParamList(accessors=accessors),
+        )
+        prog_ctx.add_functor(functor)
 
-        return gtcpp.GTStage(functor=node.id_, args=stage_args)
+        # prog_ctx.add_functor(
+        #     gtcpp.GTFunctor(
+        #         name=node.id_,
+        #         applies=[apply_method],
+        #         param_list=gtcpp.GTParamList(accessors=accessors),
+        #     )
+        # ),
+
+        return gtcpp.GTStage(functor=symbol_tbl_stack.get_symbol(node.id_), args=stage_args)
+        # return gtcpp.GTStage(functor=symtbl.get_symbol(node.id_), args=stage_args)
+        # return symtbl.create_symbolref(gtcpp.GTStage(functor=node.id_, args=stage_args))
 
     def visit_VerticalLoop(
         self,
         node: oir.VerticalLoop,
         *,
-        comp_ctx: GTComputationContext,
+        comp_ctx: GTComputationCallBuilder,
         **kwargs: Any,
     ) -> gtcpp.GTMultiStage:
         assert all([isinstance(decl, oir.Temporary) for decl in node.declarations])
@@ -225,26 +339,29 @@ class OIRToGTCpp(eve.NodeTranslator):
     def visit_ScalarDecl(self, node: oir.ScalarDecl, **kwargs: Any) -> gtcpp.GlobalParamDecl:
         return gtcpp.GlobalParamDecl(name=node.name, dtype=node.dtype)
 
-    def visit_Stencil(self, node: oir.Stencil, **kwargs: Any) -> gtcpp.Program:
-        prog_ctx = self.ProgramContext()
-        comp_ctx = self.GTComputationContext()
+    def visit_Stencil(
+        self,
+        node: oir.Stencil,
+        *,
+        symbol_tbl_stack: SymbolTableStack = SymbolTableStack(),
+        **kwargs: Any,
+    ) -> gtcpp.Program:
+        prog_ctx = ProgramBuilder(node.name, symbol_tbl_stack=symbol_tbl_stack)
+        parameters = self.visit(node.params, symbol_tbl_stack=symbol_tbl_stack)
+        for p in parameters:
+            prog_ctx.add_parameter(p)
+        comp_ctx = GTComputationCallBuilder(symbol_tbl_stack=symbol_tbl_stack)
         multi_stages = self.visit(
             node.vertical_loops,
             stencil_symtable=node.symtable_,
             prog_ctx=prog_ctx,
             comp_ctx=comp_ctx,
+            symbol_tbl_stack=symbol_tbl_stack,
             **kwargs,
         )
+        for ms in multi_stages:
+            comp_ctx.add_multi_stage(ms)
 
-        gt_computation = gtcpp.GTComputationCall(
-            arguments=comp_ctx.arguments,
-            temporaries=comp_ctx.temporaries,
-            multi_stages=multi_stages,
-        )
-        parameters = self.visit(node.params)
-        return gtcpp.Program(
-            name=node.name,
-            parameters=parameters,
-            functors=prog_ctx.functors,
-            gt_computation=gt_computation,
-        )
+        prog_ctx.gt_computation(comp_ctx.build())
+
+        return prog_ctx.build()

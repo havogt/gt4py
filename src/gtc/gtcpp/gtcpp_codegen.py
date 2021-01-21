@@ -130,7 +130,7 @@ class GTCppCodegen(codegen.TemplatedGenerator):
 
     ApiParamDecl = as_fmt("{name}")
 
-    GTStage = as_mako(".stage(${functor}(), ${','.join(args)})")
+    GTStage = as_mako(".stage(${_this_node.functor.name}(), ${','.join(args)})")
 
     GTMultiStage = as_mako("execute_${ loop_order }()${''.join(caches)}${''.join(stages)}")
 

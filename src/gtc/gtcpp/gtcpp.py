@@ -22,7 +22,9 @@ from pydantic.class_validators import validator
 
 import eve
 from eve import Str, StrEnum, SymbolName, SymbolTableTrait
+from eve.concepts import Node
 from eve.type_definitions import SymbolRef
+from eve.visitors import SymbolRef2
 from gtc import common
 from gtc.common import LocNode
 
@@ -241,7 +243,7 @@ class GlobalParamDecl(ApiParamDecl):
 
 
 class GTStage(LocNode):
-    functor: SymbolRef
+    functor: SymbolRef2
     # `args` are SymbolRefs to GTComputation `arguments` (interpreted as parameters)
     # or `temporaries`
     args: List[Arg]

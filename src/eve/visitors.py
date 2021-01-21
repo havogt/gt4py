@@ -22,6 +22,13 @@ from __future__ import annotations
 import collections.abc
 import copy
 import operator
+from typing import List, Type
+
+from devtools import debug, pformat
+import pydantic
+
+from eve.type_definitions import SymbolName, SymbolRef
+from gt4py.ir.nodes import Node
 
 from . import concepts, iterators, utils
 from .concepts import NOTHING
@@ -36,6 +43,57 @@ from .typingx import (
     Tuple,
     Union,
 )
+
+# SymbolTableType = Dict[str, concepts.Node]
+
+
+class SymbolRef2(concepts.Node):
+    name: SymbolRef
+    symbol: concepts.Node
+
+
+class SymbolTable:
+    def __init__(self):
+        self._tbl: Dict[str, concepts.Node] = {}
+
+    def __getitem__(self, key) -> concepts.Node:
+        return self._tbl[key]
+
+    def __contains__(self, key) -> bool:
+        return key in self._tbl
+
+    def __setitem__(self, key, value) -> concepts.Node:
+        self._tbl[key] = value
+
+    def create_symbol(self, node_type: Type[Node], **kwargs) -> Node:
+        # assume symbol has a field with name which is the SymbolName
+        node = node_type.parse_obj(kwargs)
+        self._tbl[node.name] = node
+        return node
+
+
+class SymbolTableStack:
+    def __init__(self) -> None:
+        self._symbol_tbls: List[SymbolTable] = []
+
+    def push(self, symbol_tbl: SymbolTable) -> None:
+        self._symbol_tbls.append(symbol_tbl)
+
+    def pop(self) -> SymbolTable:
+        return self._symbol_tbls.pop()
+
+    def get_symbol(self, name: str) -> SymbolRef2:
+        for tbl in reversed(self._symbol_tbls):
+            if name in tbl:
+                return SymbolRef2(name=name, symbol=tbl[name])
+
+        raise ValueError(f"Symbol {name} not found")
+
+    def create_symbol(self, name: str, node: concepts.Node) -> None:
+        self._symbol_tbls[-1][name] = node
+
+    def __pretty__(self, **kwargs):
+        return pformat(self._symbol_tbls) if len(self._symbol_tbls) > 0 else "[]"
 
 
 class NodeVisitor:
@@ -108,6 +166,10 @@ class NodeVisitor:
         method_name = "visit_" + node.__class__.__name__
         if hasattr(self, method_name):
             visitor = getattr(self, method_name)
+            # self.collected[getattr(node, name)] = node
+
+            # if node.iter_children()
+            # debug(kwargs["symbol_tbl_stack"])
         elif isinstance(node, concepts.Node):
             for node_class in node.__class__.__mro__[1:]:
                 method_name = "visit_" + node_class.__name__
@@ -118,7 +180,20 @@ class NodeVisitor:
                 if node_class is concepts.Node:
                     break
 
-        return visitor(node, **kwargs)
+        result = visitor(node, **kwargs)
+        if isinstance(result, concepts.BaseNode):
+            print(f":::{result.id_}")
+            if "symbol_tbl_stack" in kwargs:
+                for name, metadata in result.__node_children__.items():
+                    # mdtype = metadata["definition"].type_
+                    # print(f"-> {name} ({mdtype})")
+                    if isinstance(metadata["definition"].type_, type) and issubclass(
+                        metadata["definition"].type_, SymbolName
+                    ):
+                        kwargs["symbol_tbl_stack"].create_symbol(name, node)
+                        print(f"{result.id_} is registered to symbol table")
+                print(f"{node.id_}: I have symbol_tbl_stack")
+        return result
 
     def generic_visit(self, node: concepts.TreeNode, **kwargs: Any) -> Any:
         for child in iterators.generic_iter_children(node):
@@ -151,11 +226,17 @@ class NodeTranslator(NodeVisitor):
 
     _memo_dict_: Dict[int, Any]
 
+    # def visit(self, node: concepts.TreeNode, **kwargs: Any) -> Any:
+    #     if "symbol_tbl_stack" not in kwargs:
+    #         kwargs["symbol_tbl_stack"] = SymbolTableStack()
+    #     super().visit(node, **kwargs)
+
     def generic_visit(self, node: concepts.TreeNode, **kwargs: Any) -> Any:
         result: Any = None
         if isinstance(node, (concepts.Node, collections.abc.Collection)) and utils.is_collection(
             node
         ):
+            # print("generic visit")
             tmp_items: Collection[concepts.TreeNode] = []
             if isinstance(node, concepts.Node):
                 tmp_items = {
@@ -165,6 +246,7 @@ class NodeTranslator(NodeVisitor):
                     **{key: value for key, value in node.iter_impl_fields()},
                     **{key: value for key, value in tmp_items.items() if value is not NOTHING},
                 )
+                print(node.id_)
 
             elif isinstance(node, (collections.abc.Sequence, collections.abc.Set)):
                 # Sequence or set: create a new container instance with the new values

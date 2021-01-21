@@ -38,6 +38,8 @@ from gtc.passes.gtir_upcaster import upcast
 if TYPE_CHECKING:
     from gt4py.stencil_object import StencilObject
 
+from devtools import debug
+
 
 class GTCGTExtGenerator:
     COMPUTATION_FILES = ["computation.hpp"]
@@ -55,7 +57,9 @@ class GTCGTExtGenerator:
         dtype_deduced = resolve_dtype(gtir_without_unused_params)
         upcasted = upcast(dtype_deduced)
         oir = gtir_to_oir.GTIRToOIR().visit(upcasted)
+        print("====================")
         gtcpp = oir_to_gtcpp.OIRToGTCpp().visit(oir)
+        # debug(gtcpp)
         implementation = gtcpp_codegen.GTCppCodegen.apply(gtcpp)
         bindings = GTCppBindingsCodegen.apply(gtcpp, module_name=self.module_name)
         return {
