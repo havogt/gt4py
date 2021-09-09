@@ -26,6 +26,56 @@ V2E = offset("V2E")
 E2V = offset("E2V")
 Diamond = offset("Diamond")
 
+# periodic
+#
+# 0v---0e-- 1v---3e-- 2v---6e-- 0v
+# |  \ 0c   |  \ 1c   |  \
+# |   \1e   |   \4e   |   \7e
+# |2e   \   |5e   \   |8e   \
+# |      \  |      \  |      \
+# 3v---9e-- 4v--12e-- 5v--15e-- 3v
+# |  \ 2c   |  \ 3c   |  \
+# |   \10e  |   \13e  |   \16e
+# |11e  \   |14e  \   |17e  \
+# |      \  |      \  |      \
+# 6v--18e-- 7v--21e-- 8v--24e-- 6v
+# |  \      |  \      |  \
+# |   \19e  |   \22e  |   \25e
+# |20e  \   |23e  \   |26e  \
+# |      \  |      \  |      \
+# 0v       1v         2v        0v
+
+diamond = [
+    [0, 1, 4, 6],  # 0
+    [0, 4, 1, 3],
+    [0, 3, 4, 2],
+    [1, 2, 5, 7],  # 3
+    [1, 5, 2, 4],
+    [1, 4, 5, 0],
+    [2, 0, 3, 8],  # 6
+    [2, 3, 0, 5],
+    [2, 5, 1, 3],
+    [3, 4, 0, 7],  # 9
+    [3, 7, 4, 6],
+    [3, 6, 5, 7],
+    [4, 5, 1, 8],  # 12
+    [4, 8, 5, 7],
+    [4, 7, 3, 8],
+    [5, 3, 2, 6],  # 15
+    [5, 6, 3, 8],
+    [5, 8, 4, 6],
+    [6, 7, 3, 1],  # 18
+    [6, 1, 7, 0],
+    [6, 0, 1, 8],
+    [7, 8, 4, 2],  # 21
+    [7, 2, 8, 1],
+    [7, 1, 6, 2],
+    [8, 6, 5, 0],  # 24
+    [8, 0, 6, 2],
+    [8, 2, 7, 0],
+]
+
+
 # def mo_nh_diffusion_stencil_05(
 #     z_nabla4_e2: Field[Edge, K],
 #     u_vert: Field[Vertex, K],
@@ -86,6 +136,38 @@ def for_first_neighbor(u_vert_neighs, v_vert_neighs, primal_normal_vert_v1, prim
         )
     )
 
+
+@fendef
+def neigh_fencil(
+    nabv_tang_out,
+    u_vert,
+    v_vert,
+    primal_normal_vert_v1,
+    primal_normal_vert_v2,
+):
+    closure(
+        domain(named_range(Edge, 0, 0)),
+        for_first_neighbor,
+        [nabv_tang_out],
+        [u_vert, v_vert, primal_normal_vert_v1, primal_normal_vert_v2],
+    )
+
+
+neigh_fencil(None, None, None, None, None, backend="cpptoy")
+
+# @fundef
+# def close_sum(fun):
+#     return lift(whatever_computation)
+
+
+# @fundef
+# def nabv_tang(
+#     u_vert,
+#     v_vert,
+#     primal_normal_vert_v1,
+#     primal_normal_vert_v2,
+# ):
+#     def body(i, u_vert_neighs, v_vert_neighs, primal_normal_vert_v1, primal_normal_vert_v2):
 
 # @fundef
 # def close_sum(fun):
