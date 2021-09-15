@@ -22,8 +22,6 @@ import numpy as np
 Vertex = CartesianAxis("Vertex")
 Edge = CartesianAxis("Edge")
 
-V2E = offset("V2E")
-E2V = offset("E2V")
 Diamond = offset("Diamond")
 
 # periodic
@@ -45,36 +43,40 @@ Diamond = offset("Diamond")
 # |      \  |      \  |      \
 # 0v       1v         2v        0v
 
-diamond = [
-    [0, 1, 4, 6],  # 0
-    [0, 4, 1, 3],
-    [0, 3, 4, 2],
-    [1, 2, 5, 7],  # 3
-    [1, 5, 2, 4],
-    [1, 4, 5, 0],
-    [2, 0, 3, 8],  # 6
-    [2, 3, 0, 5],
-    [2, 5, 1, 3],
-    [3, 4, 0, 7],  # 9
-    [3, 7, 4, 6],
-    [3, 6, 5, 7],
-    [4, 5, 1, 8],  # 12
-    [4, 8, 5, 7],
-    [4, 7, 3, 8],
-    [5, 3, 2, 6],  # 15
-    [5, 6, 3, 8],
-    [5, 8, 4, 6],
-    [6, 7, 3, 1],  # 18
-    [6, 1, 7, 0],
-    [6, 0, 1, 8],
-    [7, 8, 4, 2],  # 21
-    [7, 2, 8, 1],
-    [7, 1, 6, 2],
-    [8, 6, 5, 0],  # 24
-    [8, 0, 6, 2],
-    [8, 2, 7, 0],
-]
+diamond_arr = np.asarray(
+    [
+        [0, 1, 4, 6],  # 0
+        [0, 4, 1, 3],
+        [0, 3, 4, 2],
+        [1, 2, 5, 7],  # 3
+        [1, 5, 2, 4],
+        [1, 4, 5, 0],
+        [2, 0, 3, 8],  # 6
+        [2, 3, 0, 5],
+        [2, 5, 1, 3],
+        [3, 4, 0, 7],  # 9
+        [3, 7, 4, 6],
+        [3, 6, 5, 7],
+        [4, 5, 1, 8],  # 12
+        [4, 8, 5, 7],
+        [4, 7, 3, 8],
+        [5, 3, 2, 6],  # 15
+        [5, 6, 3, 8],
+        [5, 8, 4, 6],
+        [6, 7, 3, 1],  # 18
+        [6, 1, 7, 0],
+        [6, 0, 1, 8],
+        [7, 8, 4, 2],  # 21
+        [7, 2, 8, 1],
+        [7, 1, 6, 2],
+        [8, 6, 5, 0],  # 24
+        [8, 0, 6, 2],
+        [8, 2, 7, 0],
+    ]
+)
 
+n_vertices = 9
+n_edges = 27
 
 # def mo_nh_diffusion_stencil_05(
 #     z_nabla4_e2: Field[Edge, K],
@@ -105,6 +107,42 @@ diamond = [
 #         )
 
 
+def nabv_ref(weights, u_vert, v_vert, primal_normal_vert_v1, primal_normal_vert_v2):
+    return np.sum(
+        (u_vert[diamond_arr] * primal_normal_vert_v1 + v_vert[diamond_arr] * primal_normal_vert_v2)
+        * weights,
+        axis=-1,
+    )
+
+
+def nabv_tang_ref(u_vert, v_vert, primal_normal_vert_v1, primal_normal_vert_v2):
+    weights = np.asarray([[1.0, 1.0, 0.0, 0.0]] * n_edges)
+    return nabv_ref(weights, u_vert, v_vert, primal_normal_vert_v1, primal_normal_vert_v2)
+
+
+def nabv_norm_ref(u_vert, v_vert, primal_normal_vert_v1, primal_normal_vert_v2):
+    weights = np.asarray([[0.0, 0.0, 1.0, 1.0]] * n_edges)
+    return nabv_ref(weights, u_vert, v_vert, primal_normal_vert_v1, primal_normal_vert_v2)
+
+
+def z_nabla4_e2_ref(nabv_norm, nabv_tang, z_nabla2_e, inv_vert_vert_length, inv_primal_edge_length):
+    return 4.0 * (
+        (nabv_norm - 2.0 * z_nabla2_e) * inv_vert_vert_length ** 2
+        + (nabv_tang - 2.0 * z_nabla2_e) * inv_primal_edge_length ** 2
+    )
+
+
+class Setup:
+    def __init__(self) -> None:
+        self.u_vert = np.random.rand(n_vertices)
+        self.v_vert = np.random.rand(n_vertices)
+        self.primal_normal_vert_v1 = np.random.rand(n_edges, 4)
+        self.primal_normal_vert_v2 = np.random.rand(n_edges, 4)
+        self.z_nabla2_e = np.random.rand(n_edges)
+        self.inv_vert_vert_length = np.random.rand(n_edges)
+        self.inv_primal_edge_length = np.random.rand(n_edges)
+
+
 # @fundef
 # def foo(sparse_field):
 #     return deref(sparse_field)
@@ -112,49 +150,108 @@ diamond = [
 
 # @fundef
 # def deref_sparse_field(field):
-#     sparse_field = shift(E2V)(field)
+#     sparse_field = shift(Diamond)(field)
 #     return deref(shift(0)(lift(foo)(sparse_field)))
 
 
-@fundef
-def whatever_computation(
-    u_vert_neighs, v_vert_neighs, primal_normal_vert_v1, primal_normal_vert_v2
-):
-    return deref(u_vert_neighs) * deref(primal_normal_vert_v1) + deref(v_vert_neighs) * deref(
-        primal_normal_vert_v2
-    )
+# @fendef
+# def deref_sparse_field_fencil(n_edges, out, inp):
+#     closure(
+#         domain(named_range(Edge, 0, n_edges)),
+#         deref_sparse_field,
+#         [out],
+#         [inp],
+#     )
 
 
-@fundef
-def for_first_neighbor(u_vert_neighs, v_vert_neighs, primal_normal_vert_v1, primal_normal_vert_v2):
-    # is this possible?
-    return deref(
-        shift(0)(
-            lift(whatever_computation)(
-                u_vert_neighs, v_vert_neighs, primal_normal_vert_v1, primal_normal_vert_v2
-            )
-        )
-    )
+# def test_deref_sparse_field():
+#     n_vertices = 9
+#     n_edges = 27
+#     vert = np_as_located_field(Vertex)(np.random.rand(n_vertices))
+
+#     out = np_as_located_field(Edge)(np.zeros([n_edges]))
+
+#     diamond = NeighborTableOffsetProvider(diamond_arr, Edge, Vertex, 4)
+
+#     deref_sparse_field_fencil(
+#         n_edges,
+#         out,
+#         vert,
+#         offset_provider={"Diamond": diamond},
+#     )
 
 
-@fendef
-def neigh_fencil(
-    nabv_tang_out,
-    u_vert,
-    v_vert,
-    primal_normal_vert_v1,
-    primal_normal_vert_v2,
-):
-    closure(
-        domain(named_range(Edge, 0, 0)),
-        for_first_neighbor,
-        [nabv_tang_out],
-        [u_vert, v_vert, primal_normal_vert_v1, primal_normal_vert_v2],
-    )
+# test_deref_sparse_field()
+# # exit(1)
 
 
-neigh_fencil(None, None, None, None, None, backend="cpptoy")
+# @fundef
+# def whatever_computation(
+#     u_vert_neighs, v_vert_neighs, primal_normal_vert_v1, primal_normal_vert_v2
+# ):
+#     return deref(u_vert_neighs) * deref(primal_normal_vert_v1) + deref(v_vert_neighs) * deref(
+#         primal_normal_vert_v2
+#     )
 
+
+# @fundef
+# def for_first_neighbor(u_vert, v_vert_neighs, primal_normal_vert_v1, primal_normal_vert_v2):
+#     # is this possible?
+#     u_vert_neighs = shift(Diamond)(u_vert)
+#     return deref(
+#         shift(0)(
+#             lift(whatever_computation)(
+#                 u_vert_neighs, v_vert_neighs, primal_normal_vert_v1, primal_normal_vert_v2
+#             )
+#         )
+#     )
+
+
+# @fendef
+# def neigh_fencil(
+#     nabv_tang_out,
+#     n_edges,
+#     u_vert,
+#     v_vert,
+#     primal_normal_vert_v1,
+#     primal_normal_vert_v2,
+# ):
+#     closure(
+#         domain(named_range(Edge, 0, n_edges)),
+#         for_first_neighbor,
+#         [nabv_tang_out],
+#         [u_vert, v_vert, primal_normal_vert_v1, primal_normal_vert_v2],
+#     )
+
+
+# neigh_fencil(None, 0, None, None, None, None, backend="cpptoy")
+
+
+# def test_neigh_fencil():
+#     n_vertices = 9
+#     n_edges = 27
+#     u_vert = np_as_located_field(Vertex)(np.random.rand(n_vertices))
+#     v_vert = np_as_located_field(Vertex)(np.random.rand(n_vertices))
+#     primal_normal_vert_v1 = np_as_located_field(Vertex, Diamond)(np.random.rand(n_edges, 4))
+#     primal_normal_vert_v2 = np_as_located_field(Vertex, Diamond)(np.random.rand(n_edges, 4))
+
+#     out = np_as_located_field(Edge)(np.zeros([n_edges]))
+
+#     diamond = NeighborTableOffsetProvider(diamond_arr, Edge, Vertex, 4)
+
+#     neigh_fencil(
+#         out,
+#         n_edges,
+#         u_vert,
+#         v_vert,
+#         primal_normal_vert_v1,
+#         primal_normal_vert_v2,
+#         offset_provider={"Diamond": diamond},
+#     )
+
+
+# test_neigh_fencil()
+# exit(1)
 # @fundef
 # def close_sum(fun):
 #     return lift(whatever_computation)
@@ -193,27 +290,27 @@ def nabv_tang(
     ) + body(1, u_vert_neighs, v_vert_neighs, primal_normal_vert_v1, primal_normal_vert_v2)
 
 
-@fendef
-def test_nabv_tang(
-    nabv_tang_out,
+@fundef
+def nabv_norm(
     u_vert,
     v_vert,
     primal_normal_vert_v1,
     primal_normal_vert_v2,
 ):
-    closure(
-        domain(named_range(Edge, 0, 0)),
-        nabv_tang,
-        [nabv_tang_out],
-        [u_vert, v_vert, primal_normal_vert_v1, primal_normal_vert_v2],
-    )
+    def body(i, u_vert_neighs, v_vert_neighs, primal_normal_vert_v1, primal_normal_vert_v2):
+        return deref(shift(i)(u_vert_neighs)) * deref(shift(i)(primal_normal_vert_v1)) + deref(
+            shift(i)(v_vert_neighs)
+        ) * deref(shift(i)(primal_normal_vert_v2))
 
-
-test_nabv_tang(None, None, None, None, None, backend="cpptoy")
+    u_vert_neighs = shift(Diamond)(u_vert)
+    v_vert_neighs = shift(Diamond)(v_vert)
+    return body(
+        2, u_vert_neighs, v_vert_neighs, primal_normal_vert_v1, primal_normal_vert_v2
+    ) + body(3, u_vert_neighs, v_vert_neighs, primal_normal_vert_v1, primal_normal_vert_v2)
 
 
 @fundef
-def nh_diff_05(
+def z_nabla4_e2(
     u_vert,
     v_vert,
     primal_normal_vert_v1,
@@ -222,62 +319,105 @@ def nh_diff_05(
     inv_vert_vert_length,
     inv_primal_edge_length,
 ):
-    ...
+    nabv_norm_v = nabv_norm(u_vert, v_vert, primal_normal_vert_v1, primal_normal_vert_v2)
+    nabv_tang_v = nabv_tang(u_vert, v_vert, primal_normal_vert_v1, primal_normal_vert_v2)
 
-
-@fundef
-def compute_zavgS(pp, S_M):
-    zavg = 0.5 * (deref(shift(E2V, 0)(pp)) + deref(shift(E2V, 1)(pp)))
-    # zavg = 0.5 * reduce(lambda a, b: a + b, 0)(shift(E2V)(pp))
-    # zavg = 0.5 * library.sum()(shift(E2V)(pp))
-    return deref(S_M) * zavg
+    return 4.0 * (
+        (nabv_norm_v - 2.0 * deref(z_nabla2_e))
+        * (deref(inv_vert_vert_length) * deref(inv_vert_vert_length))
+        + (nabv_tang_v - 2.0 * deref(z_nabla2_e))
+        * (deref(inv_primal_edge_length) * deref(inv_primal_edge_length))
+    )
 
 
 @fendef
-def compute_zavgS_fencil(
-    n_edges,
-    out,
-    pp,
-    S_M,
+def nh_diff_05(
+    z_nabla4_e2_out,
+    u_vert,
+    v_vert,
+    primal_normal_vert_v1,
+    primal_normal_vert_v2,
+    z_nabla2_e,
+    inv_vert_vert_length,
+    inv_primal_edge_length,
 ):
     closure(
         domain(named_range(Edge, 0, n_edges)),
-        compute_zavgS,
-        [out],
-        [pp, S_M],
+        z_nabla4_e2,
+        [z_nabla4_e2_out],
+        [
+            u_vert,
+            v_vert,
+            primal_normal_vert_v1,
+            primal_normal_vert_v2,
+            z_nabla2_e,
+            inv_vert_vert_length,
+            inv_primal_edge_length,
+        ],
     )
-
-
-@fundef
-def compute_pnabla(pp, S_M, sign, vol):
-    zavgS = lift(compute_zavgS)(pp, S_M)
-    # pnabla_M = reduce(lambda a, b, c: a + b * c, 0)(shift(V2E)(zavgS), sign)
-    # pnabla_M = library.sum(lambda a, b: a * b)(shift(V2E)(zavgS), sign)
-    pnabla_M = library.dot(shift(V2E)(zavgS), sign)
-    return pnabla_M / deref(vol)
 
 
 @fendef
-def nabla(
-    n_nodes,
-    out_MXX,
-    out_MYY,
-    pp,
-    S_MXX,
-    S_MYY,
-    sign,
-    vol,
+def nabv_tang_fencil(
+    nabv_tang_out,
+    u_vert,
+    v_vert,
+    primal_normal_vert_v1,
+    primal_normal_vert_v2,
 ):
-    # TODO replace by single stencil which returns tuple
     closure(
-        domain(named_range(Vertex, 0, n_nodes)),
-        compute_pnabla,
-        [out_MXX],
-        [pp, S_MXX, sign, vol],
+        domain(named_range(Edge, 0, n_edges)),
+        nabv_tang,
+        [nabv_tang_out],
+        [u_vert, v_vert, primal_normal_vert_v1, primal_normal_vert_v2],
     )
-    closure(
-        domain(named_range(Vertex, 0, n_nodes)),
-        compute_pnabla,
-        [out_MYY],
-        [pp, S_MYY, sign, vol],
+
+
+# nabv_tang_fencil(None, None, None, None, None, backend="cpptoy")
+
+
+def test_nabv_tang():
+    s = Setup()
+    ref = nabv_tang_ref(s.u_vert, s.v_vert, s.primal_normal_vert_v1, s.primal_normal_vert_v2)
+
+    diamond = NeighborTableOffsetProvider(diamond_arr, Edge, Vertex, 4)
+    out = np_as_located_field(Edge)(np.zeros(n_edges))
+    nabv_tang_fencil(
+        out,
+        np_as_located_field(Vertex)(s.u_vert),
+        np_as_located_field(Vertex)(s.v_vert),
+        np_as_located_field(Edge, Diamond)(s.primal_normal_vert_v1),
+        np_as_located_field(Edge, Diamond)(s.primal_normal_vert_v2),
+        offset_provider={"Diamond": diamond},
     )
+    assert np.allclose(out, ref)
+
+
+test_nabv_tang()
+
+
+def test_nh_diff05():
+    s = Setup()
+    nabv_tang = nabv_tang_ref(s.u_vert, s.v_vert, s.primal_normal_vert_v1, s.primal_normal_vert_v2)
+    nabv_norm = nabv_norm_ref(s.u_vert, s.v_vert, s.primal_normal_vert_v1, s.primal_normal_vert_v2)
+    ref = z_nabla4_e2_ref(
+        nabv_norm, nabv_tang, s.z_nabla2_e, s.inv_vert_vert_length, s.inv_primal_edge_length
+    )
+
+    diamond = NeighborTableOffsetProvider(diamond_arr, Edge, Vertex, 4)
+    out = np_as_located_field(Edge)(np.zeros(n_edges))
+    nh_diff_05(
+        out,
+        np_as_located_field(Vertex)(s.u_vert),
+        np_as_located_field(Vertex)(s.v_vert),
+        np_as_located_field(Edge, Diamond)(s.primal_normal_vert_v1),
+        np_as_located_field(Edge, Diamond)(s.primal_normal_vert_v2),
+        np_as_located_field(Edge)(s.z_nabla2_e),
+        np_as_located_field(Edge)(s.inv_vert_vert_length),
+        np_as_located_field(Edge)(s.inv_primal_edge_length),
+        offset_provider={"Diamond": diamond},
+    )
+    assert np.allclose(out, ref)
+
+
+test_nh_diff05()
