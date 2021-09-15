@@ -78,34 +78,6 @@ diamond_arr = np.asarray(
 n_vertices = 9
 n_edges = 27
 
-# def mo_nh_diffusion_stencil_05(
-#     z_nabla4_e2: Field[Edge, K],
-#     u_vert: Field[Vertex, K],
-#     v_vert: Field[Vertex, K],
-#     primal_normal_vert_v1: Field[Edge > Cell > Vertex],
-#     primal_normal_vert_v2: Field[Edge > Cell > Vertex],
-#     z_nabla2_e: Field[Edge, K],
-#     inv_vert_vert_length: Field[Edge],
-#     inv_primal_edge_length: Field[Edge],
-# ):
-#     nabv_tang: Field[Edge, K]
-#     nabv_norm: Field[Edge, K]
-#     with domain.upward.across[nudging:halo]:
-#         nabv_tang = sum_over(
-#             Edge > Cell > Vertex,
-#             u_vert * primal_normal_vert_v1 + v_vert * primal_normal_vert_v2,
-#             weights=[1.0, 1.0, 0.0, 0.0],
-#         )
-#         nabv_norm = sum_over(
-#             Edge > Cell > Vertex,
-#             u_vert * primal_normal_vert_v1 + v_vert * primal_normal_vert_v2,
-#             weights=[0.0, 0.0, 1.0, 1.0],
-#         )
-#         z_nabla4_e2 = 4.0 * (
-#             (nabv_norm - 2.0 * z_nabla2_e) * inv_vert_vert_length ** 2
-#             + (nabv_tang - 2.0 * z_nabla2_e) * inv_primal_edge_length ** 2
-#         )
-
 
 def nabv_ref(weights, u_vert, v_vert, primal_normal_vert_v1, primal_normal_vert_v2):
     return np.sum(
