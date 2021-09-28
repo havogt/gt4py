@@ -140,7 +140,7 @@ def allocate(default_origin, shape, layout_map, dtype, alignment_bytes, allocate
     order_idx = idx_from_order([i for i in layout_map if i is not None])
     padded_shape = compute_padded_shape(shape, items_per_alignment, order_idx)
 
-    strides = strides_from_padded_shape(padded_shape, order_idx, itemsize)
+    # strides = strides_from_padded_shape(padded_shape, order_idx, itemsize)
     if len(order_idx) > 0:
         halo_offset = (
             int(math.ceil(default_origin[order_idx[-1]] / items_per_alignment))
@@ -160,8 +160,8 @@ def allocate(default_origin, shape, layout_map, dtype, alignment_bytes, allocate
 
     field = np.reshape(array[alignment_offset : alignment_offset + padded_size], padded_shape)
     if field.ndim > 0:
-        field.strides = strides
-        field = field[tuple(slice(0, s, None) for s in shape)]
+        transposed_shape = [shape[idx] for idx in np.argsort(order_idx)]
+        field = field[tuple(slice(0, s, None) for s in transposed_shape)].transpose(order_idx)
     return raw_buffer, field
 
 
