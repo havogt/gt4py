@@ -21,7 +21,7 @@ class EmbeddedDSL(codegen.TemplatedGenerator):
     AxisLiteral = as_fmt("{value}")
     StringLiteral = as_fmt("{value}")
     FunCall = as_fmt("{fun}({','.join(args)})")
-    Lambda = as_mako("lambda ${','.join(params)}: ${expr}")
+    Lambda = as_mako("(lambda ${','.join(params)}: ${expr})")
     StencilClosure = as_mako(
         "closure(${domain}, ${stencil}, [${','.join(outputs)}], [${','.join(inputs)}])"
     )
