@@ -1,11 +1,13 @@
-from eve import codegen
-from eve.codegen import FormatTemplate as as_fmt, MakoTemplate as as_mako
-from eve.concepts import Node
-from iterator.ir import AxisLiteral, NoneLiteral, OffsetLiteral
-from iterator.backends import backend
-import tempfile
 import importlib.util
+import tempfile
+
 import iterator
+from eve import codegen
+from eve.codegen import FormatTemplate as as_fmt
+from eve.codegen import MakoTemplate as as_mako
+from eve.concepts import Node
+from iterator.backends import backend
+from iterator.ir import AxisLiteral, OffsetLiteral
 
 
 class EmbeddedDSL(codegen.TemplatedGenerator):
@@ -47,7 +49,7 @@ _BACKEND_NAME = "embedded"
 
 
 def executor(ir: Node, *args, **kwargs):
-    debug = "debug" in kwargs and kwargs["debug"] == True
+    debug = "debug" in kwargs and kwargs["debug"] is True
 
     program = EmbeddedDSL.apply(ir)
     offset_literals = (
@@ -65,8 +67,8 @@ def executor(ir: Node, *args, **kwargs):
 from iterator.builtins import *
 from iterator.runtime import *
 """
-        offset_literals = [f'{l} = offset("{l}")' for l in offset_literals]
-        axis_literals = [f'{l} = CartesianAxis("{l}")' for l in axis_literals]
+        offset_literals = [f'{o} = offset("{o}")' for o in offset_literals]
+        axis_literals = [f'{o} = CartesianAxis("{o}")' for o in axis_literals]
         tmp.write(header)
         tmp.write("\n".join(offset_literals))
         tmp.write("\n")
@@ -77,7 +79,7 @@ from iterator.runtime import *
 
         spec = importlib.util.spec_from_file_location("module.name", tmp.name)
         foo = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(foo)
+        spec.loader.exec_module(foo)  # type: ignore
 
         fencil_name = ir.fencil_definitions[0].id
         fencil = getattr(foo, fencil_name)
@@ -88,7 +90,7 @@ from iterator.runtime import *
         if "column_axis" in kwargs:
             new_kwargs["column_axis"] = kwargs["column_axis"]
 
-        if not "dispatch_backend" in kwargs:
+        if "dispatch_backend" not in kwargs:
             iterator.builtins.builtin_dispatch.push_key("embedded")
             fencil(*args, **new_kwargs)
             iterator.builtins.builtin_dispatch.pop_key()
