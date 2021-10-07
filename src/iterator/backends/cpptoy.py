@@ -1,8 +1,11 @@
 from typing import Any
+
 from eve import codegen
-from eve.codegen import FormatTemplate as as_fmt, MakoTemplate as as_mako
-from iterator.ir import OffsetLiteral
+from eve.codegen import FormatTemplate as as_fmt
+from eve.codegen import MakoTemplate as as_mako
 from iterator.backends import backend
+from iterator.ir import OffsetLiteral
+from iterator.transforms import apply_common_transforms
 
 
 class ToyCpp(codegen.TemplatedGenerator):
@@ -41,7 +44,8 @@ class ToyCpp(codegen.TemplatedGenerator):
 
     @classmethod
     def apply(cls, root, **kwargs: Any) -> str:
-        generated_code = super().apply(root, **kwargs)
+        transformed = apply_common_transforms(root)
+        generated_code = super().apply(transformed, **kwargs)
         formatted_code = codegen.format_source("cpp", generated_code, style="LLVM")
         return formatted_code
 
