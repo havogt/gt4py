@@ -8,6 +8,7 @@ from eve.codegen import MakoTemplate as as_mako
 from eve.concepts import Node
 from iterator.backends import backend
 from iterator.ir import AxisLiteral, OffsetLiteral
+from iterator.transforms import apply_common_transforms
 
 
 class EmbeddedDSL(codegen.TemplatedGenerator):
@@ -50,6 +51,8 @@ _BACKEND_NAME = "embedded"
 
 def executor(ir: Node, *args, **kwargs):
     debug = "debug" in kwargs and kwargs["debug"] is True
+
+    ir = apply_common_transforms(ir)
 
     program = EmbeddedDSL.apply(ir)
     offset_literals = (
