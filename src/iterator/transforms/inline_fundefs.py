@@ -5,9 +5,6 @@ from iterator import ir
 
 
 class InlineFundefs(NodeTranslator):
-    def visit_FencilDefinition(self, node: ir.FencilDefinition, *, symtable: Dict[str, Any]):
-        return node
-
     def visit_SymRef(self, node: ir.SymRef, *, symtable: Dict[str, Any]):
         if node.id in symtable and isinstance((symbol := symtable[node.id]), ir.FunctionDefinition):
             return ir.Lambda(
