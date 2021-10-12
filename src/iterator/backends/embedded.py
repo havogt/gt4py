@@ -7,7 +7,7 @@ from eve.codegen import FormatTemplate as as_fmt
 from eve.codegen import MakoTemplate as as_mako
 from eve.concepts import Node
 from iterator.backends import backend
-from iterator.ir import AxisLiteral, OffsetLiteral
+from iterator.ir import AxisLiteral, FencilDefinition, OffsetLiteral
 from iterator.transforms import apply_common_transforms
 
 
@@ -46,15 +46,57 @@ def ${id}(${','.join(params)}):
     )
 
 
+class WrapperGenerator(EmbeddedDSL):
+    def visit_FencilDefinition(self, node: FencilDefinition, *, tmps):
+        params = self.visit(node.params)
+        non_tmp_params = [param for param in params if param not in tmps]
+
+        body = []
+        for tmp, domain in tmps.items():
+            axis_literals = [named_range.args[0].value for named_range in domain.args]
+            origin = (
+                "{"
+                + ", ".join(
+                    f"{named_range.args[0].value}: -{self.visit(named_range.args[1])}"
+                    for named_range in domain.args
+                )
+                + "}"
+            )
+            shape = (
+                "("
+                + ", ".join(
+                    f"{self.visit(named_range.args[2])}-{self.visit(named_range.args[1])}"
+                    for named_range in domain.args
+                )
+                + ")"
+            )
+            body.append(
+                f"{tmp} = np_as_located_field({','.join(axis_literals)}, origin={origin})(np.full({shape}, np.nan))"
+            )
+
+        body.append(f"{node.id}({','.join(params)}, **kwargs)")
+        body = "\n    ".join(body)
+        return f"\ndef {node.id}_wrapper({','.join(non_tmp_params)}, **kwargs):\n    {body}\n"
+
+
 _BACKEND_NAME = "embedded"
 
 
 def executor(ir: Node, *args, **kwargs):
     debug = "debug" in kwargs and kwargs["debug"] is True
+    use_tmps = "use_tmps" in kwargs and kwargs["use_tmps"] is True
 
-    ir = apply_common_transforms(ir)
+    tmps = dict()
+
+    def register_tmp(tmp, domain):
+        tmps[tmp] = domain
+
+    ir = apply_common_transforms(
+        ir, use_tmps=use_tmps, offset_provider=kwargs["offset_provider"], register_tmp=register_tmp
+    )
 
     program = EmbeddedDSL.apply(ir)
+    wrapper = WrapperGenerator.apply(ir, tmps=tmps)
     offset_literals = (
         ir.iter_tree().if_isinstance(OffsetLiteral).getattr("value").if_isinstance(str).to_set()
     )
@@ -67,8 +109,10 @@ def executor(ir: Node, *args, **kwargs):
         if debug:
             print(tmp.name)
         header = """
+import numpy as np
 from iterator.builtins import *
 from iterator.runtime import *
+from iterator.embedded import np_as_located_field
 """
         offset_literals = [f'{o} = offset("{o}")' for o in offset_literals]
         axis_literals = [f'{o} = CartesianAxis("{o}")' for o in axis_literals]
@@ -78,6 +122,7 @@ from iterator.runtime import *
         tmp.write("\n".join(axis_literals))
         tmp.write("\n")
         tmp.write(program)
+        tmp.write(wrapper)
         tmp.flush()
 
         spec = importlib.util.spec_from_file_location("module.name", tmp.name)
@@ -85,7 +130,7 @@ from iterator.runtime import *
         spec.loader.exec_module(foo)  # type: ignore
 
         fencil_name = ir.fencil_definitions[0].id
-        fencil = getattr(foo, fencil_name)
+        fencil = getattr(foo, fencil_name + "_wrapper")
         assert "offset_provider" in kwargs
 
         new_kwargs = {}

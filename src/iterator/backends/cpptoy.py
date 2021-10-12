@@ -44,10 +44,14 @@ class ToyCpp(codegen.TemplatedGenerator):
 
     @classmethod
     def apply(cls, root, **kwargs: Any) -> str:
-        transformed = apply_common_transforms(root)
+        transformed = apply_common_transforms(
+            root, use_tmps=kwargs.get("use_tmps", False), offset_provider=kwargs["offset_provider"]
+        )
         generated_code = super().apply(transformed, **kwargs)
         formatted_code = codegen.format_source("cpp", generated_code, style="LLVM")
         return formatted_code
 
 
-backend.register_backend("cpptoy", lambda prog, *args, **kwargs: print(ToyCpp.apply(prog)))
+backend.register_backend(
+    "cpptoy", lambda prog, *args, **kwargs: print(ToyCpp.apply(prog, **kwargs))
+)

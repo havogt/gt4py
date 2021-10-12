@@ -49,7 +49,9 @@ class ToLispLike(TemplatedGenerator):
 
     @classmethod
     def apply(cls, root, **kwargs: Any) -> str:
-        transformed = apply_common_transforms(root)
+        transformed = apply_common_transforms(
+            root, use_tmps=kwargs.get("use_tmps", False), offset_provider=kwargs["offset_provider"]
+        )
         generated_code = super().apply(transformed, **kwargs)
         try:
             from yasi import indent_code
@@ -60,4 +62,6 @@ class ToLispLike(TemplatedGenerator):
             return generated_code
 
 
-backend.register_backend("lisp", lambda prog, *args, **kwargs: print(ToLispLike.apply(prog)))
+backend.register_backend(
+    "lisp", lambda prog, *args, **kwargs: print(ToLispLike.apply(prog, **kwargs))
+)

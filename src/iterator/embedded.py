@@ -1,30 +1,32 @@
-from dataclasses import dataclass
 import itertools
+import numbers
+from dataclasses import dataclass
+
+import numpy as np
 
 import iterator
 from iterator.builtins import (
     builtin_dispatch,
+    deref,
+    div,
+    domain,
+    greater,
+    if_,
     is_none,
     lift,
-    reduce,
-    shift,
-    deref,
-    scan,
-    domain,
-    named_range,
-    if_,
-    minus,
-    plus,
-    mul,
-    div,
-    greater,
-    nth,
     make_tuple,
+    minus,
+    mul,
+    named_range,
+    nth,
+    plus,
+    reduce,
+    scan,
+    shift,
 )
 from iterator.runtime import CartesianAxis, Offset
 from iterator.utils import tupelize
-import numpy as np
-import numbers
+
 
 EMBEDDED = "embedded"
 
@@ -307,6 +309,55 @@ def get_open_offsets(*offsets):
     return group_offsets(*offsets)[1]
 
 
+class Undefined:
+    def __float__(self):
+        return np.nan
+
+    @classmethod
+    def _setup_math_operations(cls):
+        ops = [
+            "__add__",
+            "__sub__",
+            "__mul__",
+            "__matmul__",
+            "__truediv__",
+            "__floordiv__",
+            "__mod__",
+            "__divmod__",
+            "__pow__",
+            "__lshift__",
+            "__rshift__",
+            "__and__",
+            "__xor__",
+            "__or__",
+            "__radd__",
+            "__rsub__",
+            "__rmul__",
+            "__rmatmul__",
+            "__rtruediv__",
+            "__rfloordiv__",
+            "__rmod__",
+            "__rdivmod__",
+            "__rpow__",
+            "__rlshift__",
+            "__rrshift__",
+            "__rand__",
+            "__rxor__",
+            "__ror__",
+            "__neg__",
+            "__pos__",
+            "__abs__",
+            "__invert__",
+        ]
+        for op in ops:
+            setattr(cls, op, lambda self, *args, **kwargs: _UNDEFINED)
+
+
+Undefined._setup_math_operations()
+
+_UNDEFINED = Undefined()
+
+
 class MDIterator:
     def __init__(self, field, pos, *, offsets=[], offset_provider, column_axis=None) -> None:
         self.field = field
@@ -347,7 +398,10 @@ class MDIterator:
             shifted_pos,
             slice_axises=slice_column,
         )
-        return self.field[ordered_indices]
+        try:
+            return self.field[ordered_indices]
+        except IndexError:
+            return _UNDEFINED
 
 
 def make_in_iterator(inp, pos, offset_provider, *, column_axis):

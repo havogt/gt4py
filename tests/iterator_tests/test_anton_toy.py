@@ -1,7 +1,8 @@
+import numpy as np
+
 from iterator.builtins import *
 from iterator.embedded import np_as_located_field
 from iterator.runtime import *
-import numpy as np
 
 
 @fundef
@@ -35,7 +36,7 @@ JDim = CartesianAxis("JDim")
 KDim = CartesianAxis("KDim")
 
 
-@fendef
+@fendef(offset_provider={"i": IDim, "j": JDim})
 def fencil(x, y, z, output, input):
     closure(
         domain(named_range(IDim, 0, x), named_range(JDim, 0, y), named_range(KDim, 0, z)),
@@ -61,7 +62,8 @@ def naive_lap(inp):
     return out
 
 
-def test_anton_toy():
+def test_anton_toy(backend, use_tmps):
+    backend, validate = backend
     shape = [5, 7, 9]
     rng = np.random.default_rng()
     inp = np_as_located_field(IDim, JDim, KDim, origin={IDim: 1, JDim: 1, KDim: 0})(
@@ -76,8 +78,9 @@ def test_anton_toy():
         shape[2],
         out,
         inp,
-        backend="double_roundtrip",
-        offset_provider={"i": IDim, "j": JDim},
+        backend=backend,
+        use_tmps=use_tmps,
     )
 
-    assert np.allclose(out, ref)
+    if validate:
+        assert np.allclose(out, ref)
