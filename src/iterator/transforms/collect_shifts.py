@@ -26,4 +26,6 @@ class CollectShifts(NodeVisitor):
                 shifts.setdefault(sym.id, []).append(tuple(shift_args))
             else:
                 raise RuntimeError(f"Unexpected node: {node}")
+        elif isinstance(node.fun, ir.SymRef) and node.fun.id in ("lift", "scan"):
+            raise RuntimeError(f"Unsupported node: {node}")
         return self.generic_visit(node, shifts=shifts)
