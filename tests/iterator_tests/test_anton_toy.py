@@ -1,8 +1,8 @@
 import numpy as np
 
-from iterator.builtins import *
+from iterator.builtins import deref, domain, lift, named_range, shift
 from iterator.embedded import np_as_located_field
-from iterator.runtime import *
+from iterator.runtime import CartesianAxis, closure, fendef, fundef, offset
 
 
 @fundef
@@ -12,13 +12,13 @@ def ldif(d):
 
 @fundef
 def rdif(d):
-    # return compose(ldif(d), shift(d, 1))
+    # return compose(ldif(d), shift(d, 1))  # noqa: E800
     return lambda inp: ldif(d)(shift(d, 1)(inp))
 
 
 @fundef
 def dif2(d):
-    # return compose(ldif(d), lift(rdif(d)))
+    # return compose(ldif(d), lift(rdif(d)))  # noqa: E800
     return lambda inp: ldif(d)(lift(rdif(d))(inp))
 
 
@@ -37,17 +37,13 @@ KDim = CartesianAxis("KDim")
 
 
 @fendef(offset_provider={"i": IDim, "j": JDim})
-def fencil(x, y, z, output, input):
+def fencil(x, y, z, out, inp):
     closure(
         domain(named_range(IDim, 0, x), named_range(JDim, 0, y), named_range(KDim, 0, z)),
         lap,
-        [output],
-        [input],
+        [out],
+        [inp],
     )
-
-
-fencil(*([None] * 5), backend="lisp")
-fencil(*([None] * 5), backend="cpptoy")
 
 
 def naive_lap(inp):

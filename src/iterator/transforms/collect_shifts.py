@@ -10,7 +10,7 @@ class CollectShifts(NodeVisitor):
             assert len(node.args) == 1
             arg = node.args[0]
             if isinstance(arg, ir.SymRef):
-                # deref(sym)
+                # direct deref of a symbol: deref(sym)
                 shifts.setdefault(arg.id, []).append(())
             elif (
                 isinstance(arg, ir.FunCall)
@@ -19,7 +19,7 @@ class CollectShifts(NodeVisitor):
                 and arg.fun.fun.id == "shift"
                 and isinstance(arg.args[0], ir.SymRef)
             ):
-                # deref(shift(...)(sym))
+                # deref of a shifted symbol: deref(shift(...)(sym))
                 assert len(arg.args) == 1
                 sym = arg.args[0]
                 shift_args = arg.fun.args

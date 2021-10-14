@@ -1,23 +1,24 @@
 from iterator.dispatcher import Dispatcher
 
+
 __all__ = [
+    "compose",
     "deref",
-    "shift",
+    "div",
+    "domain",
+    "greater",
+    "if_",
+    "is_none",
     "lift",
+    "make_tuple",
+    "minus",
+    "mul",
+    "named_range",
+    "nth",
+    "plus",
     "reduce",
     "scan",
-    "is_none",
-    "domain",
-    "named_range",
-    "compose",
-    "if_",
-    "minus",
-    "plus",
-    "mul",
-    "div",
-    "greater",
-    "make_tuple",
-    "nth",
+    "shift",
 ]
 
 builtin_dispatch = Dispatcher()

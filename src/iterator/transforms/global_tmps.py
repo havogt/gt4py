@@ -1,3 +1,5 @@
+from typing import Dict, List
+
 from eve import NodeTranslator
 from iterator import ir
 from iterator.runtime import CartesianAxis
@@ -58,7 +60,7 @@ class CreateGlobalTmps(NodeTranslator):
         return ir.FunCall(fun=domain.fun, args=named_ranges)
 
     def visit_FencilDefinition(self, node: ir.FencilDefinition, *, offset_provider, register_tmp):
-        tmps = []
+        tmps: List[ir.Sym] = []
 
         def handle_arg(arg):
             if isinstance(arg, ir.SymRef):
@@ -74,7 +76,7 @@ class CreateGlobalTmps(NodeTranslator):
                 unlifted = ir.FunCall(fun=arg.fun.args[0], args=arg.args)
                 todos.append(([ref], unlifted))
                 return ref
-            assert False
+            raise AssertionError()
 
         closures = []
         tmp_domains = dict()
@@ -84,11 +86,11 @@ class CreateGlobalTmps(NodeTranslator):
             popped_stencil = PopupTmps().visit(wrapped_stencil)
             todos = [(closure.outputs, popped_stencil)]
 
-            shifts = dict()
+            shifts: Dict[str, List[tuple]] = dict()
             domain = closure.domain
             while todos:
                 outputs, call = todos.pop()
-                output_shifts = sum((shifts.get(o.id, []) for o in outputs), [])
+                output_shifts: List[tuple] = sum((shifts.get(o.id, []) for o in outputs), [])
                 domain = self._extend_domain(domain, offset_provider, output_shifts)
                 for output in outputs:
                     if output.id in {tmp.id for tmp in tmps}:
@@ -100,7 +102,7 @@ class CreateGlobalTmps(NodeTranslator):
                     outputs=outputs,
                     inputs=[handle_arg(arg) for arg in call.args],
                 )
-                local_shifts = dict()
+                local_shifts: Dict[str, List[tuple]] = dict()
                 CollectShifts().visit(closure.stencil, shifts=local_shifts)
                 input_map = {
                     param.id: arg.id for param, arg in zip(closure.stencil.params, closure.inputs)

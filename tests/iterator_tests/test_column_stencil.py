@@ -39,7 +39,15 @@ def test_column_stencil(backend, use_tmps):
 
     ref = np.asarray(inp)[1:, 1:]
 
-    fencil(shape[0], shape[1], inp, out, offset_provider={"I": IDim, "K": KDim}, backend=backend, use_tmps=use_tmps)
+    fencil(
+        shape[0],
+        shape[1],
+        inp,
+        out,
+        offset_provider={"I": IDim, "K": KDim},
+        backend=backend,
+        use_tmps=use_tmps,
+    )
 
     if validate:
         assert np.allclose(ref, out)
@@ -54,7 +62,15 @@ def test_column_stencil_with_k_origin(backend, use_tmps):
 
     ref = np.asarray(inp)[1:, 2:]
 
-    fencil(shape[0], shape[1], inp, out, offset_provider={"I": IDim, "K": KDim}, backend=backend, use_tmps=use_tmps)
+    fencil(
+        shape[0],
+        shape[1],
+        inp,
+        out,
+        offset_provider={"I": IDim, "K": KDim},
+        backend=backend,
+        use_tmps=use_tmps,
+    )
 
     if validate:
         assert np.allclose(ref, out)

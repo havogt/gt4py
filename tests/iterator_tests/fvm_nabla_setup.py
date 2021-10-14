@@ -11,34 +11,36 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-from atlas4py import (
-    StructuredGrid,
-    Topology,
-    Config,
-    StructuredMeshGenerator,
-    functionspace,
-    build_edges,
-    build_node_to_edge_connectivity,
-    build_median_dual_mesh,
-)
-import numpy as np
 import math
+
+import numpy as np
+from atlas4py import (
+    Config,
+    StructuredGrid,
+    StructuredMeshGenerator,
+    Topology,
+    build_edges,
+    build_median_dual_mesh,
+    build_node_to_edge_connectivity,
+    functionspace,
+)
 
 
 def assert_close(expected, actual):
-    assert math.isclose(expected, actual), "expected={}, actual={}".format(
-        expected, actual
-    )
+    assert math.isclose(expected, actual), "expected={}, actual={}".format(expected, actual)
 
 
 class nabla_setup:
+    @staticmethod
     def _default_config():
         config = Config()
         config["triangulate"] = True
         config["angle"] = 20.0
         return config
 
-    def __init__(self, *, grid=StructuredGrid("O32"), config=_default_config()):
+    def __init__(self, *, grid=StructuredGrid("O32"), config=None):
+        if config is None:
+            config = self._default_config()
         mesh = StructuredMeshGenerator(config).generate(grid)
 
         fs_edges = functionspace.EdgeColumns(mesh, halo=1)
@@ -49,10 +51,7 @@ class nabla_setup:
         build_median_dual_mesh(mesh)
 
         edges_per_node = max(
-            [
-                mesh.nodes.edge_connectivity.cols(node)
-                for node in range(0, fs_nodes.size)
-            ]
+            [mesh.nodes.edge_connectivity.cols(node) for node in range(0, fs_nodes.size)]
         )
 
         self.mesh = mesh
@@ -182,9 +181,7 @@ class nabla_setup:
         for jnode in range(0, self.nodes_size):
             for i in range(0, 2):
                 rcoords[jnode, klevel, i] = rcoords_deg[jnode, i] * deg2rad
-                rlonlatcr[jnode, klevel, i] = rcoords[
-                    jnode, klevel, i
-                ]  # This is not my pattern!
+                rlonlatcr[jnode, klevel, i] = rcoords[jnode, klevel, i]  # This is not my pattern!
             rcosa[jnode, klevel] = math.cos(rlonlatcr[jnode, klevel, MYY])
             rsina[jnode, klevel] = math.sin(rlonlatcr[jnode, klevel, MYY])
         for jnode in range(0, self.nodes_size):

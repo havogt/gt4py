@@ -1,8 +1,7 @@
 from typing import Optional, Union
 from . import tracing
 
-from .builtins import *
-from .runtime import *
+from . import builtins, runtime
 
 __all__ = ["builtins", "runtime"]
 
