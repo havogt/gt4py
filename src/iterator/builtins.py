@@ -2,18 +2,24 @@ from iterator.dispatcher import Dispatcher
 
 
 __all__ = [
-    "compose",
     "deref",
-    "div",
-    "domain",
-    "greater",
-    "if_",
-    "is_none",
+    "shift",
     "lift",
-    "make_tuple",
-    "minus",
-    "mul",
+    "reduce",
+    "scan",
+    "is_none",
+    "domain",
     "named_range",
+    "compose",
+    "if_",
+    "or_",
+    "minus",
+    "plus",
+    "mul",
+    "div",
+    "eq",
+    "greater",
+    "make_tuple",
     "nth",
     "plus",
     "reduce",
@@ -80,6 +86,11 @@ def if_(*args):
 
 
 @builtin_dispatch
+def or_(*args):
+    raise BackendNotSelectedError()
+
+
+@builtin_dispatch
 def minus(*args):
     raise BackendNotSelectedError()
 
@@ -100,15 +111,20 @@ def div(*args):
 
 
 @builtin_dispatch
+def eq(*args):
+    raise BackendNotSelectedError()
+
+
+@builtin_dispatch
 def greater(*args):
     raise BackendNotSelectedError()
 
 
 @builtin_dispatch
 def make_tuple(*args):
-    raise BackendNotSelectedError
+    raise BackendNotSelectedError()
 
 
 @builtin_dispatch
 def nth(*args):
-    raise BackendNotSelectedError
+    raise BackendNotSelectedError()

@@ -75,13 +75,23 @@ class nabla_setup:
     def edges_size(self):
         return self.fs_edges.size
 
+    @staticmethod
+    def _is_pole_edge(e, edge_flags):
+        return Topology.check(edge_flags[e], Topology.POLE)
+
+    @property
+    def is_pole_edge_field(self):
+        edge_flags = np.array(self.mesh.edges.flags())
+
+        pole_edge_field = np.zeros((self.edges_size,))
+        for e in range(self.edges_size):
+            pole_edge_field[e] = self._is_pole_edge(e, edge_flags)
+        return edge_flags
+
     @property
     def sign_field(self):
         node2edge_sign = np.zeros((self.nodes_size, self.edges_per_node))
         edge_flags = np.array(self.mesh.edges.flags())
-
-        def is_pole_edge(e):
-            return Topology.check(edge_flags[e], Topology.POLE)
 
         for jnode in range(0, self.nodes_size):
             node_edge_con = self.mesh.nodes.edge_connectivity
@@ -93,7 +103,7 @@ class nabla_setup:
                     node2edge_sign[jnode, jedge] = 1.0
                 else:
                     node2edge_sign[jnode, jedge] = -1.0
-                    if is_pole_edge(iedge):
+                    if self._is_pole_edge(iedge, edge_flags):
                         node2edge_sign[jnode, jedge] = 1.0
         return node2edge_sign
 

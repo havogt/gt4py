@@ -31,6 +31,11 @@ def if_(cond, t, f):
     return t if cond else f
 
 
+@builtins.or_.register(EMBEDDED)
+def or_(a, b):
+    return a or b
+
+
 @builtins.nth.register(EMBEDDED)
 def nth(i, tup):
     return tup[i]
@@ -177,6 +182,11 @@ def mul(first, second):
 @builtins.div.register(EMBEDDED)
 def div(first, second):
     return first / second
+
+
+@builtins.eq.register(EMBEDDED)
+def eq(first, second):
+    return first == second
 
 
 @builtins.greater.register(EMBEDDED)
