@@ -171,7 +171,7 @@ def sign(node_indices, is_pole_edge):
     def sign_impl(node_index):
         def impl2(node_indices, is_pole_edge):
             return if_(
-                or_(deref(is_pole_edge), node_index == deref(shift(E2V, 0)(node_indices))),
+                or_(deref(is_pole_edge), eq(node_index, deref(shift(E2V, 0)(node_indices)))),
                 1.0,
                 -1.0,
             )
@@ -206,9 +206,10 @@ def nabla_sign(n_nodes, out_MXX, out_MYY, pp, S_MXX, S_MYY, vol, node_index, is_
     )
 
 
-def test_nabla_sign():
+def test_nabla_sign(backend, use_tmps):
     if use_tmps:
         pytest.xfail("use_tmps currently only supported for cartesian")
+
     backend, validate = backend
     setup = nabla_setup()
 
