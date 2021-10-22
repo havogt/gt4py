@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any, Dict, Optional, Set
 
 from eve import NodeTranslator
 from iterator import ir
@@ -21,3 +21,28 @@ class RemapSymbolRefs(NodeTranslator):
             node, ir.Lambda
         ), "found unexpected new symbol scope"
         return super().generic_visit(node, **kwargs)
+
+
+class RenameSymbols(NodeTranslator):
+    def visit_Sym(
+        self, node: ir.Sym, *, name_map: Dict[str, str], active: Optional[Set[str]] = None
+    ):
+        if active and node.id in active:
+            return ir.Sym(id=name_map.get(node.id, node.id))
+        return node
+
+    def visit_SymRef(
+        self, node: ir.SymRef, *, name_map: Dict[str, str], active: Optional[Set[str]] = None
+    ):
+        if active and node.id in active:
+            return ir.SymRef(id=name_map.get(node.id, node.id))
+        return node
+
+    def generic_visit(
+        self, node: ir.Node, *, name_map: Dict[str, str], active: Optional[Set[str]] = None
+    ):
+        if isinstance(node, ir.SymbolTableTrait):
+            if active is None:
+                active = set()
+            active = active | set(node.symtable_)
+        return super().generic_visit(node, name_map=name_map, active=active)
