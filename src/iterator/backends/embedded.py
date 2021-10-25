@@ -46,6 +46,7 @@ def ${id}(${','.join(params)}):
     )
 
 
+# TODO this wrapper should be replaced by an extension of the IR
 class WrapperGenerator(EmbeddedDSL):
     def visit_FencilDefinition(self, node: FencilDefinition, *, tmps):
         params = self.visit(node.params)
