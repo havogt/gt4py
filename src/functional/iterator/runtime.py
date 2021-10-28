@@ -89,12 +89,49 @@ class FundefDispatcher:
         self.__name__ = fun.__name__
 
     def __getitem__(self, arg):
-        assert arg is Ellipsis
+        if arg is Ellipsis:
 
-        def fun(*args):
-            return lift(self)(*args)
+            def fun(*args):
+                return lift(self)(*args)
 
-        return fun
+            return fun
+        # elif _is_domain(arg):
+        else:
+
+            def implicit_fencil(*args, out, **kwargs):
+                if len(args) == 1:
+
+                    @fendef
+                    def impl(out, inp0):
+                        closure(arg(), self, [out], [inp0])
+
+                elif len(args) == 2:
+
+                    @fendef
+                    def impl(out, inp0, inp1):
+                        closure(arg(), self, [out], [inp0, inp1])
+
+                elif len(args) == 3:
+
+                    @fendef
+                    def impl(out, inp0, inp1, inp2):
+                        closure(arg(), self, [out], [inp0, inp1, inp2])
+
+                elif len(args) == 7:
+
+                    @fendef
+                    def impl(out, inp0, inp1, inp2, inp3, inp4, inp5, inp6):
+                        closure(arg(), self, [out], [inp0, inp1, inp2, inp3, inp4, inp5, inp6])
+
+                else:
+                    assert False
+
+                impl(out, *args, **kwargs)
+
+            return implicit_fencil
+
+        # else:
+        #     raise AssertionError("Invalid argument in stencil []")
 
     def __call__(self, *args):
         if type(self)._hook:

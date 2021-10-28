@@ -63,7 +63,15 @@ def test_hdiff(hdiff_reference, backend, use_tmps):
     coeff_s = np_as_located_field(IDim, JDim)(coeff[:, :, 0])
     out_s = np_as_located_field(IDim, JDim)(np.zeros_like(coeff[:, :, 0]))
 
-    hdiff(inp_s, coeff_s, out_s, shape[0], shape[1], backend=backend, use_tmps=use_tmps)
+    # hdiff(inp_s, coeff_s, out_s, shape[0], shape[1], backend=backend, use_tmps=use_tmps)
+    hdiff_sten[lambda: domain(named_range(IDim, 0, shape[0]), named_range(JDim, 0, shape[1]))](
+        inp_s,
+        coeff_s,
+        out=out_s,
+        backend=backend,
+        use_tmps=use_tmps,
+        offset_provider={"I": IDim, "J": JDim},
+    )
 
     if validate:
         assert np.allclose(out[:, :, 0], out_s)

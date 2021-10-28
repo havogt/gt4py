@@ -21,7 +21,7 @@ from functional.iterator.ir import (
     Sym,
     SymRef,
 )
-from functional.iterator.runtime import CartesianAxis
+from functional.iterator.runtime import CartesianAxis, Offset
 
 
 TRACING = "tracing"
@@ -68,9 +68,45 @@ def _patch_Expr():
     def __lt__(self, other):
         return FunCall(fun=SymRef(id="less"), args=[self, make_node(other)])
 
+    # alternative
+    @monkeypatch_method(Expr)
+    def __getitem__(self, *args):
+        offsets = []
+        for arg in args:
+            o = make_node(arg)
+            if isinstance(o, tuple):
+                if len(o) == 0:
+                    break
+                assert len(o) == 2
+                offsets.append(o[0])
+                offsets.append(o[1])
+            else:
+                offsets.append(o)
+        return FunCall(
+            fun=SymRef(id="deref"),
+            args=[FunCall(fun=FunCall(fun=SymRef(id="shift"), args=[*offsets]), args=[self])],
+        )
+
     @monkeypatch_method(Expr)
     def __call__(self, *args):
-        return FunCall(fun=self, args=[*make_node(args)])
+        if not isinstance(self, FunCall) and self.id not in iterator.ir.builtin_functions:
+            # this is a hack to test "beautified iterator"
+            # this should cover cases where we don't get the iterator from a function call
+            offsets = []
+            for arg in args:
+                o = make_node(arg)
+                if isinstance(o, tuple):
+                    assert len(o) == 2
+                    offsets.append(o[0])
+                    offsets.append(o[1])
+                else:
+                    offsets.append(o)
+            return FunCall(
+                fun=SymRef(id="deref"),
+                args=[FunCall(fun=FunCall(fun=SymRef(id="shift"), args=[*offsets]), args=[self])],
+            )
+        else:
+            return FunCall(fun=self, args=[*make_node(args)])
 
 
 _patch_Expr()
