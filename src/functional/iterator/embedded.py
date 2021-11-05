@@ -13,12 +13,17 @@ from functional.iterator.utils import tupelize
 EMBEDDED = "embedded"
 
 
-class NeighborTableOffsetProvider:
+class NeighborTableOffsetProviderBase:
+    def __init__(self, max_neighbors) -> None:
+        self.max_neighbors = max_neighbors
+
+
+class NeighborTableOffsetProvider(NeighborTableOffsetProviderBase):
     def __init__(self, tbl, origin_axis, neighbor_axis, max_neighbors) -> None:
+        super().__init__(max_neighbors)
         self.tbl = tbl
         self.origin_axis = origin_axis
         self.neighbor_axis = neighbor_axis
-        self.max_neighbors = max_neighbors
 
 
 @builtins.deref.register(EMBEDDED)
