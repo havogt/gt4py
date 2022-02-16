@@ -41,7 +41,8 @@ class SymbolTypeVariable(SymbolType):
 
 @dataclass(frozen=True)
 class OffsetType(SymbolType):
-    ...
+    from_dimension: func_common.Dimension
+    to_dimension: list[func_common.Dimension]
 
     def __str__(self):
         return f"Offset[{self.id}]"

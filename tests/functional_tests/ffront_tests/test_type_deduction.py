@@ -20,6 +20,7 @@ from functional.ffront import field_operator_ast as foast
 from functional.ffront.fbuiltins import Field, float64, int64
 from functional.ffront.foast_passes.type_deduction import FieldOperatorTypeDeductionError, TypeInfo
 from functional.ffront.func_to_foast import FieldOperatorParser
+from functional.iterator.runtime import CartesianAxis, offset
 
 
 def type_info_cases():
@@ -255,3 +256,43 @@ def test_notting_int():
         match=r"Incompatible type for unary operator 'not': Field\[\.\.\., dtype=int64\]!",
     ):
         _ = FieldOperatorParser.apply_to_function(not_int)
+
+
+from devtools import debug
+
+
+def test_shift():
+    A = CartesianAxis("A")
+    B = CartesianAxis("B")
+    A2BDim = CartesianAxis("A2BDim")
+    A2B = offset("A2B", from_axis=B, to_axis=[A, A2BDim])
+
+    def shift_tag_only(a: Field[[B], "float64"]):
+        return a(A2B[0])
+
+    parsed = FieldOperatorParser.apply_to_function(shift_tag_only)
+    debug(parsed)
+    assert parsed.symtable_["a"].type == common_types.FieldType(
+        dims=[A],
+        dtype=common_types.ScalarType(kind=common_types.ScalarKind.FLOAT64, shape=None),
+    )
+
+
+# TODO
+# - test incompatible offest
+
+
+def test_shift_tag_only():
+    A = CartesianAxis("A")
+    B = CartesianAxis("B")
+    A2BDim = CartesianAxis("B")
+    A2B = offset("A2B", from_axis=B, to_axis=[A, A2BDim])
+
+    def shift_tag_only(a: Field[[B], "float64"]):
+        return a(A2B)
+
+    parsed = FieldOperatorParser.apply_to_function(shift_tag_only)
+    assert parsed.symtable_["a"].type == common_types.FieldType(
+        dims=[A, A2BDim],
+        dtype=common_types.ScalarType(kind=common_types.ScalarKind.FLOAT64, shape=None),
+    )

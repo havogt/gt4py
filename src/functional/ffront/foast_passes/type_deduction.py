@@ -12,11 +12,11 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 from dataclasses import dataclass
-from typing import Optional, Type, TypeGuard
+from typing import List, Literal, Optional, Type, TypeGuard, Union
 
 import functional.ffront.field_operator_ast as foast
 from eve import NodeTranslator, SymbolTableTrait
-from functional.common import GTSyntaxError
+from functional.common import Dimension, GTSyntaxError
 from functional.ffront import common_types
 
 
@@ -251,10 +251,14 @@ class FieldOperatorTypeDeduction(NodeTranslator):
         new_value = self.visit(node.value, **kwargs)
         new_type = None
         if kwargs.get("in_shift", False):
+            t = kwargs["symtable"][new_value.id].type
+            type_ = common_types.OffsetType(
+                from_dimension=t.from_dimension, to_dimension=t.to_dimension
+            )
             return foast.Subscript(
                 value=new_value,
                 index=node.index,
-                type=common_types.OffsetType(),
+                type=type_,
                 location=node.location,
             )
         match new_value.type:
@@ -371,11 +375,32 @@ class FieldOperatorTypeDeduction(NodeTranslator):
         new_type = common_types.TupleType(types=[element.type for element in new_elts])
         return foast.TupleExpr(elts=new_elts, type=new_type, location=node.location)
 
+    def _update_field_dimension(self, field, offset_type):
+        from_axis = offset_type.from_dimension
+        to_axes = offset_type.to_dimension
+        if not from_axis in field.type.dims:
+            raise FieldOperatorTypeDeductionError("Shift is incompatible with Field type.")
+        field.type.dims.remove(from_axis)
+        field.type.dims.extend(to_axes)
+
     def visit_Call(self, node: foast.Call, **kwargs) -> foast.Call:
         new_func = self.visit(node.func, **kwargs)
         if isinstance(new_func.type, common_types.FieldType):
-            new_args = self.visit(node.args, in_shift=True, **kwargs)
-            return foast.Call(func=new_func, args=new_args, location=node.location)
+            if len(node.args) != 1:
+                raise FieldOperatorTypeDeductionError("Shift with multiple arguments not defined.")
+
+            offsets = self.visit(node.args, in_shift=True, **kwargs)
+            symtable = kwargs["symtable"]
+            field = symtable[new_func.id]
+            if field.type.dims is not Literal[Ellipsis]:
+                for offset in offsets:
+                    name = offset.value.id if isinstance(offset, foast.Subscript) else offset.id
+
+                    self._update_field_dimension(field, symtable[name].type)
+                    if isinstance(offset, foast.Subscript):
+                        field.type.dims.pop()
+
+            return foast.Call(func=new_func, args=offsets, location=node.location)
         return foast.Call(
             func=new_func, args=self.visit(node.args, **kwargs), location=node.location
         )

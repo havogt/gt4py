@@ -12,10 +12,12 @@ __all__ = ["offset", "fundef", "fendef", "closure", "CartesianAxis"]
 @dataclass(frozen=True)
 class Offset:
     value: Optional[Union[int, str]] = None
+    from_axis: Optional[common.Dimension] = None
+    to_axis: Optional[common.Dimension] = None
 
 
-def offset(value):
-    return Offset(value)
+def offset(value, *, from_axis=None, to_axis=None):
+    return Offset(value, from_axis, to_axis)
 
 
 class CartesianAxis(common.Dimension):

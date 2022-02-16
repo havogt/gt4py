@@ -56,6 +56,7 @@ def make_scalar_kind(dtype: npt.DTypeLike) -> common_types.ScalarKind:
 
 def make_symbol_type_from_typing(
     type_hint: Any,
+    value: Any = None,
     *,
     global_ns: Optional[dict[str, Any]] = None,
     local_ns: Optional[dict[str, Any]] = None,
@@ -160,7 +161,11 @@ def make_symbol_type_from_typing(
                 args=args, kwargs=kwargs, returns=recursive_make_symbol(return_type)
             )
         case runtime.Offset:
-            return common_types.OffsetType()
+            assert value
+            from_axis = value.from_axis
+            # typingx.get_typing(value.from_axis)
+            to_axis = value.to_axis
+            return common_types.OffsetType(from_dimension=from_axis, to_dimension=to_axis)
 
     raise FieldOperatorTypeError(f"'{type_hint}' type is not supported")
 
@@ -174,7 +179,7 @@ def make_symbol_from_value(
         raise ValueError("The type of a symbol can not be a type itself.")
     type_ = typingx.get_typing(value, annotate_callable_kwargs=True)
 
-    symbol_type = make_symbol_type_from_typing(type_)
+    symbol_type = make_symbol_type_from_typing(type_, value)
 
     if isinstance(
         symbol_type, (common_types.DataType, common_types.FunctionType, common_types.OffsetType)
