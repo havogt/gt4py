@@ -141,6 +141,9 @@ class Program:
                 f"The following function(s) are not valid GTCallables `{', '.join(not_callable)}`."
             )
         lowered_funcs = [vars_[name].__gt_itir__() for name in func_names]
+        for v in vars_.values():
+            for f in v.closure_refs.globals.values():
+                lowered_funcs.append(f.__gt_itir__())
 
         return itir.Program(
             function_definitions=lowered_funcs, fencil_definitions=[fencil_itir_node], setqs=[]
