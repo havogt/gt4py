@@ -1,0 +1,67 @@
+import { workspace, ExtensionContext, commands } from 'vscode';
+
+import {
+	LanguageClient,
+	LanguageClientOptions,
+	ServerOptions,
+} from 'vscode-languageclient/node';
+
+/**
+ * Method to get workspace configuration option
+ * @param option name of the option (e.g. for cmakels.path should be path)
+ * @param defaultValue default value to return if option is not set
+ */
+function getConfig<T>(option: string, defaultValue?: any): T {
+	const config = workspace.getConfiguration('gt4py');
+	return config.get<T>(option, defaultValue);
+}
+
+let client: LanguageClient;
+
+export function activate(context: ExtensionContext) {
+	// let executablePath = getConfig<string>('path');
+
+	// let serverOptions: ServerOptions = {
+	// 	command: executablePath,
+	// 	args: [getConfig<string>("buildDirectory")]
+	// };
+
+	let serverOptions: ServerOptions= {
+		command: "~/git/gt4py/.p310_3.venv/bin/python3",
+		args: ["-m", "functional.ffront.language_server"]
+	};
+
+	// const filePattern: string = '**/*.{' +
+	// 	['CMakeLists.txt', 'cmake', 'cmake.in'].join()
+	// 	+ '}';
+
+	// Options to control the language client
+	let clientOptions: LanguageClientOptions = {
+		// Register the server for plain text documents
+		// documentSelector: [{ scheme: 'file', pattern: filePattern }],
+		documentSelector: [{ scheme: 'file', language: 'python' }],
+		synchronize: {
+			// Notify the server about file changes to '.clientrc files contained in the workspace
+			// fileEvents: workspace.createFileSystemWatcher('**/.clientrc')
+		},
+		outputChannelName: 'gt4pyls'
+	};
+
+	// Create the language client and start the client.
+	client = new LanguageClient(
+		'gt4pyls',
+		'GT4Py Language Server',
+		serverOptions,
+		clientOptions
+	);
+
+	// context.subscriptions.push(commands.registerCommand('gt4py.restart', async () => {
+	// 	await client.stop();
+	// 	client.start();
+	// }));
+
+	client.start();
+}
+
+// this method is called when your extension is deactivated
+export function deactivate() {}

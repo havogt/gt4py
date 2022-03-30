@@ -40,6 +40,9 @@ from functional.iterator.backend_executor import execute_program
 DEFAULT_BACKEND = "roundtrip"
 
 
+LSP_MODE = False
+
+
 @typing.runtime_checkable
 class GTCallable(Protocol):
     """
@@ -184,6 +187,8 @@ def program(
         ...     field_op(in_field, out=out_field)
         >>> program(in_field, out=out_field) # noqa: F821 # doctest: +SKIP
     """
+    if LSP_MODE:
+        return definition
     return Program.from_function(definition, externals, backend)
 
 
@@ -308,4 +313,6 @@ def field_operator(
         ...     ...
         >>> field_op(in_field, out=out_field)  # noqa: F821 # doctest: +SKIP
     """
+    if LSP_MODE:
+        return definition
     return FieldOperator.from_function(definition, externals, backend)
