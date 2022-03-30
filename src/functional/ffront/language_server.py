@@ -173,7 +173,7 @@ async def did_open(ls: LanguageServer, params: DidOpenTextDocumentParams):
 
 @gt4py_server.feature(HOVER)
 def hover(params: HoverParams) -> Hover:
-    field_ops = _parse_foast(gt4py_server, params)
+    field_ops = _parse_foast(gt4py_server, params)  # take from cache
     node = _find_node(field_ops, params.position)
     if node:
         if hasattr(node, "type") and isinstance(node.type, FieldType):
