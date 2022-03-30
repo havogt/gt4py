@@ -1,5 +1,7 @@
+import ast
 import logging
 
+from devtools import debug
 from pygls.lsp.methods import (
     COMPLETION,
     HOVER,
@@ -23,9 +25,13 @@ from pygls.lsp.types import (
 )
 from pygls.server import LanguageServer
 
-from functional.common import FieldOperator
+from eve.type_definitions import SourceLocation
+from eve.visitors import NodeVisitor
+from functional.ffront import decorator, func_to_foast
 from functional.ffront.common_types import FieldType
+from functional.ffront.field_operator_ast import Call
 from functional.ffront.foast_passes.type_deduction import FieldOperatorTypeDeductionError
+from functional.ffront.source_utils import CapturedVars, SourceDefinition
 
 
 gt4py_server = LanguageServer()
@@ -49,26 +55,9 @@ def completions(params: CompletionParams):
     )
 
 
-import ast
-
-from devtools import debug
-
-from eve.type_definitions import SourceLocation
-from eve.visitors import NodeVisitor
-from functional.ffront import decorator, func_to_foast
-from functional.ffront.source_utils import ClosureRefs, SourceDefinition
-
-
 def _parse_foast(server: LanguageServer, params):
-    # server.show_message("parsing foast")
-
     text_doc = server.workspace.get_document(params.text_document.uri)
     source = text_doc.source
-    # print(text_doc.source)
-    # module = importCode(text_doc.source, "my_module")
-    # print("loaded")
-    # debug(module.lap)
-    # print(module)
     diagnostics = []
     res = []
     try:
@@ -110,7 +99,7 @@ def _parse_foast(server: LanguageServer, params):
             fun = namespace[f.name]
 
             foast_field_ops.append(
-                func_to_foast.FieldOperatorParser.apply(src_def, ClosureRefs.from_function(fun))
+                func_to_foast.FieldOperatorParser.apply(src_def, CapturedVars.from_function(fun))
             )
         res = foast_field_ops
     except Exception as e:
@@ -120,6 +109,7 @@ def _parse_foast(server: LanguageServer, params):
                     start=Position(line=e.args[1][1], character=e.args[1][2] - 1),
                     end=Position(line=e.args[1][4], character=e.args[1][5] - 1),
                 ),
+                # TODO should be the following but somehow we mess up line numbers
                 # range=Range(
                 #     start=Position(line=e.lineno, character=e.offset),
                 #     end=Position(line=e.end_lineno, character=e.end_offset),
@@ -139,13 +129,20 @@ def _find_node(field_ops, position: Position):
             self.line = line
             self.column = column
 
-        def visit_Node(self, node):
+        def _check_and_append(self, node):
             loc: SourceLocation = node.location
             if loc.line < self.line or (loc.line == self.line and loc.column <= self.column):
                 if loc.end_line > self.line or (
                     loc.end_line == self.line and loc.end_column >= self.column
                 ):
                     self.nodes.append(node)
+
+        def visit_Call(self, node: Call):
+            self._check_and_append(node)
+            self.visit(node.args)  # skip node.func
+
+        def visit_Node(self, node, **kwargs):
+            self._check_and_append(node)
             self.generic_visit(node)
 
         @classmethod
@@ -201,9 +198,7 @@ def hover(params: HoverParams) -> Hover:
     field_ops = _parse_foast(gt4py_server, params)
     node = _find_node(field_ops, params.position)
     if node:
-        print("found node")
         if hasattr(node, "type") and isinstance(node.type, FieldType):
-            print("found field op")
             t = node.type
             return Hover(
                 contents=f"Field[[{','.join(d.value for d in t.dims)}], {t.dtype}]",
@@ -216,7 +211,7 @@ def hover(params: HoverParams) -> Hover:
                 ),
             )
         return Hover(
-            contents="Type was not deduced!",
+            contents="Not a FieldType or not deduced!",
             range=Range(
                 start=Position(line=node.location.line, character=node.location.column - 1),
                 end=Position(
