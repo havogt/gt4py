@@ -3,6 +3,8 @@
   "displayName": "GT4Py",
   "description": "",
   "version": "0.0.1",
+  "repository": "https://github.com/GridTools/gt4py",
+  "publisher": "havogt",
   "engines": {
     "vscode": "^1.65.0"
   },

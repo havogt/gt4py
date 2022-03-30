@@ -61,24 +61,44 @@ function startLangServer(
     return new LanguageClient(command, serverOptions, getClientOptions());
 }
 
+/**
+ * Resolves paths that start with a tilde to the user's home directory.
+ *
+ * @param  {string} filePath '~/GitHub/Repo/file.png'
+ * @return {string}          '/home/bob/GitHub/Repo/file.png'
+ * from https://stackoverflow.com/questions/21077670/expanding-resolving-in-node-js
+ */
+function resolveTilde (filePath: string) {
+  const os = require('os');
+  if (!filePath || typeof(filePath) !== 'string') {
+    return '';
+  }
+
+  // '~/folder/path' or '~' not '~alias/folder/path'
+  if (filePath.startsWith('~/') || filePath === '~') {
+    return filePath.replace('~', os.homedir());
+  }
+
+  return filePath;
+}
+
 export function activate(context: ExtensionContext): void {
     if (context.extensionMode === ExtensionMode.Development) {
         // Development - Run the server manually
-		console.log("starting");
         client = startLangServerTCP(2087);
-		console.log("started");
     } else {
         // Production - Client is going to run the server (for use within `.vsix` package)
         const cwd = path.join(__dirname, "..", "..");
         const pythonPath = workspace
             .getConfiguration("python")
-            .get<string>("pythonPath");
+            .get<string>("defaultInterpreterPath");
 
         if (!pythonPath) {
-            throw new Error("`python.pythonPath` is not set");
+            throw new Error("`python.defaultInterpreterPath` is not set");
         }
+		const resolvedPath = resolveTilde(pythonPath);
 
-        client = startLangServer(pythonPath, ["-m", "server"], cwd);
+        client = startLangServer(resolvedPath, ["-m", "functional.ffront.language_server"], cwd);
     }
 
     context.subscriptions.push(client.start());
