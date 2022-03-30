@@ -1,3 +1,4 @@
+import argparse
 import ast
 import logging
 
@@ -61,25 +62,30 @@ def _parse_foast(server: LanguageServer, params):
 
         field_ops = ExtractFieldOps.apply(program)
 
-        source_split = source.splitlines()
+        if len(field_ops) == 0:
+            gt4py_server.show_message("excluding file form parsing (no field operator found)")
+        else:
+            source_split = source.splitlines()
 
-        decorator.LSP_MODE = True
+            decorator.LSP_MODE = True
 
-        c = compile(source, "<string>", "exec")
-        namespace = {}
-        exec(c, namespace)
+            c = compile(source, "<string>", "exec")
+            namespace = {}
+            exec(c, namespace)
 
-        foast_field_ops = []
-        for f in field_ops:
-            s = "\n".join(source_split[f.lineno - 1 : f.end_lineno])
+            foast_field_ops = []
+            for f in field_ops:
+                s = "\n".join(source_split[f.lineno - 1 : f.end_lineno])
 
-            src_def = SourceDefinition(s, "<string>", f.lineno - 1)
-            fun = namespace[f.name]
+                src_def = SourceDefinition(s, "<string>", f.lineno - 1)
+                fun = namespace[f.name]
 
-            foast_field_ops.append(
-                func_to_foast.FieldOperatorParser.apply(src_def, CapturedVars.from_function(fun))
-            )
-        res = foast_field_ops
+                foast_field_ops.append(
+                    func_to_foast.FieldOperatorParser.apply(
+                        src_def, CapturedVars.from_function(fun)
+                    )
+                )
+            res = foast_field_ops
     except Exception as e:
         if isinstance(e, FieldOperatorTypeDeductionError):
             d = Diagnostic(
@@ -202,8 +208,26 @@ def hover(params: HoverParams) -> Hover:
     #     return Hover(contents="", range=Range(start=params.position, end=params.position))
 
 
+def add_arguments(parser):
+    parser.description = "simple json server example"
+
+    parser.add_argument("--tcp", action="store_true", help="Use TCP server")
+    parser.add_argument("--ws", action="store_true", help="Use WebSocket server")
+    parser.add_argument("--host", default="127.0.0.1", help="Bind to this address")
+    parser.add_argument("--port", type=int, default=2087, help="Bind to this port")
+
+
 def main():
-    gt4py_server.start_tcp("127.0.0.1", 2087)
+    parser = argparse.ArgumentParser()
+    add_arguments(parser)
+    args = parser.parse_args()
+
+    if args.tcp:
+        gt4py_server.start_tcp(args.host, args.port)
+    elif args.ws:
+        gt4py_server.start_ws(args.host, args.port)
+    else:
+        gt4py_server.start_io()
 
 
 if __name__ == "__main__":
