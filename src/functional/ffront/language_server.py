@@ -1,19 +1,13 @@
 import ast
 import logging
 
-from devtools import debug
 from pygls.lsp.methods import (
-    COMPLETION,
     HOVER,
     TEXT_DOCUMENT_DID_CHANGE,
     TEXT_DOCUMENT_DID_CLOSE,
     TEXT_DOCUMENT_DID_OPEN,
 )
 from pygls.lsp.types import (
-    CompletionItem,
-    CompletionList,
-    CompletionOptions,
-    CompletionParams,
     Diagnostic,
     DidChangeTextDocumentParams,
     DidCloseTextDocumentParams,
@@ -37,22 +31,6 @@ from functional.ffront.source_utils import CapturedVars, SourceDefinition
 gt4py_server = LanguageServer()
 
 logging.basicConfig(filename="pygls.log", level=logging.DEBUG, filemode="w")
-
-
-@gt4py_server.feature(COMPLETION, CompletionOptions(trigger_characters=[","]))
-def completions(params: CompletionParams):
-    """Returns completion items."""
-    print("bal")
-    return CompletionList(
-        is_incomplete=False,
-        items=[
-            CompletionItem(label='"'),
-            CompletionItem(label="["),
-            CompletionItem(label="]"),
-            CompletionItem(label="{"),
-            CompletionItem(label="}"),
-        ],
-    )
 
 
 def _parse_foast(server: LanguageServer, params):
