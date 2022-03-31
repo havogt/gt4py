@@ -22,7 +22,7 @@ from pygls.server import LanguageServer
 
 from eve.type_definitions import SourceLocation
 from eve.visitors import NodeVisitor
-from functional.ffront import decorator, func_to_foast
+from functional.ffront import decorator, func_to_foast, func_to_past
 from functional.ffront.common_types import FieldType
 from functional.ffront.field_operator_ast import Call
 from functional.ffront.foast_passes.type_deduction import FieldOperatorTypeDeductionError
@@ -42,27 +42,27 @@ def _parse_foast(server: LanguageServer, params):
     try:
         program = ast.parse(source)
 
-        class ExtractFieldOps(ast.NodeVisitor):
-            def __init__(self):
+        class ExtractDecorated(ast.NodeVisitor):
+            def __init__(self, decorator_name):
+                self.decorator_name = decorator_name
                 self.field_ops = []
 
             def visit_FunctionDef(self, node: ast.FunctionDef):
                 if node.decorator_list:
                     for d in node.decorator_list:
-                        if isinstance(d, ast.Name) and d.id == "field_operator":
+                        if isinstance(d, ast.Name) and d.id == self.decorator_name:
                             self.field_ops.append(node)
 
-                            print(node.name)
-
             @classmethod
-            def apply(cls, node):
-                x = cls()
+            def apply(cls, decorator_name, node):
+                x = cls(decorator_name)
                 x.visit(node)
                 return x.field_ops
 
-        field_ops = ExtractFieldOps.apply(program)
+        field_ops = ExtractDecorated.apply("field_operator", program)  # TODO fully qualified
+        programs = ExtractDecorated.apply("program", program)
 
-        if len(field_ops) == 0:
+        if len(field_ops) == 0 and len(programs) == 0:
             gt4py_server.show_message("excluding file form parsing (no field operator found)")
         else:
             source_split = source.splitlines()
@@ -85,7 +85,19 @@ def _parse_foast(server: LanguageServer, params):
                         src_def, CapturedVars.from_function(fun)
                     )
                 )
-            res = foast_field_ops
+
+            past_programs = []
+            for p in programs:
+                s = "\n".join(source_split[p.lineno - 1 : p.end_lineno])
+
+                src_def = SourceDefinition(s, "<string>", p.lineno - 1)
+                prog = namespace[p.name]
+
+                past_programs.append(
+                    func_to_past.ProgramParser.apply(src_def, CapturedVars.from_function(prog))
+                )
+
+            res = foast_field_ops + past_programs
     except Exception as e:
         if isinstance(e, FieldOperatorTypeDeductionError):
             d = Diagnostic(
@@ -182,18 +194,19 @@ def hover(params: HoverParams) -> Hover:
     field_ops = _parse_foast(gt4py_server, params)  # take from cache
     node = _find_node(field_ops, params.position)
     if node:
-        if hasattr(node, "type") and isinstance(node.type, FieldType):
-            t = node.type
-            return Hover(
-                contents=f"Field[[{','.join(d.value for d in t.dims)}], {t.dtype}]",
-                range=Range(
-                    start=Position(line=node.location.line, character=node.location.column - 1),
-                    end=Position(
-                        line=node.location.end_line,
-                        character=node.location.end_column - 1,
+        if hasattr(node, "type"):
+            if isinstance(node.type, FieldType):
+                t = node.type
+                return Hover(
+                    contents=f"Field[[{','.join(d.value for d in t.dims)}], {t.dtype}]",
+                    range=Range(
+                        start=Position(line=node.location.line, character=node.location.column - 1),
+                        end=Position(
+                            line=node.location.end_line,
+                            character=node.location.end_column - 1,
+                        ),
                     ),
-                ),
-            )
+                )
         return Hover(
             contents="Not a FieldType or not deduced!",
             range=Range(
@@ -204,8 +217,6 @@ def hover(params: HoverParams) -> Hover:
                 ),
             ),
         )
-    # else:
-    #     return Hover(contents="", range=Range(start=params.position, end=params.position))
 
 
 def add_arguments(parser):
