@@ -33,12 +33,13 @@ gt4py_server = LanguageServer()
 
 logging.basicConfig(filename="pygls.log", level=logging.DEBUG, filemode="w")
 
+parsed_nodes = {}
+
 
 def _parse_foast(server: LanguageServer, params):
     text_doc = server.workspace.get_document(params.text_document.uri)
     source = text_doc.source
     diagnostics = []
-    res = []
     try:
         program = ast.parse(source)
 
@@ -97,7 +98,7 @@ def _parse_foast(server: LanguageServer, params):
                     func_to_past.ProgramParser.apply(src_def, CapturedVars.from_function(prog))
                 )
 
-            res = foast_field_ops + past_programs
+            parsed_nodes[params.text_document.uri] = foast_field_ops + past_programs
     except Exception as e:
         if isinstance(e, FieldOperatorTypeDeductionError):
             d = Diagnostic(
@@ -113,9 +114,7 @@ def _parse_foast(server: LanguageServer, params):
                 message=e.msg,
             )
             diagnostics.append(d)
-    print(f"diags {diagnostics}")
     server.publish_diagnostics(params.text_document.uri, diagnostics)
-    return res
 
 
 def _find_node(field_ops, position: Position):
@@ -191,7 +190,10 @@ async def did_open(ls: LanguageServer, params: DidOpenTextDocumentParams):
 
 @gt4py_server.feature(HOVER)
 def hover(params: HoverParams) -> Hover:
-    field_ops = _parse_foast(gt4py_server, params)  # take from cache
+    field_ops = (
+        parsed_nodes[params.text_document.uri] if params.text_document.uri in parsed_nodes else []
+    )
+
     node = _find_node(field_ops, params.position)
     if node:
         if hasattr(node, "type"):
