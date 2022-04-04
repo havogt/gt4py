@@ -21,8 +21,8 @@ def from_exception(e: Exception) -> list[Diagnostic]:
     if isinstance(e, FieldOperatorTypeDeductionError):
         d = Diagnostic(
             range=Range(
-                start=Position(line=e.args[1][1], character=e.args[1][2] - 1),
-                end=Position(line=e.args[1][4], character=e.args[1][5] - 1),
+                start=Position(line=e.args[1][1] - 1, character=e.args[1][2] - 1),
+                end=Position(line=e.args[1][4] - 1, character=e.args[1][5] - 1),
             ),
             # TODO should be the following but somehow we mess up line numbers
             # range=Range(

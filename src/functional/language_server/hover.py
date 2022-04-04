@@ -75,7 +75,7 @@ def _find_node_at_position(field_ops, line: int, character: int):
 
 
 def hover_info(field_ops, line: int, character: int):
-    node = _find_node_at_position(field_ops, line, character)
+    node = _find_node_at_position(field_ops, line + 1, character)
     if node:
         if hasattr(node, "type"):
             if isinstance(node.type, FieldType):
@@ -83,9 +83,11 @@ def hover_info(field_ops, line: int, character: int):
                 return Hover(
                     contents=f"Field[[{', '.join(d.value for d in t.dims)}], {t.dtype}]",
                     range=Range(
-                        start=Position(line=node.location.line, character=node.location.column - 1),
+                        start=Position(
+                            line=node.location.line - 1, character=node.location.column - 1
+                        ),
                         end=Position(
-                            line=node.location.end_line,
+                            line=node.location.end_line - 1,
                             character=node.location.end_column - 1,
                         ),
                     ),
@@ -93,9 +95,9 @@ def hover_info(field_ops, line: int, character: int):
         return Hover(
             contents="Not a FieldType or not deduced!",
             range=Range(
-                start=Position(line=node.location.line, character=node.location.column - 1),
+                start=Position(line=node.location.line - 1, character=node.location.column - 1),
                 end=Position(
-                    line=node.location.end_line,
+                    line=node.location.end_line - 1,
                     character=node.location.end_column - 1,
                 ),
             ),

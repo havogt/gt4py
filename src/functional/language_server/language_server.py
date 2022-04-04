@@ -36,10 +36,11 @@ parsed_nodes = {}  # cache of parsed nodes TODO encapsulate
 def _parse(server: LanguageServer, params):
     text_doc = server.workspace.get_document(params.text_document.uri)
     source = text_doc.source
+    filename = f"<lsp:{params.text_document.uri}>"
 
     diags = []
     try:
-        parsed_nodes[params.text_document.uri] = parser.parse_ffront(source)
+        parsed_nodes[params.text_document.uri] = parser.parse_ffront(filename, source)
     except Exception as e:
         new_diags = diagnostics.from_exception(e)
         if new_diags:

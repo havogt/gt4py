@@ -58,14 +58,15 @@ def test_ffront_lap():
 
 
 def test_parsing():
-    nodes = parse_ffront(source)
+    nodes = parse_ffront("<foo>", source)
     assert len(nodes) == 2
 
 
 def test_hover():
-    nodes = parse_ffront(source)
+    nodes = parse_ffront("<foo>", source)
     hover = hover_info(nodes, 19, 6)
 
+    assert hover
     assert hover.contents == "Field[[IDim, JDim], float64]"
     assert hover.range.start.line == 19
     assert hover.range.start.character == 4
@@ -73,6 +74,7 @@ def test_hover():
     assert hover.range.end.character == 42
 
     hover = hover_info(nodes, 26, 9)
+    assert hover
     assert hover.contents == "Field[[IDim, JDim], float64]"
     assert hover.range.start.line == 22
     assert hover.range.start.character == 8

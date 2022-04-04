@@ -13,6 +13,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import ast
+import linecache
 
 from functional.ffront import decorator, func_to_foast, func_to_past
 from functional.ffront.source_utils import CapturedVars, SourceDefinition
@@ -36,7 +37,7 @@ class _ExtractDecorated(ast.NodeVisitor):
         return x.field_ops
 
 
-def parse_ffront(source: str):
+def parse_ffront(filename: str, source: str):
     program = ast.parse(source)
 
     field_ops = _ExtractDecorated.apply("field_operator", program)  # TODO fully qualified
@@ -45,36 +46,19 @@ def parse_ffront(source: str):
     if len(field_ops) == 0 and len(programs) == 0:
         return None  # don't execute a file that doesn't contain ffront code
 
-    source_split = source.splitlines()
+    linecache_tuple = (len(source), None, source.splitlines(True), filename)
+    linecache.cache[filename] = linecache_tuple
 
-    decorator.LSP_MODE = (
-        True  # TODO hack to be able to execute the decorator from a string (without file)
-    )
-
-    c = compile(source, "<string>", "exec")
+    c = compile(source, filename, "exec")
     namespace = {}
     exec(c, namespace)
 
     foast_ops = []
     for f in field_ops:
-        s = "\n".join(source_split[f.lineno - 1 : f.end_lineno])
-
-        src_def = SourceDefinition(s, "<string>", f.lineno - 1)
-        fun = namespace[f.name]
-
-        foast_ops.append(
-            func_to_foast.FieldOperatorParser.apply(src_def, CapturedVars.from_function(fun))
-        )
+        foast_ops.append(namespace[f.name].foast_node)
 
     past_programs = []
     for p in programs:
-        s = "\n".join(source_split[p.lineno - 1 : p.end_lineno])
-
-        src_def = SourceDefinition(s, "<string>", p.lineno - 1)
-        prog = namespace[p.name]
-
-        past_programs.append(
-            func_to_past.ProgramParser.apply(src_def, CapturedVars.from_function(prog))
-        )
+        past_programs.append(namespace[p.name].past_node)
 
     return foast_ops + past_programs

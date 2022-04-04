@@ -30,9 +30,17 @@ from functional.ffront import fbuiltins
 MISSING_FILENAME = "<string>"
 
 
+def _getabsfile(func: Callable) -> str:
+    filename = inspect.getfile(func)
+    if filename.startswith("<"):
+        return filename
+    else:
+        return inspect.getabsfile(func, filename)
+
+
 def make_source_definition_from_function(func: Callable) -> SourceDefinition:
     try:
-        filename = inspect.getabsfile(func) or MISSING_FILENAME
+        filename = _getabsfile(func) or MISSING_FILENAME
         source = textwrap.dedent(inspect.getsource(func))
         starting_line = (
             inspect.getsourcelines(func)[1] if not filename.endswith(MISSING_FILENAME) else 1
