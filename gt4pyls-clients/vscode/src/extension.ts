@@ -98,7 +98,7 @@ export function activate(context: ExtensionContext): void {
         }
 		const resolvedPath = resolveTilde(pythonPath);
 
-        client = startLangServer(resolvedPath, ["-m", "functional.ffront.language_server"], cwd);
+        client = startLangServer(resolvedPath, ["-m", "functional.language_server.language_server"], cwd);
     }
 
     context.subscriptions.push(client.start());
