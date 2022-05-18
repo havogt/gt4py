@@ -1,7 +1,6 @@
 from typing import Any
 
-from eve.codegen import FormatTemplate as as_fmt
-from eve.codegen import TemplatedGenerator
+from eve.codegen import FormatTemplate as as_fmt, TemplatedGenerator
 from functional.iterator.backends import backend
 from functional.iterator.transforms import apply_common_transforms
 
@@ -9,16 +8,9 @@ from functional.iterator.transforms import apply_common_transforms
 class ToLispLike(TemplatedGenerator):
     Sym = as_fmt("{id}")
     FunCall = as_fmt("({fun} {' '.join(args)})")
-    IntLiteral = as_fmt("{value}")
+    Literal = as_fmt("{value}")
     OffsetLiteral = as_fmt("{value}")
-    StringLiteral = as_fmt("{value}")
     SymRef = as_fmt("{id}")
-    Program = as_fmt(
-        """
-    {''.join(function_definitions)}
-    {''.join(fencil_definitions)}
-    """
-    )
     StencilClosure = as_fmt(
         """(
      :domain {domain}
@@ -29,7 +21,9 @@ class ToLispLike(TemplatedGenerator):
     """
     )
     FencilDefinition = as_fmt(
-        """(defen {id}({' '.join(params)})
+        """
+        ({' '.join(function_definitions)})
+        (defen {id}({' '.join(params)})
         {''.join(closures)})
         """
     )
