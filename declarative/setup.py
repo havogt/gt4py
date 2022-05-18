@@ -15,11 +15,18 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 
+from pathlib import Path
 from setuptools import Command, find_namespace_packages, setup
+
+
+def local_pkg(pkg_name: str, subdir: str) -> str:
+    """Returns a path to a local package."""
+    return f"{pkg_name} @ file://{Path.cwd().parent / subdir}"
 
 
 if __name__ == "__main__":
     setup(
         use_scm_version=False,
+        install_requires=[local_pkg("gt4py-eve", "eve")]
         # packages=find_namespace_packages(include=["gt4py.*"]),
     )  # Disable setuptools_scm as a temporary workaround
