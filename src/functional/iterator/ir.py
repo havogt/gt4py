@@ -1,33 +1,31 @@
-from typing import List, Union
+from typing import ClassVar, List, Union
 
-from eve import Node
-from eve.traits import SymbolName, SymbolTableTrait
+import eve
+from eve.traits import SymbolName, SymbolTableTrait, ValidatedSymbolTableTrait
 from eve.type_definitions import SymbolRef
-from functional.iterator.util.sym_validation import validate_symbol_refs
+from eve.utils import noninstantiable
+
+
+@noninstantiable
+class Node(eve.Node):
+    def __str__(self) -> str:
+        from functional.iterator.pretty_printer import pformat
+
+        return pformat(self)
 
 
 class Sym(Node):  # helper
     id: SymbolName  # noqa: A003
 
 
+@noninstantiable
 class Expr(Node):
     ...
 
 
-class BoolLiteral(Expr):
-    value: bool
-
-
-class IntLiteral(Expr):
-    value: int
-
-
-class FloatLiteral(Expr):
-    value: float  # TODO other float types
-
-
-class StringLiteral(Expr):
+class Literal(Expr):
     value: str
+    type: str  # noqa: A003
 
 
 class NoneLiteral(Expr):
@@ -36,9 +34,6 @@ class NoneLiteral(Expr):
 
 class OffsetLiteral(Expr):
     value: Union[int, str]
-
-    def __hash__(self):
-        return self.value.__hash__()
 
 
 class AxisLiteral(Expr):
@@ -64,12 +59,6 @@ class FunctionDefinition(Node, SymbolTableTrait):
     params: List[Sym]
     expr: Expr
 
-    def __eq__(self, other):
-        return isinstance(other, FunctionDefinition) and self.id == other.id
-
-    def __hash__(self):
-        return hash(self.id)
-
 
 class StencilClosure(Node):
     domain: Expr
@@ -78,40 +67,35 @@ class StencilClosure(Node):
     inputs: List[SymRef]
 
 
-class FencilDefinition(Node, SymbolTableTrait):
+BUILTINS = {
+    "domain",
+    "named_range",
+    "lift",
+    "make_tuple",
+    "tuple_get",
+    "reduce",
+    "deref",
+    "can_deref",
+    "shift",
+    "scan",
+    "plus",
+    "minus",
+    "multiplies",
+    "divides",
+    "eq",
+    "less",
+    "greater",
+    "if_",
+    "not_",
+    "and_",
+    "or_",
+}
+
+
+class FencilDefinition(Node, ValidatedSymbolTableTrait):
     id: SymbolName  # noqa: A003
+    function_definitions: List[FunctionDefinition]
     params: List[Sym]
     closures: List[StencilClosure]
 
-
-class Program(Node, SymbolTableTrait):
-    function_definitions: List[FunctionDefinition]
-    fencil_definitions: List[FencilDefinition]
-
-    builtin_functions = list(
-        Sym(id=name)
-        for name in [
-            "domain",
-            "named_range",
-            "lift",
-            "is_none",
-            "make_tuple",
-            "tuple_get",
-            "reduce",
-            "deref",
-            "shift",
-            "scan",
-            "plus",
-            "minus",
-            "multiplies",
-            "divides",
-            "eq",
-            "less",
-            "greater",
-            "if_",
-            "not_",
-            "and_",
-            "or_",
-        ]
-    )
-    _validate_symbol_refs = validate_symbol_refs()
+    _NODE_SYMBOLS_: ClassVar = [Sym(id=name) for name in BUILTINS]

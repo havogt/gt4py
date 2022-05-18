@@ -1,8 +1,10 @@
 import itertools
 import numbers
+import typing
 from dataclasses import dataclass
 
 import numpy as np
+import numpy.typing
 
 from functional import iterator
 from functional.iterator import builtins
@@ -14,16 +16,24 @@ EMBEDDED = "embedded"
 
 
 class NeighborTableOffsetProvider:
-    def __init__(self, tbl, origin_axis, neighbor_axis, max_neighbors) -> None:
+    def __init__(
+        self, tbl, origin_axis, neighbor_axis, max_neighbors, has_skip_values=True
+    ) -> None:
         self.tbl = tbl
         self.origin_axis = origin_axis
         self.neighbor_axis = neighbor_axis
         self.max_neighbors = max_neighbors
+        self.has_skip_values = has_skip_values
 
 
 @builtins.deref.register(EMBEDDED)
 def deref(it):
     return it.deref()
+
+
+@builtins.can_deref.register(EMBEDDED)
+def can_deref(it):
+    return it.can_deref()
 
 
 @builtins.if_.register(EMBEDDED)
@@ -81,11 +91,20 @@ def lift(stencil):
                 )
                 return args[0].offset_provider[open_offsets[0].value].max_neighbors
 
-            def deref(self):
-                shifted_args = tuple(map(lambda arg: arg.shift(*self.offsets), args))
+            def _shifted_args(self):
+                return tuple(map(lambda arg: arg.shift(*self.offsets), args))
 
-                if any(shifted_arg.is_none() for shifted_arg in shifted_args):
-                    return None
+            def can_deref(self):
+                shifted_args = self._shifted_args()
+                return all(shifted_arg.can_deref() for shifted_arg in shifted_args)
+
+            def deref(self):
+                if not self.can_deref():
+                    # this can legally happen in cases like `if_(can_deref(lifted), deref(lifted), 42.)`
+                    # because both branches will be eagerly executed
+                    return _UNDEFINED
+
+                shifted_args = self._shifted_args()
 
                 if self.elem is None:
                     return stencil(*shifted_args)
@@ -107,7 +126,7 @@ def reduce(fun, init):
         for i in range(n):
             # we can check a single argument
             # because all arguments share the same pattern
-            if builtins.deref(builtins.shift(i)(first_it)) is None:
+            if not builtins.can_deref(builtins.shift(i)(first_it)):
                 break
             res = fun(
                 res,
@@ -116,49 +135,6 @@ def reduce(fun, init):
         return res
 
     return sten
-
-
-class _None:
-    """Dummy object to allow execution of expression containing Nones in non-active path.
-
-    E.g.
-    `if_(is_none(state), 42, 42+state)`
-    here 42+state needs to be evaluatable even if is_none(state)
-
-    TODO: all possible arithmetic operations
-    """
-
-    def __add__(self, other):
-        return _None()
-
-    def __radd__(self, other):
-        return _None()
-
-    def __sub__(self, other):
-        return _None()
-
-    def __rsub__(self, other):
-        return _None()
-
-    def __mul__(self, other):
-        return _None()
-
-    def __rmul__(self, other):
-        return _None()
-
-    def __truediv__(self, other):
-        return _None()
-
-    def __rtruediv__(self, other):
-        return _None()
-
-    def __getitem__(self, i):
-        return _None()
-
-
-@builtins.is_none.register(EMBEDDED)
-def is_none(arg):
-    return isinstance(arg, _None)
 
 
 @builtins.domain.register(EMBEDDED)
@@ -271,6 +247,8 @@ def group_offsets(*offsets):
 
 
 def shift_position(pos, *complete_offsets, offset_provider):
+    if pos is None:
+        return None
     new_pos = pos.copy()
     for tag, index in complete_offsets:
         new_pos = execute_shift(new_pos, tag, index, offset_provider=offset_provider)
@@ -359,10 +337,15 @@ class MDIterator:
         )
         return self.offset_provider[self.incomplete_offsets[0].value].max_neighbors
 
-    def is_none(self):
-        return self.pos is None
+    def can_deref(self):
+        return self.pos is not None
 
     def deref(self):
+        if not self.can_deref():
+            # this can legally happen in cases like `if_(can_deref(inp), deref(inp), 42.)`
+            # because both branches will be eagerly executed
+            return _UNDEFINED
+
         shifted_pos = self.pos.copy()
         # TODO(havogt): support nested tuples
         axises = self.field[0].axises if isinstance(self.field, tuple) else self.field.axises
@@ -408,6 +391,9 @@ def make_in_iterator(inp, pos, offset_provider, *, column_axis):
 
 
 builtins.builtin_dispatch.push_key(EMBEDDED)  # makes embedded the default
+
+
+FIELD_DTYPE_T = typing.TypeVar("FIELD_DTYPE_T", bound=np.typing.DTypeLike)
 
 
 class LocatedField:
@@ -502,6 +488,10 @@ def index_field(axis, dtype=float):
     return LocatedField(lambda index: index[0], (axis,), dtype)
 
 
+def constant_field(value: typing.Any, dtype: type) -> LocatedField:
+    return LocatedField(lambda _: value, (), dtype)
+
+
 @builtins.shift.register(EMBEDDED)
 def shift(*offsets):
     def impl(it):
@@ -523,7 +513,12 @@ class ScanArgIterator:
         self.k_pos = k_pos
 
     def deref(self):
+        if not self.can_deref():
+            return _UNDEFINED
         return self.wrapped_iter.deref()[self.k_pos]
+
+    def can_deref(self):
+        return self.wrapped_iter.can_deref()
 
     def shift(self, *offsets):
         return ScanArgIterator(self.wrapped_iter, offsets=[*offsets, *self.offsets])
@@ -630,52 +625,56 @@ def as_tuple_field(field):
     return field
 
 
+_column_range = None  # TODO this is a bit ugly, alternative: pass scan range via iterator
+
+
+@builtins.scan.register(EMBEDDED)
+def scan(scan_pass, is_forward, init):
+    def impl(*iters):
+        if _column_range is None:
+            raise RuntimeError("Column range is not defined, cannot scan.")
+
+        column_range = _column_range
+        if not is_forward:
+            column_range = reversed(column_range)
+
+        state = init
+        col = []
+        for i in column_range:
+            state = scan_pass(
+                state, *map(shifted_scan_arg(i), iters)
+            )  # more generic scan returns state and result as 2 different things
+            col.append(state)
+
+        if not is_forward:
+            col = np.flip(col)
+
+        if isinstance(col[0], tuple):
+            dtype = np.dtype([("", type(c)) for c in col[0]])
+            return np.asarray(col, dtype=dtype)
+
+        return np.asarray(col)
+
+    return impl
+
+
 def fendef_embedded(fun, *args, **kwargs):  # noqa: 536
-    assert "offset_provider" in kwargs
+    if "offset_provider" not in kwargs:
+        raise RuntimeError("offset_provider not provided")
 
     @iterator.runtime.closure.register(EMBEDDED)
     def closure(domain, sten, out, ins):  # domain is Dict[axis, range]
         if not (is_located_field(out) or can_be_tuple_field(out)):
             raise TypeError("Out needs to be a located field.")
 
+        global _column_range
         column = None
         if "column_axis" in kwargs:
-            _column_axis = kwargs["column_axis"]
-            column = Column(_column_axis, domain[_column_axis])
-            del domain[_column_axis]
+            column_axis = kwargs["column_axis"]
+            column = Column(column_axis, domain[column_axis])
+            del domain[column_axis]
 
-        @builtins.scan.register(
-            EMBEDDED
-        )  # TODO this is a bit ugly, alternative: pass scan range via iterator
-        def scan(scan_pass, is_forward, init):
-            def impl(*iters):
-                if column is None:
-                    raise RuntimeError("Column axis is not defined, cannot scan.")
-
-                _range = column.range
-                if not is_forward:
-                    _range = reversed(_range)
-
-                state = init
-                if state is None:
-                    state = _None()
-                col = []
-                for i in _range:
-                    state = scan_pass(
-                        state, *map(shifted_scan_arg(i), iters)
-                    )  # more generic scan returns state and result as 2 different things
-                    col.append(state)
-
-                if not is_forward:
-                    col = np.flip(col)
-
-                if isinstance(col[0], tuple):
-                    dtype = ", ".join(np.dtype(type(c)).str for c in col[0])
-                    return np.asarray(col, dtype=dtype)
-
-                return np.asarray(col)
-
-            return impl
+            _column_range = column.range
 
         out = as_tuple_field(out) if can_be_tuple_field(out) else out
 
@@ -700,6 +699,8 @@ def fendef_embedded(fun, *args, **kwargs):  # noqa: 536
                     colpos[column.axis] = k
                     ordered_indices = get_ordered_indices(out.axises, colpos)
                     out[ordered_indices] = res[k]
+
+        _column_range = None
 
     fun(*args)
 

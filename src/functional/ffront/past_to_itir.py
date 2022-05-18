@@ -13,10 +13,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 from typing import Union
 
-from eve import NodeTranslator, SymbolTableTrait
+from eve import NodeTranslator, traits
 from functional.common import GTTypeError
-from functional.ffront import common_types
-from functional.ffront import program_ast as past
+from functional.ffront import common_types, program_ast as past
 from functional.iterator import ir as itir
 
 
@@ -24,7 +23,7 @@ def _size_arg_from_field(field_name: str, dim: int) -> str:
     return f"__{field_name}_size_{dim}"
 
 
-class ProgramLowering(NodeTranslator):
+class ProgramLowering(traits.VisitorWithSymbolTableTrait, NodeTranslator):
     """
     Lower Program AST (PAST) to Iterator IR (ITIR).
 
@@ -32,6 +31,7 @@ class ProgramLowering(NodeTranslator):
     --------
     >>> from functional.ffront.func_to_past import ProgramParser
     >>> from functional.iterator.runtime import CartesianAxis, offset
+    >>> from functional.iterator import ir
     >>> from functional.common import Field
     >>>
     >>> float64 = float
@@ -44,7 +44,12 @@ class ProgramLowering(NodeTranslator):
     ...    fieldop(inp, out=out)
     >>>
     >>> parsed = ProgramParser.apply_to_function(program)
-    >>> lowered = ProgramLowering.apply(parsed)
+    >>> fieldop_def = ir.FunctionDefinition(
+    ...     id="fieldop",
+    ...     params=[ir.Sym(id="inp")],
+    ...     expr=ir.FunCall(fun=ir.SymRef(id="deref"), args=[ir.SymRef(id="inp")])
+    ... )
+    >>> lowered = ProgramLowering.apply(parsed, [fieldop_def])
     >>> type(lowered)
     <class 'functional.iterator.ir.FencilDefinition'>
     >>> lowered.id
@@ -53,11 +58,11 @@ class ProgramLowering(NodeTranslator):
     [Sym(id='inp'), Sym(id='out'), Sym(id='__inp_size_0'), Sym(id='__out_size_0')]
     """
 
-    contexts = (SymbolTableTrait.symtable_merger,)
-
     @classmethod
-    def apply(cls, node: past.Program) -> itir.FencilDefinition:
-        return cls().visit(node)
+    def apply(
+        cls, node: past.Program, function_definitions: list[itir.FunctionDefinition]
+    ) -> itir.FencilDefinition:
+        return cls().visit(node, function_definitions=function_definitions)
 
     def _gen_size_params_from_program(self, node: past.Program):
         """Generate symbols for each field param and dimension."""
@@ -68,9 +73,9 @@ class ProgramLowering(NodeTranslator):
                     size_params.append(itir.Sym(id=_size_arg_from_field(param.id, dim_idx)))
         return size_params
 
-    def visit_Program(self, node: past.Program, **kwargs) -> itir.FencilDefinition:
-        symtable = kwargs["symtable"]
-
+    def visit_Program(
+        self, node: past.Program, *, symtable, function_definitions, **kwargs
+    ) -> itir.FencilDefinition:
         # The ITIR does not support dynamically getting the size of a field. As
         #  a workaround we add additional arguments to the fencil definition
         #  containing the size of all fields. The caller of a program is (e.g.
@@ -90,6 +95,7 @@ class ProgramLowering(NodeTranslator):
 
         return itir.FencilDefinition(
             id=node.id,
+            function_definitions=function_definitions,
             params=[itir.Sym(id=inp.id) for inp in node.params] + size_params,
             closures=closures,
         )
@@ -102,7 +108,7 @@ class ProgramLowering(NodeTranslator):
         return itir.StencilClosure(
             domain=domain,
             stencil=itir.SymRef(id=node.func.id),
-            inputs=[self.visit(arg, **kwargs) for arg in node.args],
+            inputs=[itir.SymRef(id=self.visit(arg, **kwargs).id) for arg in node.args],
             output=output,
         )
 
@@ -114,7 +120,7 @@ class ProgramLowering(NodeTranslator):
         elif isinstance(slice_bound, past.Constant):
             assert (
                 isinstance(slice_bound.type, common_types.ScalarType)
-                and slice_bound.type.kind == common_types.ScalarKind.INT64
+                and slice_bound.type.kind == common_types.ScalarKind.INT
             )
             if slice_bound.value < 0:
                 lowered_bound = itir.FunCall(
@@ -154,7 +160,9 @@ class ProgramLowering(NodeTranslator):
                 # an expression for the size of a dimension
                 dim_size = itir.SymRef(id=_size_arg_from_field(out_field_name.id, dim_i))
                 # lower bound
-                lower = self._visit_slice_bound(slice_.lower, itir.IntLiteral(value=0), dim_size)
+                lower = self._visit_slice_bound(
+                    slice_.lower, itir.Literal(value="0", type="int"), dim_size
+                )
                 upper = self._visit_slice_bound(slice_.upper, dim_size, dim_size)
 
                 domain_args.append(
@@ -171,7 +179,7 @@ class ProgramLowering(NodeTranslator):
                     fun=itir.SymRef(id="named_range"),
                     args=[
                         itir.AxisLiteral(value=dim.value),
-                        itir.IntLiteral(value=0),
+                        itir.Literal(value="0", type="int"),
                         # here we use the artificial size arguments added to the fencil
                         itir.SymRef(id=_size_arg_from_field(out_field_name.id, dim_idx)),
                     ],
@@ -183,25 +191,21 @@ class ProgramLowering(NodeTranslator):
                 "Unexpected `out` argument. Must be a `past.Subscript` or `past.Name` node."
             )
 
-        return self.visit(out_field_name, **kwargs), itir.FunCall(
+        return itir.SymRef(id=self.visit(out_field_name, **kwargs).id), itir.FunCall(
             fun=itir.SymRef(id="domain"), args=domain_args
         )
 
-    def visit_Constant(
-        self, node: past.Constant, **kwargs
-    ) -> Union[itir.IntLiteral, itir.FloatLiteral, itir.BoolLiteral]:
+    def visit_Constant(self, node: past.Constant, **kwargs) -> Union[itir.Literal]:
         if isinstance(node.type, common_types.ScalarType) and node.type.shape is None:
             match node.type.kind:
-                case common_types.ScalarKind.INT32 | common_types.ScalarKind.INT64:
-                    return itir.IntLiteral(value=node.value)
-                case common_types.ScalarKind.FLOAT32 | common_types.ScalarKind.FLOAT64:
-                    return itir.FloatLiteral(value=node.value)
-                case common_types.ScalarKind.BOOL:
-                    return itir.BoolLiteral(value=node.value)
-                case _:
+                case common_types.ScalarKind.STRING:
                     raise NotImplementedError(
                         f"Scalars of kind {node.type.kind} not supported currently."
                     )
+            typename = node.type.kind.name.lower()
+            if typename.startswith("int"):
+                typename = "int"
+            return itir.Literal(value=str(node.value), type=typename)
 
         raise NotImplementedError("Only scalar literals supported currently.")
 

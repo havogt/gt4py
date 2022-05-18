@@ -25,14 +25,12 @@ import pydantic
 import pydantic.generics
 
 from . import iterators, utils
-from .type_definitions import NOTHING, IntEnum, Str, StrEnum
-from .typingx import (
+from .extended_typing import (
     Any,
-    AnyNoArgCallable,
-    ClassVar,
     Dict,
     Generator,
     List,
+    NoArgsCallable,
     Optional,
     Set,
     Tuple,
@@ -41,6 +39,7 @@ from .typingx import (
     Union,
     no_type_check,
 )
+from .type_definitions import NOTHING, IntEnum, Str, StrEnum
 
 
 # -- Fields --
@@ -75,7 +74,7 @@ _EVE_METADATA_KEY = "_EVE_META_"
 def field(
     default: Any = NOTHING,
     *,
-    default_factory: Optional[AnyNoArgCallable] = None,
+    default_factory: Optional[NoArgsCallable] = None,
     kind: Optional[FieldKind] = None,
     constraints: Optional[FieldConstraintsDict] = None,
     schema_config: Dict[str, Any] = None,
@@ -182,9 +181,6 @@ class BaseNode(pydantic.BaseModel, metaclass=NodeMetaclass):
             typically to cache derived, non-essential information on the node.
 
     """
-
-    __node_impl_fields__: ClassVar[NodeImplFieldMetadataDict]
-    __node_children__: ClassVar[NodeChildrenMetadataDict]
 
     def iter_impl_fields(self) -> Generator[Tuple[str, Any], None, None]:
         for name in self.__node_impl_fields__.keys():

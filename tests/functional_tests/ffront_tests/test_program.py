@@ -13,6 +13,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # TODO(tehrengruber): All field operators and programs should be executable
 #  as is at some point. Adopt tests to also run on the regular python objects.
+import pathlib
 import re
 
 import numpy as np
@@ -20,8 +21,7 @@ import pytest
 
 from eve.pattern_matching import ObjectPattern as P
 from functional.common import Field, GTTypeError
-from functional.ffront import common_types
-from functional.ffront import program_ast as past
+from functional.ffront import common_types, program_ast as past
 from functional.ffront.decorator import field_operator, program
 from functional.ffront.fbuiltins import FieldOffset
 from functional.ffront.func_to_past import ProgramParser
@@ -112,11 +112,20 @@ def invalid_out_slice_dims_program_def(identity_def):
     return invalid_out_slice_dims_program
 
 
+@pytest.fixture
+def itir_identity_fundef():
+    return itir.FunctionDefinition(
+        id="identity",
+        params=[itir.Sym(id="x")],
+        expr=itir.FunCall(fun=itir.SymRef(id="deref"), args=[itir.SymRef(id="x")]),
+    )
+
+
 def test_identity_fo_execution(identity_def):
     size = 10
     in_field = np_as_located_field(IDim)(np.ones((size)))
     out_field = np_as_located_field(IDim)(np.zeros((size)))
-    identity = field_operator(identity_def)
+    identity = field_operator(identity_def, backend="roundtrip")
 
     identity(in_field, out=out_field, offset_provider={})
 
@@ -145,7 +154,7 @@ def test_copy_parsing(copy_program_def):
                 kwargs={"out": P(past.Name, id="out_field")},
             )
         ],
-        location=P(past.SourceLocation, line=58, source=__file__),
+        location=P(past.SourceLocation, line=58, source=str(pathlib.Path(__file__).resolve())),
     )
     assert pattern_node.match(past_node, raise_exception=True)
 
@@ -268,9 +277,9 @@ def test_copy_restrict_parsing(copy_restrict_program_def):
     pattern_node.match(past_node, raise_exception=True)
 
 
-def test_copy_lowering(copy_program_def):
+def test_copy_lowering(copy_program_def, itir_identity_fundef):
     past_node = ProgramParser.apply_to_function(copy_program_def)
-    itir_node = ProgramLowering.apply(past_node)
+    itir_node = ProgramLowering.apply(past_node, function_definitions=[itir_identity_fundef])
     closure_pattern = P(
         itir.StencilClosure,
         domain=P(
@@ -282,7 +291,7 @@ def test_copy_lowering(copy_program_def):
                     fun=P(itir.SymRef, id="named_range"),
                     args=[
                         P(itir.AxisLiteral, value="IDim"),
-                        P(itir.IntLiteral, value=0),
+                        P(itir.Literal, value="0", type="int"),
                         P(itir.SymRef, id="__out_field_size_0"),
                     ],
                 )
@@ -307,9 +316,9 @@ def test_copy_lowering(copy_program_def):
     fencil_pattern.match(itir_node, raise_exception=True)
 
 
-def test_copy_restrict_lowering(copy_restrict_program_def):
+def test_copy_restrict_lowering(copy_restrict_program_def, itir_identity_fundef):
     past_node = ProgramParser.apply_to_function(copy_restrict_program_def)
-    itir_node = ProgramLowering.apply(past_node)
+    itir_node = ProgramLowering.apply(past_node, function_definitions=[itir_identity_fundef])
     closure_pattern = P(
         itir.StencilClosure,
         domain=P(
@@ -321,8 +330,8 @@ def test_copy_restrict_lowering(copy_restrict_program_def):
                     fun=P(itir.SymRef, id="named_range"),
                     args=[
                         P(itir.AxisLiteral, value="IDim"),
-                        P(itir.IntLiteral, value=1),
-                        P(itir.IntLiteral, value=2),
+                        P(itir.Literal, value="1", type="int"),
+                        P(itir.Literal, value="2", type="int"),
                     ],
                 )
             ],
@@ -365,7 +374,9 @@ def test_shift_by_one_execution():
     ):
         shift_by_one(in_field, out=out_field[:-1])
 
-    shift_by_one_program(in_field, out_field, offset_provider={"Ioff": IDim})
+    shift_by_one_program.with_backend("roundtrip")(
+        in_field, out_field, offset_provider={"Ioff": IDim}
+    )
 
     assert np.allclose(out_field, out_field_ref)
 
@@ -374,7 +385,7 @@ def test_copy_execution(copy_program_def):
     size = 10
     in_field = np_as_located_field(IDim)(np.ones((size)))
     out_field = np_as_located_field(IDim)(np.zeros((size)))
-    copy_program = program(copy_program_def)
+    copy_program = program(copy_program_def, backend="roundtrip")
 
     copy_program(in_field, out_field, offset_provider={})
 
@@ -386,7 +397,7 @@ def test_double_copy_execution(double_copy_program_def):
     in_field = np_as_located_field(IDim)(np.ones((size)))
     intermediate_field = np_as_located_field(IDim)(np.zeros((size)))
     out_field = np_as_located_field(IDim)(np.zeros((size)))
-    double_copy_program = program(double_copy_program_def)
+    double_copy_program = program(double_copy_program_def, backend="roundtrip")
 
     double_copy_program(in_field, intermediate_field, out_field, offset_provider={})
 
@@ -400,7 +411,7 @@ def test_copy_restricted_execution(copy_restrict_program_def):
     out_field_ref = np_as_located_field(IDim)(
         np.array([1 if i in range(1, 2) else 0 for i in range(0, size)])
     )
-    copy_restrict_program = program(copy_restrict_program_def)
+    copy_restrict_program = program(copy_restrict_program_def, backend="roundtrip")
 
     copy_restrict_program(in_field, out_field, offset_provider={})
 
@@ -421,7 +432,7 @@ def test_calling_fo_from_fo_execution(identity_def):
     def pow_three(field: Field[[IDim], "float64"]) -> Field[[IDim], "float64"]:
         return field * pow_two(field)
 
-    @program
+    @program(backend="roundtrip")
     def fo_from_fo_program(in_field: Field[[IDim], "float64"], out_field: Field[[IDim], "float64"]):
         pow_three(in_field, out=out_field)
 
