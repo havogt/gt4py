@@ -49,7 +49,7 @@ def _parse(server: LanguageServer, params):
             # raise e
             server.show_message(
                 str(e)
-            )  # for debugging: inform the client that something went wrong
+            )  # for debugging:t inform the client that something went wrong
 
     server.publish_diagnostics(
         params.text_document.uri, diags
