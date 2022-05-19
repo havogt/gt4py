@@ -45,6 +45,11 @@ def _parse(server: LanguageServer, params):
         new_diags = diagnostics.from_exception(e)
         if new_diags:
             diags.extend(new_diags)
+        else:
+            # raise e
+            server.show_message(
+                str(e)
+            )  # for debugging: inform the client that something went wrong
 
     server.publish_diagnostics(
         params.text_document.uri, diags

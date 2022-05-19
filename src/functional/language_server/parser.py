@@ -18,7 +18,7 @@ import linecache
 import beniget
 import gast
 
-from eve import typingx
+from eve import extended_typing
 from functional.ffront import decorator, func_to_foast, func_to_past
 from functional.ffront.source_utils import (
     CapturedVars,
@@ -110,6 +110,11 @@ def capture(code: str):
                             self.visited_external.add(parent)
                             self.rec(parent)
                             self.external.append(parent)
+            if node.annotation:
+                self.visit(node.annotation)
+
+        # def generic_visit(self, node):
+        #     return super().generic_visit(node)
 
         def rec(self, node):
             "walk definitions to find their operands's def"
@@ -157,33 +162,43 @@ def parse_ffront(filename: str, source: str):
     # namespace = {}
     # exec(c, namespace)
 
+    def get_with_name(name, lst):
+        for x in lst:
+            if x.name == name:
+                return x
+
     foast_ops = []
     for f, captures in field_ops_with_captures:
-        body = [*captures, f]
+        body = [
+            *captures,
+            # field_ops[f.name],
+            # f
+            get_with_name(f.name, field_ops),
+        ]
 
         module = ast.Module(body=body, type_ignores=[])
+        print(ast.dump(module))
         c = compile(module, filename, "exec")
         # c = compile(source, filename, "exec")
         namespace = {}
         exec(c, namespace)
 
-        # foast_ops.append(namespace[f.name].foast_node)
+        foast_ops.append(namespace[f.name].foast_node)
 
-        source_split = source.splitlines()
-        s = "\n".join(source_split[f.lineno - 1 : f.end_lineno])
+        # source_split = source.splitlines()
+        # s = "\n".join(source_split[f.lineno - 1 : f.end_lineno])
 
-        src_def = SourceDefinition(s, "<string>", f.lineno - 1)
-        fun = namespace[f.name]
-        annotations = typingx.get_type_hints(fun.definition)
+        # src_def = SourceDefinition(s, "<string>", f.lineno - 1)
+        # fun = namespace[f.name]
+        # annotations = extended_typing.get_type_hints(fun.definition)
 
-        # captured_vars_from_fun = make_captured_vars_from_function(fun.definition)
-        captured_vars = CapturedVars(
-            {}, {"Ioff": namespace["Ioff"], "Joff": namespace["Joff"]}, annotations, set(), set()
-        )
-        foast_ops.append(
-            # func_to_foast.FieldOperatorParser.apply(src_def, CapturedVars.from_function(fun))
-            func_to_foast.FieldOperatorParser.apply(src_def, captured_vars)
-        )
+        # # captured_vars_from_fun = make_captured_vars_from_function(fun.definition)
+        # cap = {k: v for k, v in namespace.items() if k not in ["reduction"]}  # TODO
+        # captured_vars = CapturedVars({}, cap, annotations, set(), set())
+        # foast_ops.append(
+        #     # func_to_foast.FieldOperatorParser.apply(src_def, CapturedVars.from_function(fun))
+        #     func_to_foast.FieldOperatorParser.apply(src_def, captured_vars)
+        # )
 
     past_programs = []
     for p in programs:
