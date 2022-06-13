@@ -15,10 +15,11 @@
 from pygls.lsp import Diagnostic, Position, Range
 
 from functional.ffront.foast_passes.type_deduction import FieldOperatorTypeDeductionError
+from functional.ffront.func_to_foast import FieldOperatorSyntaxError
 
 
 def from_exception(e: Exception) -> list[Diagnostic]:
-    if isinstance(e, FieldOperatorTypeDeductionError):
+    if isinstance(e, (FieldOperatorTypeDeductionError, FieldOperatorSyntaxError)):
         d = Diagnostic(
             range=Range(
                 start=Position(line=e.lineno - 1, character=e.offset - 1),
