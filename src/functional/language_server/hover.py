@@ -14,7 +14,7 @@
 
 from pygls.lsp import Hover, Position, Range
 
-from eve.type_definitions import SourceLocation
+from eve import SourceLocation
 from eve.visitors import NodeVisitor
 from functional.ffront.common_types import FieldType
 from functional.ffront.field_operator_ast import Call
