@@ -1,4 +1,4 @@
-from typing import Iterator, Type, TypeGuard
+from typing import Iterator, Type, TypeGuard, Union
 
 from functional.common import Dimension, GTTypeError
 from functional.ffront import common_types as ct
@@ -41,7 +41,7 @@ def type_class(symbol_type: ct.SymbolType) -> Type[ct.SymbolType]:
     )
 
 
-def extract_dtype(symbol_type: ct.SymbolType) -> ct.ScalarType:
+def extract_dtype(symbol_type: ct.SymbolType) -> Union[ct.ScalarType, ct.TupleType]:
     """
     Extract the data type from ``symbol_type`` if it is one of FieldType or ScalarType.
 
@@ -76,7 +76,8 @@ def is_arithmetic(symbol_type: ct.SymbolType) -> bool:
     >>> is_arithmetic(ct.FieldType(dims=[], dtype=ct.ScalarType(kind=ct.ScalarKind.INT32)))
     True
     """
-    if extract_dtype(symbol_type).kind in [
+    dtype = extract_dtype(symbol_type)
+    if isinstance(dtype, ct.ScalarType) and dtype.kind in [
         ct.ScalarKind.INT32,
         ct.ScalarKind.INT64,
         ct.ScalarKind.FLOAT32,
@@ -87,7 +88,8 @@ def is_arithmetic(symbol_type: ct.SymbolType) -> bool:
 
 
 def is_logical(symbol_type: ct.SymbolType) -> bool:
-    return extract_dtype(symbol_type).kind is ct.ScalarKind.BOOL
+    dtype = extract_dtype(symbol_type)
+    return isinstance(dtype, ct.ScalarType) and dtype.kind is ct.ScalarKind.BOOL
 
 
 def extract_dims(symbol_type: ct.SymbolType) -> list[Dimension]:

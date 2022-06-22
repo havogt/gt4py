@@ -189,9 +189,15 @@ class FieldOperatorLowering(NodeTranslator):
         return self._lift_lambda(node)
 
     def visit_Subscript(self, node: foast.Subscript, **kwargs) -> itir.FunCall:
-        value = to_value(node.value)(self.visit(node.value, **kwargs))
+        value = self.visit(node.value, **kwargs)
+        if isinstance(node.value.type, ct.FieldType) and isinstance(
+            node.value.type.dtype, ct.TupleType
+        ):
+            value = im.deref_(value)
+            return self._lift_if_field(node)(im.tuple_get_(node.index, value))
 
-        return self._lift_if_field(node)(im.tuple_get_(node.index, value))
+        # return self._lift_if_field(node)(im.tuple_get_(node.index, value))
+        return im.tuple_get_(node.index, value)
 
     def visit_TupleExpr(self, node: foast.TupleExpr, **kwargs) -> itir.FunCall:
         return im.make_tuple_(*self.visit(node.elts, **kwargs))
