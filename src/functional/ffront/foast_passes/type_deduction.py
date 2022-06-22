@@ -132,6 +132,12 @@ class FieldOperatorTypeDeduction(traits.VisitorWithSymbolTableTrait, NodeTransla
         new_value = self.visit(node.value, **kwargs)
         new_type: Optional[ct.SymbolType] = None
         match new_value.type:
+            case ct.FieldType(dims=dims, dtype=dtype):
+                if not isinstance(dtype, ct.TupleType):
+                    raise FieldOperatorTypeDeductionError.from_foast_node(
+                        new_value, msg="Field is not a tuple field"
+                    )
+                new_type = ct.FieldType(dims=dims, dtype=dtype.types[node.index])
             case ct.TupleType(types=types):
                 new_type = types[node.index]
             case ct.OffsetType(source=source, target=(target1, target2)):

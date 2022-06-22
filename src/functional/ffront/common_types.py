@@ -95,7 +95,7 @@ class TupleType(DataType):
 @dataclass(frozen=True)
 class FieldType(DataType):
     dims: Union[list[func_common.Dimension], Literal[Ellipsis]]  # type: ignore[valid-type,misc]
-    dtype: ScalarType
+    dtype: Union[ScalarType, TupleType]
 
     def __str__(self):
         dims = "..." if self.dims is Ellipsis else f"[{', '.join(dim.value for dim in self.dims)}]"

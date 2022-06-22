@@ -182,17 +182,19 @@ class FieldOperatorLowering(NodeTranslator):
         )
         return self.lifted_lambda(*param_names)
 
-    def visit_Subscript(self, node: foast.Subscript, **kwargs) -> itir.FunCall:
-        return im.tuple_get_(node.index, self.visit(node.value, **kwargs))
-
-    def visit_TupleExpr(self, node: foast.TupleExpr, **kwargs) -> itir.FunCall:
-        return im.make_tuple_(*self.visit(node.elts, **kwargs))
-
     def _lift_if_field(self, node: foast.LocatedNode) -> Callable[[itir.Expr], itir.Expr]:
         assert can_be_value_or_iterator(node.type)
         if resulting_type_kind(node.type) is TypeKind.SCALAR:
             return lambda x: x
         return self._lift_lambda(node)
+
+    def visit_Subscript(self, node: foast.Subscript, **kwargs) -> itir.FunCall:
+        value = to_value(node.value)(self.visit(node.value, **kwargs))
+
+        return self._lift_if_field(node)(im.tuple_get_(node.index, value))
+
+    def visit_TupleExpr(self, node: foast.TupleExpr, **kwargs) -> itir.FunCall:
+        return im.make_tuple_(*self.visit(node.elts, **kwargs))
 
     def visit_UnaryOp(self, node: foast.UnaryOp, **kwargs) -> itir.FunCall:
         # TODO(tehrengruber): extend iterator ir to support unary operators

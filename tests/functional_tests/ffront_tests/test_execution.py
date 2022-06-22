@@ -237,6 +237,24 @@ def test_tuples():
     assert np.allclose((a.array() * 1.3 + b.array() * 5.0) * 3.4, c)
 
 
+def test_tuples_as_args():
+    size = 10
+    inp = np_as_located_field(IDim, None)(np.ones((size, 2)))
+    out = np_as_located_field(IDim)(np.zeros((size,)))
+
+    @field_operator
+    def tuples(inp: Field[[IDim], (float64, float64)]) -> Field[[IDim], float64]:
+        return inp[0] + inp[1]
+
+    @program(backend="roundtrip", debug=True)
+    def fencil(inp: Field[[IDim], (float64, float64)], out: Field[[IDim], float64]) -> None:
+        tuples(inp, out=out)
+
+    fencil(inp, out, offset_provider={})
+
+    assert np.allclose(np.sum(inp, axis=-1), out)
+
+
 def test_broadcasting():
     Edge = Dimension("Edge")
     K = Dimension("K")

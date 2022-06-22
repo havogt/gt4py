@@ -124,11 +124,14 @@ def make_symbol_type_from_typing(
             try:
                 dtype = recursive_make_symbol(dtype_arg)
             except TypingError as error:
+                raise TypingError(f"Got unexpected type '{dtype_arg}'!") from error
+            if (
+                not isinstance(dtype, (ct.ScalarType, ct.TupleType))
+                # or dtype.kind == ct.ScalarKind.STRING
+            ):
                 raise TypingError(
-                    f"Field dtype argument must be a scalar type (got '{dtype_arg}')!"
-                ) from error
-            if not isinstance(dtype, ct.ScalarType) or dtype.kind == ct.ScalarKind.STRING:
-                raise TypingError("Field dtype argument must be a scalar type (got '{dtype}')!")
+                    "Field dtype argument must be a scalar or tuple type (got '{dtype}')!"
+                )
             return ct.FieldType(dims=dims, dtype=dtype)
 
         case collections.abc.Callable:
@@ -153,6 +156,8 @@ def make_symbol_type_from_typing(
             return ct.FunctionType(
                 args=args, kwargs=kwargs, returns=recursive_make_symbol(return_type)
             )
+        case tuple(args):
+            return ct.TupleType(types=[recursive_make_symbol(arg) for arg in args])
 
     raise TypingError(f"'{type_hint}' type is not supported")
 
