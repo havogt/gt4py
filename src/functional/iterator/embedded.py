@@ -30,10 +30,42 @@ from functional.iterator.utils import tupelize
 EMBEDDED = "embedded"
 
 
+# # Atoms
+# Tag: TypeAlias = str
+# IntIndex: TypeAlias = int
+
+# # Offsets
+# OffsetTag: TypeAlias = Tag | SparseOffset
+# AnyOffset: TypeAlias = Union[OffsetTag, IntIndex]
+# CompleteOffset: TypeAlias = tuple[OffsetTag, IntIndex]
+# Connectivity: TypeAlias = NeighborTableOffsetProvider
+# OffsetProviderElem: TypeAlias = Dimension | Connectivity
+# OffsetProvider: TypeAlias = dict[Tag, OffsetProviderElem]
+
+# # Positions
+# SparsePositionEntry = list[int]
+# IncompleteSparsePositionEntry = list[Optional[int]]
+# PositionEntry = IntIndex | SparsePositionEntry
+# IncompletePositionEntry = IntIndex | IncompleteSparsePositionEntry
+# ConcretePosition: TypeAlias = dict[Tag, PositionEntry]
+# IncompletePosition: TypeAlias = dict[Tag, IncompletePositionEntry]
+# # PartialPosition: TypeAlias = dict[Tag, Optional[IntIndex]]
+# # WTFPosition: TypeAlias = dict[Tag, tuple[Optional[IntIndex], ...]] ??
+# # BrokenPosition: TypeAlias = dict[Tag, Optional[tuple[Optional[IntIndex], ...]]] ??
+
+# Position: TypeAlias = ConcretePosition | IncompletePosition
+# #: A ``None`` position flags invalid not-a-neighbor results in neighbor-table lookups
+# MaybePosition: TypeAlias = Optional[Position]
+
+
+class OffsetTag(str):
+    ...
+
+
 Position: TypeAlias = dict[str, Union[tuple[Optional[int], ...], Optional[int]]]
 #: A ``None`` position flags invalid not-a-neighbor results in neighbor-table lookups
 MaybePosition: TypeAlias = Optional[Position]
-AnyOffset: TypeAlias = str | int
+AnyOffset: TypeAlias = OffsetTag | int
 OffsetProvider: TypeAlias = dict[str, Any]
 
 
@@ -618,7 +650,7 @@ def constant_field(value: Any, dtype: type) -> LocatedField:
 @builtins.shift.register(EMBEDDED)
 def shift(*offsets: Union[Offset, int]) -> Callable[[ItIterator], ItIterator]:
     def impl(it: ItIterator) -> ItIterator:
-        return it.shift(*list(o.value if isinstance(o, Offset) else o for o in offsets))
+        return it.shift(*list(OffsetTag(o.value) if isinstance(o, Offset) else o for o in offsets))
 
     return impl
 
