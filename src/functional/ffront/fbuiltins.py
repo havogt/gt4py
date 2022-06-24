@@ -105,5 +105,8 @@ class FieldOffset(runtime.Offset):
     source: Optional[Dimension] = None
     target: Optional[tuple[Dimension, ...]] = None
 
+    def __getitem__(self, index):
+        return (self, index)
+
     def __gt_type__(self):
         return ct.OffsetType(source=self.source, target=self.target)
