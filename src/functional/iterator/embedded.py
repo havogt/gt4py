@@ -62,7 +62,7 @@ IntIndex: TypeAlias = int
 FieldIndex: TypeAlias = int | slice  # TODO probably numpy index type?
 FieldIndexOrIndices: TypeAlias = FieldIndex | tuple[FieldIndex, ...]
 
-Axis = Dimension | None
+Axis: TypeAlias = Dimension
 
 # Offsets
 AnyOffset: TypeAlias = Union[Tag, IntIndex]
@@ -73,9 +73,9 @@ OffsetProvider: TypeAlias = dict[Tag, OffsetProviderElem]
 
 # Positions
 SparsePositionEntry = list[int]
-IncompleteSparsePositionEntry = list[Optional[int]]
-PositionEntry = IntIndex | SparsePositionEntry
-IncompletePositionEntry = IntIndex | IncompleteSparsePositionEntry
+IncompleteSparsePositionEntry: TypeAlias = list[Optional[int]]
+PositionEntry: TypeAlias = IntIndex | SparsePositionEntry
+IncompletePositionEntry: TypeAlias = IntIndex | IncompleteSparsePositionEntry
 ConcretePosition: TypeAlias = dict[Tag, PositionEntry]
 IncompletePosition: TypeAlias = dict[Tag, IncompletePositionEntry]
 
