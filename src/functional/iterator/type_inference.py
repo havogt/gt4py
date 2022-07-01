@@ -267,7 +267,13 @@ class _TypeInferrer(eve.NodeTranslator):
             return res
         if node.id in BUILTIN_TYPES:
             return freshen(BUILTIN_TYPES[node.id])
-        if node.id in ("make_tuple", "tuple_get", "shift", "domain"):
+        if node.id in (
+            "make_tuple",
+            "tuple_get",
+            "shift",
+            "cartesian_domain",
+            "unstructured_domain",
+        ):
             raise TypeError(
                 f"Builtin '{node.id}' is only supported as applied/called function by the type checker"
             )
@@ -353,7 +359,7 @@ class _TypeInferrer(eve.NodeTranslator):
                     ),
                     ret=it,
                 )
-            if node.fun.id == "domain":
+            if node.fun.id == "cartesian_domain" or node.fun.id == "unstructured_domain":
                 for arg in node.args:
                     constraints.add(
                         (
@@ -399,7 +405,9 @@ class _TypeInferrer(eve.NodeTranslator):
             *self.visit(node.inputs, constraints=constraints, symtypes=symtypes)
         )
         output_dtype = TypeVar.fresh()
-        constraints.add((domain, Val(kind=Value(), dtype=Primitive(name="domain"), size=Scalar())))
+        constraints.add(
+            (domain, Val(kind=Value(), dtype=Primitive(name="domain"), size=Scalar()))
+        )  # TODO(havogt) what does the `name="domain"` mean?
         constraints.add((output, Val(kind=Iterator(), dtype=output_dtype, size=Column())))
         constraints.add(
             (
