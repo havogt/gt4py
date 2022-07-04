@@ -1,5 +1,5 @@
 import inspect
-from typing import List
+from typing import Iterable, List
 
 from eve import Node
 from functional import iterator
@@ -239,6 +239,13 @@ def make_node(o):
     if isinstance(o, iterator.runtime.FundefDispatcher):
         return SymRef(id=o.fun.__name__)
     raise NotImplementedError(f"Cannot handle {o}")
+
+
+def make_nodes(args):
+    if isinstance(args, Iterable):
+        return [make_node(arg) for arg in args]
+    else:
+        return make_node(args)
 
 
 def trace_function_call(fun, *, args=None):

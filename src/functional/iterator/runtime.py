@@ -24,6 +24,14 @@ __all__ = ["offset", "fundef", "fendef", "closure", "CartesianAxis"]
 class Offset:
     value: Union[int, str]
 
+    def __add__(self, other):
+        if isinstance(other, int):
+            return Offset(value=(self.value, other))
+        elif isinstance(other, Offset):
+            return Offset(value=(self.value, other.value))
+        else:
+            raise AssertionError()
+
 
 def offset(value):
     return Offset(value)

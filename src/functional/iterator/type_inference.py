@@ -182,13 +182,13 @@ Val_BOOL_T1 = Val(kind=Value(), dtype=BOOL_DTYPE, size=T1)
 BUILTIN_TYPES: typing.Final[dict[str, Type]] = {
     "deref": FunctionType(
         args=Tuple.from_elems(
-            It_T0_T1,
+            It_T0_T1,  # Size 1?
         ),
         ret=Val_T0_T1,
     ),
     "can_deref": FunctionType(
         args=Tuple.from_elems(
-            It_T0_T1,
+            It_T0_T1,  # size 1?
         ),
         ret=Val_BOOL_T1,
     ),
@@ -207,7 +207,9 @@ BUILTIN_TYPES: typing.Final[dict[str, Type]] = {
         ),
         ret=Val_BOOL_T1,
     ),
-    "if_": FunctionType(args=Tuple.from_elems(Val_BOOL_T1, Val_T0_T1, Val_T0_T1), ret=Val_T0_T1),
+    "if_": FunctionType(
+        args=Tuple.from_elems(Val_BOOL_T1, T0, T0), ret=T0
+    ),  # TODO allow ifs on anything?
     "lift": FunctionType(
         args=Tuple.from_elems(
             FunctionType(args=ValTuple(kind=Iterator(), dtypes=T2, size=T1), ret=Val_T0_T1)
@@ -405,9 +407,7 @@ class _TypeInferrer(eve.NodeTranslator):
             *self.visit(node.inputs, constraints=constraints, symtypes=symtypes)
         )
         output_dtype = TypeVar.fresh()
-        constraints.add(
-            (domain, Val(kind=Value(), dtype=Primitive(name="domain"), size=Scalar()))
-        )  # TODO(havogt) what does the `name="domain"` mean?
+        constraints.add((domain, Val(kind=Value(), dtype=DOMAIN_DTYPE, size=Scalar())))
         constraints.add((output, Val(kind=Iterator(), dtype=output_dtype, size=Column())))
         constraints.add(
             (
@@ -442,6 +442,16 @@ class _TypeInferrer(eve.NodeTranslator):
             fundefs=Tuple.from_elems(*ftypes),
             params=Tuple.from_elems(*params.values()),
         )
+
+
+def infer_only(expr: ir.Node, symtypes: typing.Optional[dict[str, Type]] = None) -> Type:
+    """Infer the type of the given iterator IR expression."""
+    if symtypes is None:
+        symtypes = dict()
+
+    # Collect constraints
+    constraints = set[tuple[Type, Type]]()
+    return _TypeInferrer().visit(expr, constraints=constraints, symtypes=symtypes)
 
 
 def infer(expr: ir.Node, symtypes: typing.Optional[dict[str, Type]] = None) -> Type:

@@ -1,12 +1,16 @@
 import numpy as np
 
 from functional.common import Dimension
+from functional.fencil_processors.type_check import check
 from functional.iterator.builtins import *
 from functional.iterator.embedded import np_as_located_field
 from functional.iterator.runtime import closure, fendef, fundef, offset
 
-from .conftest import run_processor
-from .hdiff_reference import hdiff_reference
+
+# from .conftest import run_processor
+
+
+# from .hdiff_reference import hdiff_reference
 
 
 I = offset("I")
@@ -18,12 +22,14 @@ JDim = Dimension("JDim")
 
 @fundef
 def laplacian(inp):
-    return -4.0 * deref(inp) + (
-        deref(shift(I, 1)(inp))
-        + deref(shift(I, -1)(inp))
-        + deref(shift(J, 1)(inp))
-        + deref(shift(J, -1)(inp))
-    )
+    return inp(I, 1)
+    # return -4.0 * deref(inp) + (
+    #     # deref(shift(I, 1)(inp))
+    #     inp(I, 1)
+    #     + deref(shift(I, -1)(inp))
+    #     + deref(shift(J, 1)(inp))
+    #     + deref(shift(J, -1)(inp))
+    # )
 
 
 @fundef
@@ -56,18 +62,20 @@ def hdiff(inp, coeff, out, x, y):
     )
 
 
-def test_hdiff(hdiff_reference, fencil_processor, use_tmps):
-    fencil_processor, validate = fencil_processor
-    inp, coeff, out = hdiff_reference
+def test_hdiff():
+    inp, coeff, out = np.zeros((10, 10, 10)), np.zeros((10, 10, 10)), np.zeros((10, 10, 10))
     shape = (out.shape[0], out.shape[1])
 
     inp_s = np_as_located_field(IDim, JDim, origin={IDim: 2, JDim: 2})(inp[:, :, 0])
     coeff_s = np_as_located_field(IDim, JDim)(coeff[:, :, 0])
     out_s = np_as_located_field(IDim, JDim)(np.zeros_like(coeff[:, :, 0]))
 
-    run_processor(
-        hdiff, fencil_processor, inp_s, coeff_s, out_s, shape[0], shape[1], use_tmps=use_tmps
-    )
+    # run_processor(hdiff, type_check, inp_s, coeff_s, out_s, shape[0], shape[1])
 
-    if validate:
-        assert np.allclose(out[:, :, 0], out_s)
+    # if validate:
+    #     assert np.allclose(out[:, :, 0], out_s)
+
+    print(hdiff.format_itir(inp_s, coeff_s, out_s, shape[0], shape[1], formatter=check))
+
+
+test_hdiff()
