@@ -15,7 +15,9 @@ import pytest
 #  | / 1c |
 #  |/_____|
 @dataclass
-class StructuredIcosahedralMesh:
+class StructuredIcosahedralCellMesh:
+    """Cell because each cell has the full set of neighbors."""
+
     i_size: int  # number of edges in i direction
     j_size: int  # number of edges in j direction
     # => i_size * j_size = number of cells / 2
@@ -71,7 +73,7 @@ class StructuredIcosahedralMesh:
 
 @pytest.fixture
 def mesh():
-    return StructuredIcosahedralMesh(3, 2)
+    return StructuredIcosahedralCellMesh(3, 2)
 
 
 def test_vertex_index(mesh):
