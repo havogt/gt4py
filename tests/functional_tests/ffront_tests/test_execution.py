@@ -721,3 +721,60 @@ def test_tuple_with_local_field_in_reduction_shifted(reduction_setup):
     expected = red[rs.v2e_table][:, 0]
 
     assert np.allclose(expected, out)
+
+
+def test_tuple_program_return():
+    size = 10
+    a = np_as_located_field(IDim)(np.ones((size,)))
+    b = np_as_located_field(IDim)(2 * np.ones((size,)))
+    out = (
+        np_as_located_field(IDim)(np.zeros((size,))),
+        np_as_located_field(IDim)(np.zeros((size,))),
+    )
+
+    @field_operator
+    def pack_tuple(
+        a: Field[[IDim], float64], b: Field[[IDim], float64]
+    ) -> tuple[Field[[IDim], float64], Field[[IDim], float64]]:
+        return (a, b)
+
+    @program
+    def prog(
+        a: Field[[IDim], float64],
+        b: Field[[IDim], float64],
+        out: tuple[Field[[IDim], float64], Field[[IDim], float64]],
+    ):
+        pack_tuple(a, b, out=out)
+
+    prog(a, b, out, offset_provider={})
+
+    assert np.allclose(a, out[0])
+    assert np.allclose(b, out[1])
+
+
+def test_tuple_program_return_constructed_inside():
+    size = 10
+    a = np_as_located_field(IDim)(np.ones((size,)))
+    b = np_as_located_field(IDim)(2 * np.ones((size,)))
+    out_a = np_as_located_field(IDim)(np.zeros((size,)))
+    out_b = np_as_located_field(IDim)(np.zeros((size,)))
+
+    @field_operator
+    def pack_tuple(
+        a: Field[[IDim], float64], b: Field[[IDim], float64]
+    ) -> tuple[Field[[IDim], float64], Field[[IDim], float64]]:
+        return (a, b)
+
+    @program
+    def prog(
+        a: Field[[IDim], float64],
+        b: Field[[IDim], float64],
+        out_a: Field[[IDim], float64],
+        out_b: Field[[IDim], float64],
+    ):
+        pack_tuple(a, b, out=(out_a, out_b))
+
+    prog(a, b, out_a, out_b, offset_provider={})
+
+    assert np.allclose(a, out_a)
+    assert np.allclose(b, out_b)

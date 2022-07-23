@@ -345,13 +345,21 @@ class Program:
                     args[param_idx],
                     dtype=BUILTINS[param.type.kind.name.lower()],
                 )
-            if not isinstance(param.type, ct.FieldType):
+            if isinstance(param.type, ct.FieldType):
+                dims = param.type.dims
+                arg = args[param_idx]
+            elif isinstance(param.type, ct.TupleType):
+                dims = param.type.types[0].dims
+                arg = args[param_idx][0]
+
+            else:
                 continue
-            if not hasattr(args[param_idx], "__array__"):
+
+            if hasattr(arg, "__array__"):
+                for dim_idx in range(0, len(dims)):
+                    size_args.append(arg.shape[dim_idx])
+            else:
                 size_args.append(None)
-                continue
-            for dim_idx in range(0, len(param.type.dims)):
-                size_args.append(args[param_idx].shape[dim_idx])
 
         return tuple(rewritten_args), tuple(size_args), kwargs
 

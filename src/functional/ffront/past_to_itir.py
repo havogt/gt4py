@@ -75,6 +75,10 @@ class ProgramLowering(traits.VisitorWithSymbolTableTrait, NodeTranslator):
             if isinstance(param.type, common_types.FieldType):
                 for dim_idx in range(0, len(param.type.dims)):
                     size_params.append(itir.Sym(id=_size_arg_from_field(param.id, dim_idx)))
+            elif isinstance(param.type, common_types.TupleType):
+                for dim_idx in range(0, len(param.type.types[0].dims)):
+                    size_params.append(itir.Sym(id=_size_arg_from_field(param.id, dim_idx)))
+
         return size_params
 
     def visit_Program(
@@ -89,7 +93,8 @@ class ProgramLowering(traits.VisitorWithSymbolTableTrait, NodeTranslator):
         closures: list[itir.StencilClosure] = []
         for stmt in node.body:
             if isinstance(stmt, past.Call) and isinstance(
-                symtable[stmt.func.id].type.returns, common_types.FieldType
+                symtable[stmt.func.id].type.returns,
+                (common_types.FieldType, common_types.TupleType),
             ):
                 closures.append(self._visit_stencil_call(stmt, **kwargs))
             else:
@@ -105,7 +110,7 @@ class ProgramLowering(traits.VisitorWithSymbolTableTrait, NodeTranslator):
         )
 
     def _visit_stencil_call(self, node: past.Call, **kwargs) -> itir.StencilClosure:
-        assert isinstance(node.kwargs["out"].type, common_types.FieldType)
+        assert isinstance(node.kwargs["out"].type, (common_types.FieldType, common_types.TupleType))
 
         output, domain = self._visit_stencil_call_out_arg(node.kwargs["out"], **kwargs)
 
@@ -177,8 +182,21 @@ class ProgramLowering(traits.VisitorWithSymbolTableTrait, NodeTranslator):
                     )
                 )
 
+            domain_builtin = (
+                "cartesian_domain"
+                if self.grid_type == GridType.CARTESIAN
+                else "unstructured_domain"
+            )
+            return itir.SymRef(id=self.visit(out_field_name, **kwargs).id), itir.FunCall(
+                fun=itir.SymRef(id=domain_builtin), args=domain_args
+            )
         elif isinstance(node, past.Name):
             out_field_name = node
+            if isinstance(node.type, common_types.FieldType):
+                dims = node.type.dims
+            elif isinstance(node.type, common_types.TupleType):
+                assert isinstance(node.type.types[0], common_types.FieldType)
+                dims = node.type.types[0].dims
             domain_args = [
                 itir.FunCall(
                     fun=itir.SymRef(id="named_range"),
@@ -189,19 +207,28 @@ class ProgramLowering(traits.VisitorWithSymbolTableTrait, NodeTranslator):
                         itir.SymRef(id=_size_arg_from_field(out_field_name.id, dim_idx)),
                     ],
                 )
-                for dim_idx, dim in enumerate(node.type.dims)
+                for dim_idx, dim in enumerate(dims)
             ]
+            domain_builtin = (
+                "cartesian_domain"
+                if self.grid_type == GridType.CARTESIAN
+                else "unstructured_domain"
+            )
+            return itir.SymRef(id=self.visit(out_field_name, **kwargs).id), itir.FunCall(
+                fun=itir.SymRef(id=domain_builtin), args=domain_args
+            )
+        elif isinstance(node, past.TupleExpr):
+            domain = None
+            field_refs = []
+            for field in node.elts:
+                f, d = self._visit_stencil_call_out_arg(field, **kwargs)
+                domain = d
+                field_refs.append(f)
+            return itir.FunCall(fun=itir.SymRef(id="make_tuple"), args=field_refs), domain
         else:
             raise RuntimeError(
                 "Unexpected `out` argument. Must be a `past.Subscript` or `past.Name` node."
             )
-
-        domain_builtin = (
-            "cartesian_domain" if self.grid_type == GridType.CARTESIAN else "unstructured_domain"
-        )
-        return itir.SymRef(id=self.visit(out_field_name, **kwargs).id), itir.FunCall(
-            fun=itir.SymRef(id=domain_builtin), args=domain_args
-        )
 
     def visit_Constant(self, node: past.Constant, **kwargs) -> itir.Literal:
         if isinstance(node.type, common_types.ScalarType) and node.type.shape is None:
