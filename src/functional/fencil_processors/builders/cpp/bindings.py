@@ -14,7 +14,7 @@
 """Python bindings generator for C++ functions."""
 
 
-from typing import Any, Sequence
+from typing import Any, Sequence, Union
 
 import numpy
 
@@ -40,6 +40,10 @@ class SidConversion(Expr):
     dim_config: int
 
 
+class CompositeSid(Expr):
+    values: Sequence[Union[SidConversion, str]]
+
+
 class FunctionCall(Expr):
     target: defs.Function
     args: Sequence[Any]
@@ -55,9 +59,14 @@ class FunctionParameter(Node):
     dtype: numpy.dtype
 
 
+class TupleFunctionParameter(Node):
+    name: str
+    values: Sequence[FunctionParameter]
+
+
 class WrapperFunction(Node):
     name: str
-    parameters: Sequence[FunctionParameter]
+    parameters: Sequence[Union[TupleFunctionParameter, FunctionParameter]]
     body: ReturnStmt
 
 
@@ -148,6 +157,10 @@ class BindingCodeGenerator(TemplatedGenerator):
 
 
 def make_parameter(parameter: defs.ScalarParameter | defs.BufferParameter) -> FunctionParameter:
+    if isinstance(parameter, defs.TupleParameter):
+        return TupleFunctionParameter(
+            name=parameter.name, values=[make_parameter(v) for v in parameter.values]
+        )
     name = parameter.name
     ndim = 0 if isinstance(parameter, defs.ScalarParameter) else len(parameter.dimensions)
     scalar_type = parameter.scalar_type
@@ -159,12 +172,17 @@ def make_argument(
 ) -> str | SidConversion:
     if isinstance(param, defs.ScalarParameter):
         return param.name
-    else:
+    elif isinstance(param, defs.BufferParameter):
         return SidConversion(
             buffer_name=param.name,
             dimensions=[DimensionType(name=dim) for dim in param.dimensions],
             scalar_type=param.scalar_type,
             dim_config=index,
+        )
+    else:
+        assert isinstance(param, defs.TupleParameter)
+        return CompositeSid(
+            values=[make_argument(index * 100 + i, v) for i, v in enumerate(param.values)],
         )
 
 

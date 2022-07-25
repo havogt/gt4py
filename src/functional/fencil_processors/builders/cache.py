@@ -40,6 +40,8 @@ def _serialize_param(
         return f"{parameter.name}: {str(parameter.scalar_type)}"
     elif isinstance(parameter, source_modules.BufferParameter):
         return f"{parameter.name}: {str(parameter.scalar_type)}<{', '.join(parameter.dimensions)}>"
+    elif isinstance(parameter, source_modules.TupleParameter):
+        return f"{parameter.name}: [{','.join(_serialize_param(p) for p in parameter.values)}]"
     raise ValueError("Invalid parameter type. This is a bug.")
 
 

@@ -723,7 +723,7 @@ def test_tuple_with_local_field_in_reduction_shifted(reduction_setup):
     assert np.allclose(expected, out)
 
 
-def test_tuple_program_return():
+def test_tuple_program_return(fieldview_backend):
     size = 10
     a = np_as_located_field(IDim)(np.ones((size,)))
     b = np_as_located_field(IDim)(2 * np.ones((size,)))
@@ -738,7 +738,7 @@ def test_tuple_program_return():
     ) -> tuple[Field[[IDim], float64], Field[[IDim], float64]]:
         return (a, b)
 
-    @program
+    @program(backend=fieldview_backend)
     def prog(
         a: Field[[IDim], float64],
         b: Field[[IDim], float64],

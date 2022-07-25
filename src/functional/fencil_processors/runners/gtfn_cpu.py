@@ -27,6 +27,11 @@ from functional.iterator.processor_interface import fencil_executor
 def get_param_description(
     name, obj
 ) -> source_modules.ScalarParameter | source_modules.BufferParameter:
+    if isinstance(obj, tuple):
+        return source_modules.TupleParameter(
+            name, values=[get_param_description(name + str(i), elem) for i, elem in enumerate(obj)]
+        )
+
     view = numpy.asarray(obj)
     if view.ndim > 0:
         return source_modules.BufferParameter(name, [dim.value for dim in obj.axes], view.dtype)

@@ -34,6 +34,12 @@ class BufferParameter:
 
 
 @dataclass(frozen=True)
+class TupleParameter:
+    name: str
+    values: Sequence[ScalarParameter | BufferParameter]
+
+
+@dataclass(frozen=True)
 class Function:
     name: str
     parameters: Sequence[ScalarParameter | BufferParameter]

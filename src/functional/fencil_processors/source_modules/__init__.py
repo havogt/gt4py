@@ -5,6 +5,7 @@ from .source_modules import (
     LibraryDependency,
     ScalarParameter,
     SourceModule,
+    TupleParameter,
 )
 
 
@@ -14,5 +15,6 @@ __all__ = [
     "Function",
     "ScalarParameter",
     "BufferParameter",
+    "TupleParameter",
     "LibraryDependency",
 ]
