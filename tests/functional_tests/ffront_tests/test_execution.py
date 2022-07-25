@@ -752,7 +752,7 @@ def test_tuple_program_return():
     assert np.allclose(b, out[1])
 
 
-def test_tuple_program_return_constructed_inside():
+def test_tuple_program_return_constructed_inside(fieldview_backend):
     size = 10
     a = np_as_located_field(IDim)(np.ones((size,)))
     b = np_as_located_field(IDim)(2 * np.ones((size,)))
@@ -765,7 +765,7 @@ def test_tuple_program_return_constructed_inside():
     ) -> tuple[Field[[IDim], float64], Field[[IDim], float64]]:
         return (a, b)
 
-    @program
+    @program(backend=fieldview_backend)
     def prog(
         a: Field[[IDim], float64],
         b: Field[[IDim], float64],

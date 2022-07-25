@@ -19,9 +19,11 @@ from eve import codegen
 from eve.codegen import FormatTemplate as as_fmt, MakoTemplate as as_mako
 from functional.fencil_processors.codegens.gtfn.gtfn_ir import (
     FencilDefinition,
+    FunCall,
     GridType,
     Literal,
     OffsetLiteral,
+    StencilExecution,
     SymRef,
     TaggedValues,
 )
@@ -83,9 +85,21 @@ class GTFNCodegen(codegen.TemplatedGenerator):
 
     Backend = as_fmt("make_backend(backend, {domain})")
 
+    @staticmethod
+    def integral_constant(i):
+        return f"gridtools::integral_constant<int,{i}>"
+
+    def visit_StencilExecution(self, node: StencilExecution, **kwargs):
+        if isinstance(node.output, FunCall) and node.output.fun == SymRef(id="make_tuple"):
+            outputs = self.visit(node.output.args)
+            output_arg = f"sid::composite::keys<{','.join(self.integral_constant(i) for i in range(len(outputs)))}>::make_values({','.join(outputs)})"
+        else:
+            output_arg = self.visit(node.output)
+        return self.generic_visit(node, output_arg=output_arg)
+
     StencilExecution = as_mako(
         """
-        ${backend}.stencil_executor()().arg(${output})${''.join('.arg(' + i + ')' for i in inputs)}.assign(0_c, ${stencil}() ${',' if inputs else ''} ${','.join(str(i) + '_c' for i in range(1, len(inputs) + 1))}).execute();
+        ${backend}.stencil_executor()().arg(${output_arg})${''.join('.arg(' + i + ')' for i in inputs)}.assign(0_c, ${stencil}() ${',' if inputs else ''} ${','.join(str(i) + '_c' for i in range(1, len(inputs) + 1))}).execute();
         """
     )
 

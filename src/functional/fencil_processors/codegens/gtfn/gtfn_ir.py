@@ -110,7 +110,7 @@ class Backend(Node):
 class StencilExecution(Node):
     backend: Backend
     stencil: SymRef  # TODO should be list of assigns for canonical `scan`
-    output: SymRef
+    output: Expr  # TODO maybe make it Composite Expr or something
     inputs: List[SymRef]
 
 
