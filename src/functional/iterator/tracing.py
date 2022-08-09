@@ -128,6 +128,8 @@ def make_node(o):
     if isinstance(o, Node):
         return o
     if callable(o):
+        if o.__name__ == "pretty_parsed":
+            return o()
         if o.__name__ == "<lambda>":
             return lambdadef(o)
         if hasattr(o, "__code__") and o.__code__.co_flags & inspect.CO_NESTED:
