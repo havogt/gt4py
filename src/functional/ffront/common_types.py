@@ -1,6 +1,5 @@
-import typing
 from dataclasses import dataclass
-from typing import Literal, Optional, Union
+from typing import Literal, Optional
 
 import numpy as np
 
@@ -35,13 +34,13 @@ class SymbolType:
 class DeferredSymbolType(SymbolType):
     """Dummy used to represent a type not yet inferred."""
 
-    constraint: typing.Optional[typing.Type[SymbolType]]
+    constraint: Optional[type[SymbolType] | tuple[type[SymbolType], ...]]
 
 
 @dataclass(frozen=True)
 class SymbolTypeVariable(SymbolType):
     id: str  # noqa A003
-    bound: typing.Type[SymbolType]
+    bound: type[SymbolType]
 
 
 @dataclass(frozen=True)
@@ -92,9 +91,15 @@ class TupleType(DataType):
         return f"tuple{self.types}"
 
 
+class CallableType:
+    """Base class of all callable types."""
+
+    pass
+
+
 @dataclass(frozen=True)
-class FieldType(DataType):
-    dims: Union[list[func_common.Dimension], Literal[Ellipsis]]  # type: ignore[valid-type,misc]
+class FieldType(DataType, CallableType):
+    dims: list[func_common.Dimension] | Literal[Ellipsis]  # type: ignore[valid-type,misc]
     dtype: ScalarType
 
     def __str__(self):
@@ -103,13 +108,29 @@ class FieldType(DataType):
 
 
 @dataclass(frozen=True)
-class FunctionType(SymbolType):
-    args: list[Union[DataType, DeferredSymbolType]]
-    kwargs: dict[str, Union[DataType, DeferredSymbolType]]
-    returns: Union[DataType, DeferredSymbolType, VoidType]
+class FunctionType(SymbolType, CallableType):
+    args: list[DataType | DeferredSymbolType]
+    kwargs: dict[str, DataType | DeferredSymbolType]
+    returns: DataType | DeferredSymbolType | VoidType
 
     def __str__(self):
         arg_strs = [str(arg) for arg in self.args]
         kwarg_strs = [f"{key}: {value}" for key, value in self.kwargs.items()]
         args_str = ", ".join((*arg_strs, *kwarg_strs))
         return f"({args_str}) -> {self.returns}"
+
+
+@dataclass(frozen=True)
+class ScanOperatorType(SymbolType, CallableType):
+    axis: func_common.Dimension
+    definition: FunctionType
+
+
+@dataclass(frozen=True)
+class FieldOperatorType(SymbolType, CallableType):
+    definition: FunctionType
+
+
+@dataclass(frozen=True)
+class ProgramType(SymbolType, CallableType):
+    definition: FunctionType

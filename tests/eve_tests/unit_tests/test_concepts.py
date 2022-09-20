@@ -14,11 +14,14 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
+import copy
 import re
 
 import pytest
 
 import eve
+
+from .. import definitions
 
 
 def test_symbol_types():
@@ -53,15 +56,15 @@ class TestSourceLocation:
 
     def test_str(self):
         loc = eve.concepts.SourceLocation(line=1, column=1, source="dir/source.py")
-        assert str(loc) == "<'dir/source.py': Line 1, Col 1>"
+        assert str(loc) == "<dir/source.py:1:1>"
 
         loc = eve.concepts.SourceLocation(line=1, column=1, source="dir/source.py", end_line=2)
-        assert str(loc) == "<'dir/source.py': Line 1, Col 1 to Line 2>"
+        assert str(loc) == "<dir/source.py:1:1 to 2>"
 
         loc = eve.concepts.SourceLocation(
             line=1, column=1, source="dir/source.py", end_line=2, end_column=2
         )
-        assert str(loc) == "<'dir/source.py': Line 1, Col 1 to Line 2, Col 2>"
+        assert str(loc) == "<dir/source.py:1:1 to 2:2>"
 
     def test_construction_from_ast(self):
         import ast
@@ -103,10 +106,7 @@ class TestSourceLocationGroup:
         loc1 = eve.concepts.SourceLocation(line=1, column=1, source="source1.py")
         loc2 = eve.concepts.SourceLocation(line=2, column=2, source="source2.py")
         loc = eve.concepts.SourceLocationGroup(loc1, loc2, context="some context")
-        assert (
-            str(loc)
-            == "<#some context#[<'source1.py': Line 1, Col 1>, <'source2.py': Line 2, Col 2>]>"
-        )
+        assert str(loc) == "<#some context#[<source1.py:1:1>, <source2.py:2:2>]>"
 
 
 class TestNode:
@@ -147,3 +147,29 @@ class TestNode:
                 sample_node.iter_children_items(), sample_node.iter_children_values()
             )
         )
+
+
+class TestEqNonlocated:
+    def test_source_location(self):
+        node = definitions.make_simple_node_with_loc()
+
+        node_different_loc = copy.copy(node)
+        node_different_loc.loc = definitions.make_source_location()
+        assert node != node_different_loc
+        assert eve.concepts.eq_nonlocated(node, node_different_loc)
+
+        node_different_value_and_loc = copy.copy(node_different_loc)
+        node_different_value_and_loc.str_value = definitions.make_str_value()
+        assert not eve.concepts.eq_nonlocated(node, node_different_value_and_loc)
+
+    def test_source_location_group(self):
+        node = definitions.make_simple_node_with_loc()
+
+        node_different_loc_group = copy.copy(node)
+        node_different_loc_group.loc = definitions.make_source_location_group()
+        assert node != node_different_loc_group
+        assert eve.concepts.eq_nonlocated(node, node_different_loc_group)
+
+        node_different_value_and_loc_group = copy.copy(node_different_loc_group)
+        node_different_value_and_loc_group.str_value = definitions.make_str_value()
+        assert not eve.concepts.eq_nonlocated(node, node_different_value_and_loc_group)

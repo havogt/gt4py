@@ -11,11 +11,11 @@
 # distribution for a copy of the license or check <https://www.gnu.org/licenses/>.
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
-from typing import Optional
+from typing import Optional, Pattern
 
 import pytest
 
-from functional.common import GTTypeError
+from functional.common import DimensionKind, GTTypeError
 from functional.ffront import common_types as ct, type_info
 from functional.ffront.fbuiltins import (
     Dimension,
@@ -74,32 +74,48 @@ def type_info_cases() -> list[tuple[Optional[ct.SymbolType], dict]]:
     ]
 
 
-def is_callable_cases():
+def accept_args_cases():
     # reuse all the other test cases
     not_callable = [
-        (symbol_type, [], {}, [r"Expected a function type, but got "])
+        (symbol_type, [], {}, [r"Expected a callable type, but got "])
         for symbol_type, attributes in type_info_cases()
-        if not isinstance(symbol_type, ct.FunctionType)
+        if not isinstance(symbol_type, ct.CallableType)
     ]
 
     bool_type = ct.ScalarType(kind=ct.ScalarKind.BOOL)
     float_type = ct.ScalarType(kind=ct.ScalarKind.FLOAT64)
+    int_type = ct.ScalarType(kind=ct.ScalarKind.INT64)
+    field_type = ct.FieldType(dims=[Dimension("I")], dtype=float_type)
     nullary_func_type = ct.FunctionType(args=[], kwargs={}, returns=ct.VoidType())
     unary_func_type = ct.FunctionType(args=[bool_type], kwargs={}, returns=ct.VoidType())
     kwarg_func_type = ct.FunctionType(args=[], kwargs={"foo": bool_type}, returns=ct.VoidType())
+    fieldop_type = ct.FieldOperatorType(
+        definition=ct.FunctionType(args=[field_type, float_type], kwargs={}, returns=field_type)
+    )
+    scanop_type = ct.ScanOperatorType(
+        axis=Dimension("K", kind=DimensionKind.VERTICAL),
+        definition=ct.FunctionType(
+            args=[float_type, int_type, int_type], kwargs={}, returns=float_type
+        ),
+    )
 
     return [
         # func_type, args, kwargs, expected incompatibilities
         *not_callable,
         (nullary_func_type, [], {}, []),
-        (nullary_func_type, [bool_type], {}, [r"Function takes 0 arguments, but 1 were given."]),
+        (
+            nullary_func_type,
+            [bool_type],
+            {},
+            [r"Function takes 0 argument\(s\), but 1 were given."],
+        ),
         (
             nullary_func_type,
             [],
             {"foo": bool_type},
             [r"Got unexpected keyword argument\(s\) `foo`."],
         ),
-        (unary_func_type, [], {}, [r"Function takes 1 arguments, but 0 were given."]),
+        (unary_func_type, [], {}, [r"Function takes 1 argument\(s\), but 0 were given."]),
         (unary_func_type, [bool_type], {}, []),
         (
             unary_func_type,
@@ -116,6 +132,59 @@ def is_callable_cases():
             [r"Expected keyword argument foo to be of type bool, but got float64."],
         ),
         (kwarg_func_type, [], {"bar": bool_type}, [r"Got unexpected keyword argument\(s\) `bar`."]),
+        # field operator
+        (fieldop_type, [field_type, float_type], {}, []),
+        # scan operator
+        (scanop_type, [], {}, [r"Scan operator takes 2 arguments, but 0 were given."]),
+        (
+            scanop_type,
+            [
+                ct.FieldType(dims=[Dimension("K", kind=DimensionKind.VERTICAL)], dtype=float_type),
+                ct.FieldType(dims=[Dimension("K", kind=DimensionKind.VERTICAL)], dtype=float_type),
+            ],
+            {},
+            [
+                r"Expected 0-th argument to be of type Field\[\[K\], dtype=int64\], but got Field\[\[K\], dtype=float64\]",
+                r"Expected 1-th argument to be of type Field\[\[K\], dtype=int64\], but got Field\[\[K\], dtype=float64\]",
+            ],
+        ),
+        (
+            scanop_type,
+            [
+                ct.FieldType(dims=[Dimension("I"), Dimension("J")], dtype=int_type),
+                ct.FieldType(dims=[Dimension("K", kind=DimensionKind.VERTICAL)], dtype=int_type),
+            ],
+            {},
+            [
+                r"Dimensions can not be promoted. Could not determine order of the "
+                r"following dimensions: J, K."
+            ],
+        ),
+        (
+            scanop_type,
+            [
+                ct.FieldType(dims=[Dimension("K", kind=DimensionKind.VERTICAL)], dtype=int_type),
+                ct.FieldType(dims=[Dimension("K", kind=DimensionKind.VERTICAL)], dtype=int_type),
+            ],
+            {},
+            [],
+        ),
+        (
+            scanop_type,
+            [
+                ct.FieldType(
+                    dims=[
+                        Dimension("I"),
+                        Dimension("J"),
+                        Dimension("K", kind=DimensionKind.VERTICAL),
+                    ],
+                    dtype=int_type,
+                ),
+                ct.FieldType(dims=[Dimension("I"), Dimension("J")], dtype=int_type),
+            ],
+            {},
+            [],
+        ),
     ]
 
 
@@ -125,21 +194,21 @@ def test_type_info_basic(symbol_type, expected):
         assert getattr(type_info, key)(symbol_type) == expected[key]
 
 
-@pytest.mark.parametrize("func_type,args,kwargs,expected", is_callable_cases())
-def test_is_callable(
+@pytest.mark.parametrize("func_type,args,kwargs,expected", accept_args_cases())
+def test_accept_args(
     func_type: ct.SymbolType,
     args: list[ct.SymbolType],
     kwargs: dict[str, ct.SymbolType],
     expected: list,
 ):
-    is_callable = len(expected) == 0
-    assert type_info.is_callable(func_type, with_args=args, with_kwargs=kwargs) == is_callable
+    accepts_args = len(expected) == 0
+    assert type_info.accepts_args(func_type, with_args=args, with_kwargs=kwargs) == accepts_args
 
     if len(expected) > 0:
         with pytest.raises(
             GTTypeError,
         ) as exc_info:
-            type_info.is_callable(
+            type_info.accepts_args(
                 func_type, with_args=args, with_kwargs=kwargs, raise_exception=True
             )
 
@@ -164,6 +233,51 @@ def test_unpack_assign():
         dims=Ellipsis,
         dtype=ct.ScalarType(kind=ct.ScalarKind.FLOAT64, shape=None),
     )
+
+
+def dimension_promotion_cases() -> list[
+    tuple[list[list[Dimension]], list[Dimension] | None, None | Pattern]
+]:
+    raw_list = [
+        # list of list of dimensions, expected result, expected error message
+        ([["I", "J"], ["I"]], ["I", "J"], None),
+        ([["I", "J"], ["J"]], ["I", "J"], None),
+        ([["I", "J"], ["J", "K"]], ["I", "J", "K"], None),
+        (
+            [["I", "J"], ["J", "I"]],
+            None,
+            r"The following dimensions appear in contradicting order: I, J.",
+        ),
+        (
+            [["I", "K"], ["J", "K"]],
+            None,
+            r"Could not determine order of the following dimensions: I, J",
+        ),
+    ]
+    # transform dimension names into Dimension objects
+    return [
+        (
+            [[Dimension(el) for el in arg] for arg in args],
+            [Dimension(el) for el in result] if result else result,
+            msg,
+        )
+        for args, result, msg in raw_list
+    ]
+
+
+@pytest.mark.parametrize("dim_list,expected_result,expected_error_msg", dimension_promotion_cases())
+def test_dimension_promotion(
+    dim_list: list[list[Dimension]],
+    expected_result: Optional[list[Dimension]],
+    expected_error_msg: Optional[str],
+):
+    if expected_result:
+        assert type_info.promote_dims(*dim_list) == expected_result
+    else:
+        with pytest.raises(Exception) as exc_info:
+            type_info.promote_dims(*dim_list)
+
+        assert exc_info.match(expected_error_msg)
 
 
 def test_assign_tuple():
@@ -195,7 +309,7 @@ def test_adding_bool():
 
     with pytest.raises(
         FieldOperatorTypeDeductionError,
-        match=(r"Type Field\[\.\.\., dtype=bool\] can not be used in operator '\+'!"),
+        match=(r"Type Field\[\.\.\., dtype=bool\] can not be used in operator `\+`!"),
     ):
         _ = FieldOperatorParser.apply_to_function(add_bools)
 
@@ -211,8 +325,7 @@ def test_binop_nonmatching_dims():
     with pytest.raises(
         FieldOperatorTypeDeductionError,
         match=(
-            r"Incompatible dimensions in operator '\+': "
-            r"Field\[\[X\], dtype=float64\] and Field\[\[Y\], dtype=float64\]!"
+            r"Could not promote `Field\[\[X], dtype=float64\]` and `Field\[\[Y\], dtype=float64\]` to common type in call to +."
         ),
     ):
         _ = FieldOperatorParser.apply_to_function(nonmatching)
@@ -224,7 +337,7 @@ def test_bitopping_float():
 
     with pytest.raises(
         FieldOperatorTypeDeductionError,
-        match=(r"Type Field\[\.\.\., dtype=float64\] can not be used in operator '\&'! "),
+        match=(r"Type Field\[\.\.\., dtype=float64\] can not be used in operator `\&`! "),
     ):
         _ = FieldOperatorParser.apply_to_function(float_bitop)
 
@@ -235,7 +348,7 @@ def test_signing_bool():
 
     with pytest.raises(
         FieldOperatorTypeDeductionError,
-        match=r"Incompatible type for unary operator '\-': Field\[\.\.\., dtype=bool\]!",
+        match=r"Incompatible type for unary operator `\-`: `Field\[\.\.\., dtype=bool\]`!",
     ):
         _ = FieldOperatorParser.apply_to_function(sign_bool)
 
@@ -246,7 +359,7 @@ def test_notting_int():
 
     with pytest.raises(
         FieldOperatorTypeDeductionError,
-        match=r"Incompatible type for unary operator 'not': Field\[\.\.\., dtype=int64\]!",
+        match=r"Incompatible type for unary operator `not`: `Field\[\.\.\., dtype=int64\]`!",
     ):
         _ = FieldOperatorParser.apply_to_function(not_int)
 
@@ -255,7 +368,7 @@ def test_notting_int():
 def remap_setup():
     X = Dimension("X")
     Y = Dimension("Y")
-    Y2XDim = Dimension("Y2X", local=True)
+    Y2XDim = Dimension("Y2X", kind=DimensionKind.LOCAL)
     Y2X = FieldOffset("Y2X", source=X, target=(Y, Y2XDim))
     return X, Y, Y2XDim, Y2X
 
@@ -312,25 +425,13 @@ def test_remap_reduce_sparse(remap_setup):
     )
 
 
-def test_scalar_arg():
-    def scalar_arg(bar: Field[..., int64], alpha: int64) -> Field[..., int64]:
-        return alpha * bar
-
-    parsed = FieldOperatorParser.apply_to_function(scalar_arg)
-
-    assert parsed.params[1].id == "alpha"
-    assert parsed.params[1].type == ct.FieldType(
-        dims=[], dtype=ct.ScalarType(kind=ct.ScalarKind.INT64)
-    )
-
-
 def test_mismatched_literals():
     def mismatched_lit() -> Field[..., "float32"]:
         return float32("1.0") + float64("1.0")
 
     with pytest.raises(
         FieldOperatorTypeDeductionError,
-        match=(r"Incompatible datatypes in operator '\+': float32 and float64"),
+        match=(r"Could not promote `float32` and `float64` to common type in call to +."),
     ):
         _ = FieldOperatorParser.apply_to_function(mismatched_lit)
 
