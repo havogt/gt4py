@@ -14,9 +14,13 @@
 import numpy as np
 import pytest
 
+from .conftest import run_processor
+
 
 pytest.importorskip("atlas4py")
 
+from functional.common import Dimension
+from functional.fencil_processors.runners.gtfn_cpu import run_gtfn
 from functional.iterator import library
 from functional.iterator.atlas_utils import AtlasTable
 from functional.iterator.builtins import *
@@ -25,13 +29,13 @@ from functional.iterator.embedded import (
     index_field,
     np_as_located_field,
 )
-from functional.iterator.runtime import *
+from functional.iterator.runtime import closure, fendef, fundef, offset
 
 from .fvm_nabla_setup import assert_close, nabla_setup
 
 
-Vertex = CartesianAxis("Vertex")
-Edge = CartesianAxis("Edge")
+Vertex = Dimension("Vertex")
+Edge = Dimension("Edge")
 
 V2E = offset("V2E")
 E2V = offset("E2V")
@@ -40,7 +44,7 @@ E2V = offset("E2V")
 @fundef
 def compute_zavgS(pp, S_M):
     zavg = 0.5 * (deref(shift(E2V, 0)(pp)) + deref(shift(E2V, 1)(pp)))
-    # zavg = 0.5 * reduce(lambda a, b: a + b, 0)(shift(E2V)(pp))
+    # zavg = 0.5 * reduce(lambda a, b: a + b, 0.0)(shift(E2V)(pp))
     # zavg = 0.5 * library.sum()(shift(E2V)(pp))
     return deref(S_M) * zavg
 
@@ -53,7 +57,7 @@ def compute_zavgS_fencil(
     S_M,
 ):
     closure(
-        domain(named_range(Edge, 0, n_edges)),
+        unstructured_domain(named_range(Edge, 0, n_edges)),
         compute_zavgS,
         out,
         [pp, S_M],
@@ -63,7 +67,7 @@ def compute_zavgS_fencil(
 @fundef
 def compute_pnabla(pp, S_M, sign, vol):
     zavgS = lift(compute_zavgS)(pp, S_M)
-    # pnabla_M = reduce(lambda a, b, c: a + b * c, 0)(shift(V2E)(zavgS), sign)
+    # pnabla_M = reduce(lambda a, b, c: a + b * c, 0.0)(shift(V2E)(zavgS), sign)
     # pnabla_M = library.sum(lambda a, b: a * b)(shift(V2E)(zavgS), sign)
     pnabla_M = library.dot(shift(V2E)(zavgS), sign)
     return pnabla_M / deref(vol)
@@ -112,17 +116,17 @@ def nabla(
     vol,
 ):
     closure(
-        domain(named_range(Vertex, 0, n_nodes)),
+        unstructured_domain(named_range(Vertex, 0, n_nodes)),
         pnabla,
         out,
         [pp, S_MXX, S_MYY, sign, vol],
     )
 
 
-def test_compute_zavgS(backend, use_tmps):
-    if use_tmps:
-        pytest.xfail("use_tmps currently only supported for cartesian")
-    backend, validate = backend
+def test_compute_zavgS(fencil_processor, lift_mode):
+    fencil_processor, validate = fencil_processor
+    if fencil_processor == run_gtfn:
+        pytest.xfail("TODO: gtfn bindings don't support unstructured")
     setup = nabla_setup()
 
     pp = np_as_located_field(Vertex)(setup.input_field)
@@ -132,28 +136,30 @@ def test_compute_zavgS(backend, use_tmps):
 
     e2v = NeighborTableOffsetProvider(AtlasTable(setup.edges2node_connectivity), Edge, Vertex, 2)
 
-    compute_zavgS_fencil(
+    run_processor(
+        compute_zavgS_fencil,
+        fencil_processor,
         setup.edges_size,
         zavgS,
         pp,
         S_MXX,
         offset_provider={"E2V": e2v},
-        backend=backend,
-        use_tmps=use_tmps,
+        lift_mode=lift_mode,
     )
 
     if validate:
         assert_close(-199755464.25741270, min(zavgS))
         assert_close(388241977.58389181, max(zavgS))
 
-    compute_zavgS_fencil(
+    run_processor(
+        compute_zavgS_fencil,
+        fencil_processor,
         setup.edges_size,
         zavgS,
         pp,
         S_MYY,
         offset_provider={"E2V": e2v},
-        backend=backend,
-        use_tmps=use_tmps,
+        lift_mode=lift_mode,
     )
     if validate:
         assert_close(-1000788897.3202186, min(zavgS))
@@ -168,17 +174,17 @@ def compute_zavgS2_fencil(
     S_M,
 ):
     closure(
-        domain(named_range(Edge, 0, n_edges)),
+        unstructured_domain(named_range(Edge, 0, n_edges)),
         compute_zavgS2,
         out,
         [pp, S_M],
     )
 
 
-def test_compute_zavgS2(backend, use_tmps):
-    if use_tmps:
-        pytest.xfail("use_tmps currently only supported for cartesian")
-    backend, validate = backend
+def test_compute_zavgS2(fencil_processor, lift_mode):
+    fencil_processor, validate = fencil_processor
+    if fencil_processor == run_gtfn:
+        pytest.xfail("TODO: gtfn bindings don't support unstructured")
     setup = nabla_setup()
 
     pp = np_as_located_field(Vertex)(setup.input_field)
@@ -194,14 +200,15 @@ def test_compute_zavgS2(backend, use_tmps):
 
     e2v = NeighborTableOffsetProvider(AtlasTable(setup.edges2node_connectivity), Edge, Vertex, 2)
 
-    compute_zavgS2_fencil(
+    run_processor(
+        compute_zavgS2_fencil,
+        fencil_processor,
         setup.edges_size,
         zavgS,
         pp,
         S,
         offset_provider={"E2V": e2v},
-        backend=backend,
-        use_tmps=use_tmps,
+        lift_mode=lift_mode,
     )
 
     if validate:
@@ -212,10 +219,10 @@ def test_compute_zavgS2(backend, use_tmps):
         assert_close(1000788897.3202186, max(zavgS[1]))
 
 
-def test_nabla(backend, use_tmps):
-    if use_tmps:
-        pytest.xfail("use_tmps currently only supported for cartesian")
-    backend, validate = backend
+def test_nabla(fencil_processor, lift_mode):
+    fencil_processor, validate = fencil_processor
+    if fencil_processor == run_gtfn:
+        pytest.xfail("TODO: gtfn bindings don't support unstructured")
     setup = nabla_setup()
 
     sign = np_as_located_field(Vertex, V2E)(setup.sign_field)
@@ -229,7 +236,9 @@ def test_nabla(backend, use_tmps):
     e2v = NeighborTableOffsetProvider(AtlasTable(setup.edges2node_connectivity), Edge, Vertex, 2)
     v2e = NeighborTableOffsetProvider(AtlasTable(setup.nodes2edge_connectivity), Vertex, Edge, 7)
 
-    nabla(
+    run_processor(
+        nabla,
+        fencil_processor,
         setup.nodes_size,
         (pnabla_MXX, pnabla_MYY),
         pp,
@@ -238,8 +247,7 @@ def test_nabla(backend, use_tmps):
         sign,
         vol,
         offset_provider={"E2V": e2v, "V2E": v2e},
-        backend=backend,
-        use_tmps=use_tmps,
+        lift_mode=lift_mode,
     )
 
     if validate:
@@ -259,17 +267,17 @@ def nabla2(
     vol,
 ):
     closure(
-        domain(named_range(Vertex, 0, n_nodes)),
+        unstructured_domain(named_range(Vertex, 0, n_nodes)),
         compute_pnabla2,
         out,
         [pp, S, sign, vol],
     )
 
 
-def test_nabla2(backend, use_tmps):
-    if use_tmps:
-        pytest.xfail("use_tmps currently only supported for cartesian")
-    backend, validate = backend
+def test_nabla2(fencil_processor, lift_mode):
+    if fencil_processor == run_gtfn:
+        pytest.xfail("TODO: gtfn bindings don't support unstructured")
+    fencil_processor, validate = fencil_processor
     setup = nabla_setup()
 
     sign = np_as_located_field(Vertex, V2E)(setup.sign_field)
@@ -293,8 +301,8 @@ def test_nabla2(backend, use_tmps):
         sign,
         vol,
         offset_provider={"E2V": e2v, "V2E": v2e},
-        backend=backend,
-        use_tmps=use_tmps,
+        fencil_processor=fencil_processor,
+        lift_mode=lift_mode,
     )
 
     if validate:
@@ -306,20 +314,14 @@ def test_nabla2(backend, use_tmps):
 
 @fundef
 def sign(node_indices, is_pole_edge):
-    node_index = deref(node_indices)
+    def impl(node_indices2, is_pole_edge):
+        return if_(
+            or_(deref(is_pole_edge), eq(deref(node_indices), deref(shift(E2V, 0)(node_indices2)))),
+            1.0,
+            -1.0,
+        )
 
-    @fundef
-    def sign_impl(node_index):
-        def impl2(node_indices, is_pole_edge):
-            return if_(
-                or_(deref(is_pole_edge), eq(node_index, deref(shift(E2V, 0)(node_indices)))),
-                1.0,
-                -1.0,
-            )
-
-        return impl2
-
-    return shift(V2E)(lift(sign_impl(node_index))(node_indices, is_pole_edge))
+    return shift(V2E)(lift(impl)(node_indices, is_pole_edge))
 
 
 @fundef
@@ -334,24 +336,23 @@ def compute_pnabla_sign(pp, S_M, vol, node_index, is_pole_edge):
 def nabla_sign(n_nodes, out_MXX, out_MYY, pp, S_MXX, S_MYY, vol, node_index, is_pole_edge):
     # TODO replace by single stencil which returns tuple
     closure(
-        domain(named_range(Vertex, 0, n_nodes)),
+        unstructured_domain(named_range(Vertex, 0, n_nodes)),
         compute_pnabla_sign,
         out_MXX,
         [pp, S_MXX, vol, node_index, is_pole_edge],
     )
     closure(
-        domain(named_range(Vertex, 0, n_nodes)),
+        unstructured_domain(named_range(Vertex, 0, n_nodes)),
         compute_pnabla_sign,
         out_MYY,
         [pp, S_MYY, vol, node_index, is_pole_edge],
     )
 
 
-def test_nabla_sign(backend, use_tmps):
-    if use_tmps:
-        pytest.xfail("use_tmps currently only supported for cartesian")
-
-    backend, validate = backend
+def test_nabla_sign(fencil_processor, lift_mode):
+    fencil_processor, validate = fencil_processor
+    if fencil_processor == run_gtfn:
+        pytest.xfail("TODO: gtfn bindings don't support unstructured")
     setup = nabla_setup()
 
     # sign = np_as_located_field(Vertex, V2E)(setup.sign_field)
@@ -366,7 +367,9 @@ def test_nabla_sign(backend, use_tmps):
     e2v = NeighborTableOffsetProvider(AtlasTable(setup.edges2node_connectivity), Edge, Vertex, 2)
     v2e = NeighborTableOffsetProvider(AtlasTable(setup.nodes2edge_connectivity), Vertex, Edge, 7)
 
-    nabla_sign(
+    run_processor(
+        nabla_sign,
+        fencil_processor,
         setup.nodes_size,
         pnabla_MXX,
         pnabla_MYY,
@@ -377,8 +380,7 @@ def test_nabla_sign(backend, use_tmps):
         index_field(Vertex),
         is_pole_edge,
         offset_provider={"E2V": e2v, "V2E": v2e},
-        backend=backend,
-        use_tmps=use_tmps,
+        lift_mode=lift_mode,
     )
 
     if validate:
