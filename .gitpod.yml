@@ -6,7 +6,7 @@ tasks:
     mkdir -p /workspace/.caches/pre-commit
     ln -s /workspace/.caches/pre-commit  ~/.cache/pre-commit
   init: |
-    pip install -e .
+    pip install -e .[language_server]
     pip install -r requirements-dev.txt
     pip install -i https://test.pypi.org/simple/ atlas4py
     PYENV_PYTHON_VERSION=$(python --version | cut -d ' ' -f 2)
