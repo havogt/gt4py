@@ -463,16 +463,56 @@ def test_sparse_shifted_stencil_reduce(fencil_processor_no_gtfn_exec):
 
 
 @fundef
+def sum_(a, b):
+    return a + b
+
+
+# @field_operator
+# def version1(inp: Field[[Vertex], float]):
+#     tmp: Field[[Edge, E2VDim], float] = inp(E2V)
+#     tmp2: Field[[Cell, C2EDim, E2VDim], float] = tmp(C2E)
+#     reduced = neighbor_sum(tmp2, axis=E2VDim
+#     res = neighbor_sum(, axis=C2EDim)
+#     return res
+
+
+@fundef
+def lowered1(inp):
+    tmp = shift(E2V)(lift(lambda x: deref(x))(inp))
+    tmp2 = shift(C2E)(lift(lambda x: deref(x))(tmp))
+    reduced = lift(lambda x: reduce(sum_, 0)(x))(tmp2)
+    res = lift(lambda x: reduce(sum_, 0)(x))(reduced)
+    return deref(res)
+
+
+# @field_operator
+# def version2(inp: Field[[Vertex], float]):
+#     inp_shifted = inp(E2V)
+#     tmp: Field[[Edge], float] = neighbor_sum(inp_shifted, axis=E2VDim)
+#     tmp_shifted = tmp(C2E)
+#     res: Field[[Cell], float] = neighbor_sum(tmp_shifted, axis=C2EDim)
+#     return res
+
+
+@fundef
+def lowered2(inp):
+    inp_shifted = shift(E2V)(lift(lambda x: deref(x))(inp))
+    tmp = lift(lambda x: reduce(sum_, 0)(x))(inp_shifted)
+    tmp_shifted = shift(C2E)(lift(lambda x: deref(x))(tmp))
+    res = lift(lambda x: reduce(sum_, 0)(x))(tmp_shifted)
+    return deref(res)
+
+
+@fundef
 def nested_reduce(inp):  # it[->cell, vertex]
-    # c2e->e2v
-
-    def sum_(a, b):
-        return a + b
-
     return reduce(sum_, 0)(lift(lambda x: reduce(sum_, 0)(shift(E2V)(x)))(shift(C2E)(inp)))
 
 
-def test_nested_reduce(fencil_processor_no_gtfn_exec):
+@pytest.mark.parametrize(
+    "stencil",
+    [lowered1, lowered2, nested_reduce],
+)
+def test_nested_reduce(fencil_processor_no_gtfn_exec, stencil):
     fencil_processor, validate = fencil_processor_no_gtfn_exec
 
     inp = index_field(Vertex)
@@ -485,7 +525,7 @@ def test_nested_reduce(fencil_processor_no_gtfn_exec):
     domain = {Cell: range(0, 9)}
 
     run_processor(
-        nested_reduce[domain],
+        stencil[domain],
         fencil_processor,
         inp,
         out=out,

@@ -304,11 +304,17 @@ def lift(stencil):
                     self.stencil, self.args, offsets=[*self.offsets, *offsets], elem=self.elem
                 )
 
+            def open_offsets(self):
+                print([*self.offsets, *args[0].open_offsets()])
+                return get_open_offsets(*self.offsets, *args[0].open_offsets())
+
+            @property
+            def offset_provider(self):
+                return args[0].offset_provider
+
             def max_neighbors(self):
                 # TODO cleanup, test edge cases
-                open_offsets = get_open_offsets(
-                    *self.offsets, *args[0].incomplete_offsets
-                )  # TODO cleanup + safety
+                open_offsets = self.open_offsets()
                 assert open_offsets
                 return _get_connectivity(args[0].offset_provider, open_offsets[0]).max_neighbors
 
@@ -674,6 +680,9 @@ class MDIterator:
     def max_neighbors(self) -> int:
         assert self.incomplete_offsets
         return _get_connectivity(self.offset_provider, self.incomplete_offsets[0]).max_neighbors
+
+    def open_offsets(self):
+        return self.incomplete_offsets
 
     def can_deref(self) -> bool:
         return self.pos is not None
