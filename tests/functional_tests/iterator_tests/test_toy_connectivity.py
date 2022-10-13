@@ -460,3 +460,40 @@ def test_sparse_shifted_stencil_reduce(fencil_processor_no_gtfn_exec):
 
     if validate:
         assert np.allclose(np.asarray(out), ref)
+
+
+@fundef
+def nested_reduce(inp):  # it[->cell, vertex]
+    # c2e->e2v
+
+    def sum_(a, b):
+        return a + b
+
+    return reduce(sum_, 0)(lift(lambda x: reduce(sum_, 0)(shift(E2V)(x)))(shift(C2E)(inp)))
+
+
+def test_nested_reduce(fencil_processor_no_gtfn_exec):
+    fencil_processor, validate = fencil_processor_no_gtfn_exec
+
+    inp = index_field(Vertex)
+    out = np_as_located_field(Cell)(np.zeros([9]))
+
+    ref_inner = np.sum(e2v_arr, axis=-1)
+    ref = np.sum(ref_inner[c2e_arr], axis=-1)
+    ref = np.asarray(ref)
+
+    domain = {Cell: range(0, 9)}
+
+    run_processor(
+        nested_reduce[domain],
+        fencil_processor,
+        inp,
+        out=out,
+        offset_provider={
+            "E2V": NeighborTableOffsetProvider(e2v_arr, Edge, Vertex, 2),
+            "C2E": NeighborTableOffsetProvider(c2e_arr, Cell, Edge, 4),
+        },
+    )
+
+    if validate:
+        assert np.allclose(np.asarray(out), ref)
