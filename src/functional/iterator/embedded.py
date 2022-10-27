@@ -974,6 +974,10 @@ def is_located_field(field: Any) -> bool:
     return isinstance(field, LocatedField)  # TODO(havogt): avoid isinstance on Protocol
 
 
+def is_constant_field(field: Any) -> bool:
+    return field.value is not None and field.dtype is not None
+
+
 def has_uniform_tuple_element(field) -> bool:
     return field.dtype.fields is not None and all(
         next(iter(field.dtype.fields))[0] == f[0] for f in iter(field.dtype.fields)
@@ -987,7 +991,11 @@ def is_tuple_of_field(field) -> bool:
 
 
 def is_field_of_tuple(field) -> bool:
-    return is_located_field(field) and has_uniform_tuple_element(field)
+    return (
+        is_located_field(field) and is_constant_field(field)
+        if isinstance(field, ConstantField)
+        else has_uniform_tuple_element(field)
+    )
 
 
 def can_be_tuple_field(field) -> bool:
@@ -1146,8 +1154,11 @@ def fendef_embedded(fun: Callable[..., None], *args: Any, **kwargs: Any):
 
             if column is None:
                 assert _is_concrete_position(pos)
-                ordered_indices = get_ordered_indices(out.axes, pos)
-                out[ordered_indices] = res
+                if isinstance(out, ConstantField):
+                    out.value = res
+                else:
+                    ordered_indices = get_ordered_indices(out.axes, pos)
+                    out[ordered_indices] = res
             else:
                 col_pos = pos.copy()
                 for k in column.col_range:
