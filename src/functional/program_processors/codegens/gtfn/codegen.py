@@ -109,19 +109,27 @@ class GTFNCodegen(codegen.TemplatedGenerator):
         "::gridtools::sid::composite::keys<${','.join(f'::gridtools::integral_constant<int,{i}>' for i in range(len(values)))}>::make_values(${','.join(values)})"
     )
 
-    def visit_FunCall(self, node: gtfn_ir.FunCall, **kwargs):
+    def visit_FunCall(self, node: gtfn_ir.FunCall, *, stmts, **kwargs):
         if isinstance(node.fun, gtfn_ir.SymRef) and node.fun.id in self._builtins_mapping:
-            return self.generic_visit(node, fun_name=self._builtins_mapping[node.fun.id])
+            return self.generic_visit(
+                node, fun_name=self._builtins_mapping[node.fun.id], stmts=stmts
+            )
         if isinstance(node.fun, gtfn_ir.SymRef) and node.fun.id in gtfn_ir.GTFN_BUILTINS:
             qualified_fun_name = f"gtfn::{node.fun.id}"
-            return self.generic_visit(node, fun_name=qualified_fun_name)
-        return self.generic_visit(node, fun_name=self.visit(node.fun))
+            return self.generic_visit(node, fun_name=qualified_fun_name, stmts=stmts)
+        if isinstance(node.fun, gtfn_ir.Lambda):
+            expr = self.visit(node.fun.expr, stmts=stmts)
+            for param, arg in zip(
+                self.visit(node.fun.params, stmts=stmts), self.visit(node.args, stmts=stmts)
+            ):
+                stmts.append(f"auto {param} = {arg};")
+            return expr
+
+        return self.generic_visit(node, fun_name=self.visit(node.fun), stmts=stmts)
 
     FunCall = as_fmt("{fun_name}({','.join(args)})")
 
-    Lambda = as_mako(
-        "[=](${','.join('auto ' + p for p in params)}){return ${expr};}"
-    )  # TODO capture
+    Lambda = as_mako("[=](${','.join('auto ' + p for p in params)}){ ${expr};}")  # TODO capture
 
     Backend = as_fmt("make_backend(backend, {domain})")  # TODO: gtfn::make_backend
 
@@ -148,12 +156,21 @@ class GTFNCodegen(codegen.TemplatedGenerator):
         """
     )
 
+    def visit_FunctionDefinition(self, node, **kwargs):
+        if isinstance(node.expr, gtfn_ir.FunCall) and isinstance(node.expr.fun, gtfn_ir.Lambda):
+            stmts = []
+            expr = self.visit(node.expr, stmts=stmts)
+            expr_ = f"{''.join(stmts)} return {expr};"
+        else:
+            expr_ = self.visit(node.expr)
+        return self.generic_visit(node, expr_=expr_, stmts=[])
+
     FunctionDefinition = as_mako(
         """
         struct ${id} {
             constexpr auto operator()() const {
                 return [](${','.join('auto const& ' + p for p in params)}){
-                    return ${expr};
+                    ${expr_};
                 };
             }
         };
