@@ -755,11 +755,11 @@ The `scan_operator` in embedded a `field_operator`. For now we do this, such tha
 
 @field_operator
 def graupel_toy_scan(qc: Field[[CellDim, KDim], float], qr: Field[[CellDim, KDim], float],
-    ) -> tuple[Field[[CellDim, KDim], float], Field[[CellDim, KDim], float], Field[[CellDim, KDim], float]]:
+    ) -> tuple[Field[[CellDim, KDim], float], Field[[CellDim, KDim], float]]:
     
-    # qc, qr, _ = _graupel_toy_scan(qc, qr) # DL: Hmmmm. This doesnt work yet (BUG)
+    qc, qr, _ = _graupel_toy_scan(qc, qr)
 
-    return _graupel_toy_scan(qc, qr)
+    return qc, qr
 ```
 
 ### Test
@@ -772,7 +772,6 @@ You can test your implementaion by executing the following test:
 # Initialize GT4Py fields to zero
 qc = np_as_located_field(CellDim, KDim)(np.full(shape=grid_shape, fill_value=1.0, dtype=np.float64))
 qr = np_as_located_field(CellDim, KDim)(np.full(shape=grid_shape, fill_value=0.0, dtype=np.float64))
-s = np_as_located_field(CellDim, KDim)(np.full(shape=grid_shape, fill_value=0.0, dtype=np.float64)) # Needed for workaround of the workaround
 
 #Initialize Numpy fields from GT4Py fields
 qc_numpy = np.asarray(qc).copy()
@@ -782,7 +781,7 @@ qr_numpy = np.asarray(qr).copy()
 toy_microphyiscs_numpy(qc_numpy, qr_numpy)
 
 #Execute the GT4Py version of scheme
-graupel_toy_scan(qc, qr, out=(qc, qr, s), offset_provider={})
+graupel_toy_scan(qc, qr, out=(qc, qr), offset_provider={})
 
 # Compare results
 assert np.allclose(np.asarray(qc), qc_numpy)
