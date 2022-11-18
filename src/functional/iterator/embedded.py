@@ -155,7 +155,7 @@ class LocatedField(Protocol):
         ...
 
     @abstractmethod
-    def __getitem__(self, indices: FieldIndexOrIndices) -> Any:
+    def field_getitem(self, indices: FieldIndexOrIndices) -> Any:
         ...
 
 
@@ -163,11 +163,7 @@ class MutableLocatedField(LocatedField, Protocol):
     """A LocatedField with write access."""
 
     @abstractmethod
-    def __setitem__(self, indices: FieldIndexOrIndices, value: Any) -> None:
-        ...
-
-    @abstractmethod
-    def __array__(self) -> np.ndarray:
+    def field_setitem(self, indices: FieldIndexOrIndices, value: Any) -> None:
         ...
 
 
@@ -228,10 +224,6 @@ class Column(np.lib.mixins.NDArrayOperatorsMixin):
             self.kstart,
             func(*(arg.data if isinstance(arg, Column) else arg for arg in args), **kwargs),
         )
-
-
-def _make_column(column_range: range, dtype=np.dtype):
-    return Column(column_range.start, np.zeros(len(column_range), dtype=dtype))
 
 
 @builtins.deref.register(EMBEDDED)
@@ -663,23 +655,53 @@ def _get_axes(
     )
 
 
+def _single_vertical_idx(indices, column_axis_idx, column_index):
+    transformed = tuple(
+        index if i != column_axis_idx else column_index for i, index in enumerate(indices)
+    )
+    return transformed
+
+
 def _make_tuple(
     field_or_tuple: LocatedField | tuple,  # arbitrary nesting of tuples of LocatedField
     indices: int | slice | tuple[int | slice, ...],
     *,
-    as_column: bool = False,
-) -> tuple:  # arbitrary nesting of tuples of field values or `Column`s
+    column_axis_idx: int = None,
+) -> npt.DTypeLike | Column | tuple:  # arbitrary nesting of tuples of field values or `Column`s
     if isinstance(field_or_tuple, tuple):
-        return tuple(_make_tuple(f, indices, as_column=as_column) for f in field_or_tuple)
+        if column_axis_idx is not None:
+            # construct a Column of tuples
+            first = tuple(
+                _make_tuple(f, _single_vertical_idx(indices, column_axis_idx, _column_range.start))
+                for f in field_or_tuple
+            )
+            col = Column(
+                _column_range.start, np.zeros(len(_column_range), dtype=_column_dtype(first))
+            )
+            col[0] = first
+            for i in _column_range[1:]:
+                col[i] = tuple(
+                    _make_tuple(f, _single_vertical_idx(indices, column_axis_idx, i))
+                    for f in field_or_tuple
+                )
+            return col
+        else:
+            return tuple(_make_tuple(f, indices) for f in field_or_tuple)
     else:
-        data = field_or_tuple[indices]
-        if as_column:
+        data = field_or_tuple.field_getitem(indices)
+        if column_axis_idx is not None:
             # wraps a vertical slice of an input field into a `Column`
-            return Column(
-                0, data
-            )  # TODO(havogt) when we support LocatedFields with origin (i.e. non-zero origin), kstart needs to be adapated here
+            assert _column_range is not None
+            return Column(_column_range.start, data)
         else:
             return data
+
+
+def _axis_idx(axes: Sequence[Dimension], axis: Tag) -> int:
+    for i, a in enumerate(axes):
+        if a.value == axis:
+            return i
+    raise AssertionError()
 
 
 # TODO(havogt) frozen dataclass
@@ -732,18 +754,25 @@ class MDIterator:
                 raise IndexError("Iterator position doesn't point to valid location for its field.")
         slice_column = dict[Tag, FieldIndex]()
         if self.column_axis is not None:
-            slice_column[self.column_axis] = slice(shifted_pos[self.column_axis], None)
-            shifted_pos.pop(self.column_axis)
+            assert _column_range is not None
+            k_pos = shifted_pos.pop(self.column_axis)
+            assert isinstance(k_pos, int)
+            # the following range describes a range in the field
+            # (negative values are relative to the origin, not relative to the size)
+            slice_column[self.column_axis] = range(k_pos, k_pos + len(_column_range))
 
         assert _is_concrete_position(shifted_pos)
         ordered_indices = get_ordered_indices(
             axes,
             {**shifted_pos, **slice_column},
         )
-        try:
-            return _make_tuple(self.field, ordered_indices, as_column=self.column_axis is not None)
-        except IndexError:
-            return _UNDEFINED
+        return _make_tuple(
+            self.field,
+            ordered_indices,
+            column_axis_idx=_axis_idx(axes, self.column_axis)
+            if self.column_axis is not None
+            else None,
+        )
 
 
 def make_in_iterator(
@@ -769,7 +798,8 @@ def make_in_iterator(
         new_pos[sparse_dim] = init  # type: ignore[assignment] # looks like mypy is confused
     if column_axis is not None:
         # if we deal with column stencil the column position is just an offset by which the whole column needs to be shifted
-        new_pos[column_axis] = 0
+        assert _column_range is not None
+        new_pos[column_axis] = _column_range.start
     return MDIterator(
         inp,
         new_pos,
@@ -805,10 +835,16 @@ class LocatedFieldImpl(MutableLocatedField):
         self.dtype = dtype
 
     def __getitem__(self, indices: FieldIndexOrIndices) -> Any:
+        return self.array()[indices]
+
+    def field_getitem(self, indices: FieldIndexOrIndices) -> Any:
         indices = tupelize(indices)
         return self.getter(indices)
 
     def __setitem__(self, indices: FieldIndexOrIndices, value: Any):
+        self.array()[indices] = value
+
+    def field_setitem(self, indices: FieldIndexOrIndices, value: Any):
         self.setter(indices, value)
 
     def __array__(self) -> np.ndarray:
@@ -852,34 +888,28 @@ def get_ordered_indices(
                 res.append(elem[sparse_position_tracker[axis.value]])
                 sparse_position_tracker[axis.value] += 1
             else:
-                assert isinstance(elem, (int, np.integer, slice))
+                assert isinstance(elem, (int, np.integer, slice, range))
                 res.append(elem)
     return tuple(res)
 
 
-def _tupsum(a, b):
-    def combine_slice(s, t):
-        is_slice = False
-        if isinstance(s, slice):
-            is_slice = True
-            first = 0 if s.start is None else s.start
-            assert s.step is None
-            assert s.stop is None
-        else:
-            assert isinstance(s, numbers.Integral)
-            first = s
-        if isinstance(t, slice):
-            is_slice = True
-            second = 0 if t.start is None else t.start
-            assert t.step is None
-            assert t.stop is None
-        else:
-            assert isinstance(t, numbers.Integral)
-            second = t
-        start = first + second
-        return slice(start, None) if is_slice else start
+def _shift_range(
+    range_or_index: range | numbers.Integral, offset: numbers.Integral
+) -> slice | numbers.Integral:
+    if isinstance(range_or_index, range):
+        # range_or_index describes a range in the field
+        assert range_or_index.step == 1
+        return slice(range_or_index.start + offset, range_or_index.stop + offset)
+    else:
+        assert isinstance(range_or_index, numbers.Integral)
+        return range_or_index + offset
 
-    return tuple(combine_slice(*i) for i in zip(a, b))
+
+def _shift_ranges(
+    ranges_or_indices: tuple[range | numbers.Integral, ...],
+    offsets: tuple[numbers.Integral, ...],
+) -> tuple[slice | numbers.Integral, ...]:
+    return tuple(r if o == 0 else _shift_range(r, o) for r, o in zip(ranges_or_indices, offsets))
 
 
 def np_as_located_field(
@@ -896,12 +926,18 @@ def np_as_located_field(
 
         def setter(indices, value):
             indices = tupelize(indices)
-            a[_tupsum(indices, offsets) if offsets else indices] = value
+            a[_shift_ranges(indices, offsets) if offsets else indices] = value
 
         def getter(indices):
-            return a[_tupsum(indices, offsets) if offsets else indices]
+            return a[_shift_ranges(indices, offsets) if offsets else indices]
 
-        return LocatedFieldImpl(getter, axes, dtype=a.dtype, setter=setter, array=a.__array__)
+        return LocatedFieldImpl(
+            getter,
+            axes,
+            dtype=a.dtype,
+            setter=setter,
+            array=a.__array__,
+        )
 
     return _maker
 
@@ -911,7 +947,7 @@ class IndexField(LocatedField):
         self.axis = axis
         self.dtype = np.dtype(dtype)
 
-    def __getitem__(self, index: FieldIndexOrIndices) -> Any:
+    def field_getitem(self, index: FieldIndexOrIndices) -> Any:
         assert isinstance(index, int) or (isinstance(index, tuple) and len(index) == 1)
         return self.dtype.type(index if isinstance(index, int) else index[0])
 
@@ -929,7 +965,7 @@ class ConstantField(LocatedField):
         self.value = value
         self.dtype = np.dtype(dtype).type
 
-    def __getitem__(self, _: FieldIndexOrIndices) -> Any:
+    def field_getitem(self, _: FieldIndexOrIndices) -> Any:
         return self.dtype(self.value)
 
     @property
@@ -968,8 +1004,7 @@ class ScanArgIterator:
     def deref(self) -> Any:
         if not self.can_deref():
             return _UNDEFINED
-        # TODO(tehrengruber): _make_tuple is for fields
-        return _make_tuple(self.wrapped_iter.deref(), self.k_pos)
+        return self.wrapped_iter.deref()[self.k_pos]
 
     def can_deref(self) -> bool:
         return self.wrapped_iter.can_deref()
@@ -1057,12 +1092,12 @@ class TupleOfFields(TupleField):
         axeses = _get_axeses(data)
         self.axes = axeses[0]
 
-    def __getitem__(self, indices):
+    def field_getitem(self, indices):
         return _build_tuple_result(self.data, indices)
 
-    def __setitem__(self, indices, value):
+    def field_setitem(self, indices, value):
         if not isinstance(value, tuple):
-            raise RuntimeError("Value needs to be tuple.")
+            raise RuntimeError(f"Value needs to be tuple, got `{value}`.")
 
         _tuple_assign(self.data, value, indices)
 
@@ -1097,7 +1132,7 @@ def scan(scan_pass, is_forward: bool, init):
 
         column_range = _column_range if is_forward else reversed(_column_range)
         state = init
-        col = _make_column(_column_range, _column_dtype(init))
+        col = Column(_column_range.start, np.zeros(len(_column_range), dtype=_column_dtype(init)))
         for i in column_range:
             state = scan_pass(state, *map(shifted_scan_arg(i), iters))
             col[i] = state
@@ -1162,14 +1197,14 @@ def fendef_embedded(fun: Callable[..., None], *args: Any, **kwargs: Any):
             if column is None:
                 assert _is_concrete_position(pos)
                 ordered_indices = get_ordered_indices(out.axes, pos)
-                out[ordered_indices] = res
+                out.field_setitem(ordered_indices, res)
             else:
                 col_pos = pos.copy()
                 for k in column.col_range:
                     col_pos[column.axis] = k
                     assert _is_concrete_position(col_pos)
                     ordered_indices = get_ordered_indices(out.axes, col_pos)
-                    out[ordered_indices] = res[k]
+                    out.field_setitem(ordered_indices, res[k])
 
         _column_range = None
 
