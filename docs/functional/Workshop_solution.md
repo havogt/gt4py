@@ -946,16 +946,12 @@ When implementing the scheme, keep the following caveats in mind:
 - `If statements` are currently not supported, use ternary operator instead
 
 ```{code-cell} ipython3
-@scan_operator(axis=KDim, forward=True, init=(0.0, 0.0, 0.0))
-def _graupel_toy_scan(carry: tuple[float, float, float], qc_in: float, qr_in: float):
-
+@field_operator
+def step(qc_in: float, qr_in: float, qr_kMinus1: float, sedimentation_flux_kMinus1: float) -> tuple[float, float, float]:
     # Local config 
     autoconversion_rate = 0.1
     sedimentaion_constant = 0.05
-
-    # unpack carry
-    _, qr_kMinus1, sedimentation_flux_kMinus1 = carry
-
+    
     # Autoconversion: Cloud Drops -> Rain Drops
     autoconv_t = qc_in * autoconversion_rate
     qc = qc_in - autoconv_t
@@ -973,6 +969,15 @@ def _graupel_toy_scan(carry: tuple[float, float, float], qc_in: float, qr_in: fl
     qr = qr - sedimentation_flux
 
     return (qc, qr, sedimentation_flux)
+```
+
+```{code-cell} ipython3
+@scan_operator(axis=KDim, forward=True, init=(0.0, 0.0, 0.0))
+def _graupel_toy_scan(carry: tuple[float, float, float], qc_in: float, qr_in: float):
+    # unpack carry
+    _, qr_kMinus1, sedimentation_flux_kMinus1 = carry
+    return step(qc_in, qr_in, qr_kMinus1, sedimentation_flux_kMinus1)
+    
 ```
 
 The `scan_operator` in embedded a `field_operator`. For now we do this, such that sedimentation flux is treated as a temporary, and deleted upon exit of the `field_operator`:
