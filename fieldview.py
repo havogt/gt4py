@@ -40,10 +40,22 @@ class Field:
         return f"<{self.domain},\n{np.asarray(self)}>"
 
 
-@dataclass(frozen=True)
 class Iterator:
+    ...
+
+
+@dataclass(frozen=True)
+class FieldIterator(Iterator):
     _field: Field
     _pos: dict[str, tuple[int, int]]
+
+    def _deref(self):
+        return self._field._buffer[tuple(self._pos.values())]
+
+    def _shift(self, tag, value):
+        pos = self._pos.copy()
+        pos[tag] += value
+        return FieldIterator(self._field, pos)
 
 
 def _field_binary(op):
@@ -87,14 +99,12 @@ def _local_binary(op):
 
 
 def deref(it: Iterator):
-    return it._field._buffer[tuple(it._pos.values())]
+    return it._deref()
 
 
 def shift(tag: str, value: int):
     def impl(it: Iterator):
-        pos = it._pos.copy()
-        pos[tag] += value
-        return Iterator(it._field, pos)
+        return it._shift(tag, value)
 
     return impl
 
@@ -119,7 +129,7 @@ def fencil_map(stencil, *, out, domain):
         for pos in itertools.product(*[range(b, e) for b, e in domain.values()]):
             # print(pos)
             out._buffer[pos] = stencil(
-                *[Iterator(arg, dict(zip(domain.keys(), pos))) for arg in args]
+                *[FieldIterator(arg, dict(zip(domain.keys(), pos))) for arg in args]
             )
 
     return impl
@@ -162,7 +172,7 @@ def fmap(stencil):
         out = Field(domain)
         for pos in itertools.product(*[range(b, e) for b, e in domain.values()]):
             out._buffer[pos] = stencil(
-                *[Iterator(arg, dict(zip(domain.keys(), pos))) for arg in args]
+                *[FieldIterator(arg, dict(zip(domain.keys(), pos))) for arg in args]
             )
         return out
 
@@ -221,11 +231,14 @@ I = "I"
 J = "J"
 
 
-inp = Field({I: (0, 4), J: (0, 5)}, lambda x, y: x**2 + y**2)
-out_local = Field({I: (1, 3), J: (1, 4)})
+inp = Field({I: (0, 5), J: (0, 6)}, lambda x, y: x**4 + y**4)
+print(inp)
+out_local = Field({I: (1, 4), J: (1, 5)})
 
 
-@local_operator(extent=[{I: (-1, 1), J: (-1, 1)}])
+@local_operator(
+    extent=[{I: (-1, 1), J: (-1, 1)}]
+)  # decorator only required to be able to provide extent (could be computed)
 def lap_local(inp: Iterator[[I, J], float]) -> float:
     return add(
         add(
@@ -254,6 +267,7 @@ def lap_field(inp: Field[[I, J], float]) -> Field[[I, J], float]:
 
 
 fencil_map(lap_local, out=out_local, domain=out_local.domain)(inp)
+print(out_local)
 res_field = lap_field(inp)
 
 assert np.allclose(np.asarray(out_local), np.asarray(res_field))
@@ -278,6 +292,39 @@ def lap_as_fieldview_program(inp, out):
     apply(lap_field(inp), out=out, domain=out.domain)
 
 
-out_field = Field({I: (1, 3), J: (1, 4)})
+out_field = Field({I: (1, 4), J: (1, 5)})
 lap_as_fieldview_program(inp, out_field)
+print(out_field)
 assert np.allclose(out_local, out_field)
+
+
+@dataclass(frozen=True)
+class LiftedStencilIterator:
+    _fun: Callable
+    _its: Iterable[Iterator]
+
+    def _deref(self):
+        return self._fun(*self._its)
+
+    def _shift(self, tag, value):
+        return LiftedStencilIterator(self._fun, (shift(tag, value)(arg) for arg in self._its))
+
+
+def lift(fun):
+    def impl(*args):
+        return LiftedStencilIterator(fun, args)
+
+    return impl
+
+
+@local_operator(extent=[{I: (-2, 2), J: (-2, 2)}])
+def lap_lap_local(inp: Iterator) -> float:
+    return lap_local(lift(lap_local)(inp))
+
+
+lap_lap_local_res = fmap(lap_lap_local)(inp)
+lap_lap_field_res = lap_field(lap_field(inp))
+
+assert field_all_close(lap_lap_local_res, lap_lap_field_res)
+
+# TODO scan example
