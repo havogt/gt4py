@@ -3,6 +3,7 @@ from __future__ import annotations
 import itertools
 import operator
 from dataclasses import dataclass
+import functools
 
 import numpy as np
 
@@ -31,9 +32,12 @@ class Field:
         else:
             assert False
 
-    def __str__(self):
+    def __array__(self):
         slce = tuple(slice(v[0], v[1]) for v in self.domain.values())
-        return f"<{self.domain},\n{self._buffer[slce]}>"
+        return self._buffer[slce]
+
+    def __str__(self):
+        return f"<{self.domain},\n{np.asarray(self)}>"
 
 
 @dataclass(frozen=True)
@@ -53,6 +57,22 @@ def _field_binary(op):
         }
         slce = tuple(slice(None, v[1]) for v in domain.values())
         return Field(domain, op(a._buffer[slce], b._buffer[slce]))
+
+    return impl
+
+
+@dataclass(frozen=True)
+class LocalOperatorObject:
+    extent: dict[str, Tuple[int, int]]
+    _fun: Callable
+
+    def __call__(self, *args):
+        return self._fun(*args)
+
+
+def local_operator(*, extent):  # aka stencil
+    def impl(fun):
+        return LocalOperatorObject(extent, fun)
 
     return impl
 
@@ -79,15 +99,83 @@ def shift(tag: str, value: int):
     return impl
 
 
+def fshift(tag: str, value: int):
+    def impl(f: Field):
+        domain = f.domain.copy()
+        domain[tag] = tuple(v + value for v in domain[tag])
+        buffer = f._buffer
+        if value < 0:
+            buffer = buffer[tuple(slice(1 if dim == tag else None, None) for dim in domain.keys())]
+        if value > 0:
+            buffer = np.pad(buffer, [(1 if dim == tag else 0, 0) for dim in domain.keys()])
+
+        return Field(domain, buffer)
+
+    return impl
+
+
 def fencil_map(stencil, *, out, domain):
     def impl(*args):
         for pos in itertools.product(*[range(b, e) for b, e in domain.values()]):
-            print(pos)
+            # print(pos)
             out._buffer[pos] = stencil(
                 *[Iterator(arg, dict(zip(domain.keys(), pos))) for arg in args]
             )
 
     return impl
+
+
+def _shrink_domain_with_extent(domain, stencil_extent):  # -> domain
+    assert domain.keys() == stencil_extent.keys()
+    return dict(
+        zip(
+            domain.keys(),
+            ((d[0] - e[0], d[1] - e[1]) for d, e in zip(domain.values(), stencil_extent.values())),
+        )
+    )
+
+
+def _intersect_domains(*domains):
+    assert all(domains[0].keys() == d.keys() for d in domains)
+    return dict(
+        zip(
+            domains[0].keys(),
+            (
+                functools.reduce(lambda x, y: (max(x[0], y[0]), min(x[1], y[1])), elem)
+                for elem in zip(*(d.values() for d in domains))
+            ),
+        )
+    )
+
+
+def test_intersect_domains():
+    result = _intersect_domains({"I": (0, 5), "J": (4, 5)}, {"I": (1, 6), "J": (3, 6)})
+    expected = {"I": (1, 5), "J": (4, 5)}
+    assert result == expected
+
+
+def fmap(stencil):
+    def impl(*args):
+        domain = _intersect_domains(
+            *(_shrink_domain_with_extent(f.domain, e) for f, e in zip(args, stencil.extent))
+        )
+        out = Field(domain)
+        for pos in itertools.product(*[range(b, e) for b, e in domain.values()]):
+            out._buffer[pos] = stencil(
+                *[Iterator(arg, dict(zip(domain.keys(), pos))) for arg in args]
+            )
+        return out
+
+    return impl
+
+
+def apply(field: Field, *, out: Field, domain: dict[str, tuple[int, int]]):
+    slce = tuple(slice(d[0], d[1]) for d in domain.values())
+    out._buffer[slce] = field._buffer[slce]  # doesn't change the domain of out
+
+
+def literal(value):
+    return value
 
 
 add = _local_binary(operator.add)
@@ -97,25 +185,54 @@ fadd = _field_binary(np.add)
 fmul = _field_binary(np.multiply)
 
 
+def field_all_close(a: Field, b: Field):
+    return a.domain == b.domain and np.allclose(np.asarray(a), np.asarray(b))
+
+
+def test_fshift():
+    inp = Field({"I": (1, 3), "J": (0, 3)}, lambda x, y: x + y)
+
+    # I - 1
+    result = fshift("I", -1)(inp)
+    expected = Field({"I": (0, 2), "J": (0, 3)}, np.asarray(inp))
+    assert field_all_close(result, expected)
+
+    # I + 1
+    result = fshift("I", 1)(inp)
+    expected = Field({"I": (2, 4), "J": (0, 3)}, np.pad(np.asarray(inp), ((2, 0), (0, 0))))
+    assert field_all_close(result, expected)
+
+
+def test_fadd():
+    f = Field({I: (1, 3), J: (0, 3)}, lambda x, y: x + y)
+    g = Field({I: (1, 4), J: (1, 3)}, lambda x, y: x**2 * y**2)
+    result = fadd(f, g)
+    expected = Field(
+        {"I": (1, 3), "J": (1, 3)},
+        np.fromfunction(lambda x, y: x + y + x**2 * y**2, shape=(3, 3), dtype=float),
+    )
+
+    assert field_all_close(result, expected)
+
+
 # =============
 
 I = "I"
 J = "J"
 
-f = Field({I: (1, 3), J: (0, 3)}, lambda x, y: x + y)
-print(f)
-g = Field({I: (1, 4), J: (1, 3)}, lambda x, y: x**2 * y**2)
-print(g)
-print(fadd(f, g))
 
 inp = Field({I: (0, 4), J: (0, 5)}, lambda x, y: x**2 + y**2)
-out = Field({I: (1, 3), J: (1, 4)})
+out_local = Field({I: (1, 3), J: (1, 4)})
 
 
+@local_operator(extent=[{I: (-1, 1), J: (-1, 1)}])
 def lap_local(inp: Iterator[[I, J], float]) -> float:
     return add(
         add(
-            add(add(mul(-4.0, deref(inp)), deref(shift(I, -1)(inp))), deref(shift(I, 1)(inp))),
+            add(
+                add(mul(literal(-4.0), deref(inp)), deref(shift(I, -1)(inp))),
+                deref(shift(I, 1)(inp)),
+            ),
             deref(shift(J, -1)(inp)),
         ),
         deref(shift(J, 1)(inp)),
@@ -125,9 +242,21 @@ def lap_local(inp: Iterator[[I, J], float]) -> float:
     # )  # beautified
 
 
-fencil_map(lap_local, out=out, domain=out.domain)(inp)
-print(inp)
-print(out)
+def lap_field(inp: Field[[I, J], float]) -> Field[[I, J], float]:
+    minus_four = Field(inp.domain, init=-4.0)
+    return fadd(
+        fadd(
+            fadd(fadd(fmul(minus_four, inp), fshift(I, -1)(inp)), fshift(I, 1)(inp)),
+            fshift(J, -1)(inp),
+        ),
+        fshift(J, 1)(inp),
+    )
+
+
+fencil_map(lap_local, out=out_local, domain=out_local.domain)(inp)
+res_field = lap_field(inp)
+
+assert np.allclose(np.asarray(out_local), np.asarray(res_field))
 
 
 def fencil(inp: Field[[I, J], float], out: Field[[I, J]]) -> None:
@@ -139,3 +268,16 @@ def fencil(inp: Field[[I, J], float], out: Field[[I, J]]) -> None:
 def lap_local_as_field_operator(inp: Field[[I, J], float]) -> Field[[I, J], float]:
     return fmap(lap_local)(inp)  # of beautified:
     # return lap_local[...](inp)
+
+
+res_lap_local_as_field_op = fmap(lap_local)(inp)  # domain should not be here
+assert np.allclose(out_local, res_lap_local_as_field_op)
+
+
+def lap_as_fieldview_program(inp, out):
+    apply(lap_field(inp), out=out, domain=out.domain)
+
+
+out_field = Field({I: (1, 3), J: (1, 4)})
+lap_as_fieldview_program(inp, out_field)
+assert np.allclose(out_local, out_field)
