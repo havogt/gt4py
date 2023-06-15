@@ -327,4 +327,20 @@ lap_lap_field_res = lap_field(lap_field(inp))
 
 assert field_all_close(lap_lap_local_res, lap_lap_field_res)
 
-# TODO scan example
+# TODO scan wip
+
+
+def partial_sum_fun(state: float, inp: Iterator[[I], float]):
+    return state + deref(inp)
+
+
+K = "K"
+
+
+def scan(fun, init):
+    def impl(*args):
+        ...
+
+
+def partial_sum(inp: Iterator[[I, K], float]) -> Field[[K], float]:
+    return scan(partial_sum_fun, 0.0)(inp)
