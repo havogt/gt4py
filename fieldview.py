@@ -25,6 +25,8 @@ class Field:
             self._buffer = np.zeros(shape=_shape, dtype=float)
         elif isinstance(init, np.ndarray):
             self._buffer = init
+        elif isinstance(init, _SlicedBuffer):
+            self._buffer = init
         elif isinstance(init, float):
             self._buffer = np.ones(shape=_shape, dtype=float) * init
         elif callable(init):
@@ -124,10 +126,15 @@ def fshift(tag: str, value: int):
     return impl
 
 
-def fencil_map(stencil, *, out, domain):
+def fencil_map(stencil, *, out, domain):  # NOT NEEDED: this is apply(fmap(..,))
     def impl(*args):
         for pos in itertools.product(*[range(b, e) for b, e in domain.values()]):
             # print(pos)
+            out_slce = (
+                slice(None) if dim not in domain.keys() else pos[list(domain.keys()).index(dim)]
+                for dim in out.domain.keys()
+            )
+            print(list(out_slce))
             out._buffer[pos] = stencil(
                 *[FieldIterator(arg, dict(zip(domain.keys(), pos))) for arg in args]
             )
@@ -164,15 +171,63 @@ def test_intersect_domains():
     assert result == expected
 
 
-def fmap(stencil):
-    def impl(*args):
-        domain = _intersect_domains(
-            *(_shrink_domain_with_extent(f.domain, e) for f, e in zip(args, stencil.extent))
+# a Field has
+# - a sliceable buffer
+# - a domain
+
+
+@dataclass(frozen=True)
+class _SlicedBuffer:
+    _domain_of_outer: dict[str, tuple[int, int]]
+    _original_field: Field
+
+    def __getitem__(self, indices):
+        print(self._domain_of_outer)
+        slce = tuple(
+            slice(None)
+            if dim not in self._domain_of_outer.keys()
+            else indices[list(self._domain_of_outer.keys()).index(dim)]
+            for dim in self._original_field.domain.keys()
         )
+        return Field(
+            dict(
+                filter(
+                    lambda dim: dim[0] not in self._domain_of_outer.keys(),
+                    self._original_field.domain.items(),
+                )
+            ),
+            self._original_field._buffer[slce],
+        )
+
+
+def _extract_field_dimension(field: Field, tags: list[str]):
+    """_extract_field_dimension(Field[[I,J,K], float]) -> Field[[I,J], Field[[K], float]]"""
+    outer_domain = dict(filter(lambda dim: dim[0] in tags, field.domain.items()))
+    return Field(
+        outer_domain,
+        _SlicedBuffer(outer_domain, field),
+    )
+
+
+def test_field_extraction():
+    foo = Field({I: (0, 2), J: (0, 3)}, lambda x, y: x**2 + y**2)
+    result = _extract_field_dimension(foo, [I])
+    print(result)
+
+
+def field_map(stencil, *, domain):
+    def impl(*args):
+        # Note intersecting is wrong (because doesn't allow boundary conditions with boundary fields)
+        # Therefore, the domain is required to be explicitly specified. But it seems like relative to an input argument is desirable.
+        # domain = _intersect_domains(
+        #     *(_shrink_domain_with_extent(f.domain, e) for f, e in zip(args, stencil.extent))
+        # )
         out = Field(domain)
         for pos in itertools.product(*[range(b, e) for b, e in domain.values()]):
             out._buffer[pos] = stencil(
-                *[FieldIterator(arg, dict(zip(domain.keys(), pos))) for arg in args]
+                *[
+                    FieldIterator(arg, dict(zip(domain.keys(), pos))) for arg in args
+                ]  # TODO if arg.domain.keys() - domain.keys() is not empty, we need to transform Field to Field of fields or use a special iterator
             )
         return out
 
@@ -280,11 +335,15 @@ def fencil(inp: Field[[I, J], float], out: Field[[I, J]]) -> None:
 
 
 def lap_local_as_field_operator(inp: Field[[I, J], float]) -> Field[[I, J], float]:
-    return fmap(lap_local)(inp)  # of beautified:
+    return field_map(lap_local, domain=_shrink_domain_with_extent(inp.domain, lap_local.extent))(
+        inp
+    )  # of beautified:
     # return lap_local[...](inp)
 
 
-res_lap_local_as_field_op = fmap(lap_local)(inp)  # domain should not be here
+res_lap_local_as_field_op = field_map(
+    lap_local, domain=_shrink_domain_with_extent(inp.domain, lap_local.extent[0])
+)(inp)
 assert np.allclose(out_local, res_lap_local_as_field_op)
 
 
@@ -322,7 +381,9 @@ def lap_lap_local(inp: Iterator) -> float:
     return lap_local(lift(lap_local)(inp))
 
 
-lap_lap_local_res = fmap(lap_lap_local)(inp)
+lap_lap_local_res = field_map(
+    lap_lap_local, domain=_shrink_domain_with_extent(inp.domain, lap_lap_local.extent[0])
+)(inp)
 lap_lap_field_res = lap_field(lap_field(inp))
 
 assert field_all_close(lap_lap_local_res, lap_lap_field_res)
@@ -330,7 +391,9 @@ assert field_all_close(lap_lap_local_res, lap_lap_field_res)
 # TODO scan wip
 
 
-def partial_sum_fun(state: float, inp: Iterator[[I], float]):
+def partial_sum_fun(
+    state: float, inp: Iterator[[I], float]
+):  # TODO: IteratorIR (embedded) currently allows shifting in K (but I think the conclusion was it doesn't make sense as we are bypassing k-cache representation)
     return state + deref(inp)
 
 
@@ -339,8 +402,71 @@ K = "K"
 
 def scan(fun, init):
     def impl(*args):
-        ...
+        # how do we get the "column_size" to here? intersect all inputs?
+        acc = init
+        column_domain = _intersect_domains(*(deref(arg).domain for arg in args))
+        print(column_domain)
+
+    return impl
 
 
-def partial_sum(inp: Iterator[[I, K], float]) -> Field[[K], float]:
+def partial_sum(inp: Iterator[[I], Field[[K], float]]) -> Field[[K], float]:
     return scan(partial_sum_fun, 0.0)(inp)
+
+
+def partial_sum_fieldop(inp: Field[[I, K], float]) -> Field[[I, K], float]:
+    return field_map(partial_sum)(
+        inp
+    )  # TODO: this is ugly because fmap doesn't map all dimensions of `inp` but only one (and the other is left in the field)
+
+
+inp_psum = Field({I: (0, 1), K: (0, 5)}, lambda x, y: y)
+print(inp_psum)
+expected_psum = Field({I: (0, 1), K: (0, 5)}, np.asarray([[0.0, 1.0, 3.0, 6.0, 10.0]]))
+print(expected_psum)
+
+out_psum = Field({I: (0, 1), K: (0, 5)})
+
+# fencil_map(partial_sum, out=out_psum, domain={I: (0, 1)})(inp_psum)
+# print(out_psum)
+
+# result_psum = partial_sum_fieldop(
+#     inp_sum
+# )  # using the function instead of just `fmap(partial_sum)(inp_psum)` to show type annotations
+
+# assert field_all_close(result_psum, expected_psum)
+
+
+# TODO add tuples
+
+
+## concat to local
+
+
+# def concat(a, b):
+#     assert a.domain.keys() == b.domain.keys()
+#     # return Field(
+#     #     {
+#     #         (min(a.domain[d][0], b.domain[d][0]),
+#     #         max(a.domain[d][1], b.domain[d][1])) for d in zip(a)
+#     #     }
+#     # )
+
+
+# boundary = Field({I: (0, 1)}, 1.0)
+# interior = Field({I: (1, 5)}, 2.0)
+
+
+# def concat_example(interior, boundary):
+#     return concat(boundary, interior)
+
+# def concat_local(interior: Iterator[[I], float], boundary: Field[[I], float] ) -> float:
+#     if pos(interior)[I] in (0,1):
+#         return deref(boundary)
+#     else:
+#         return deref(interior)
+
+# def concat_local_to_field(...):
+#     return concat(boundary[{I:(0,1)}], interior)
+
+# concat_example(interior, boundary)
