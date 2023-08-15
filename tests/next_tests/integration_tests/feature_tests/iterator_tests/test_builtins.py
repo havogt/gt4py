@@ -167,7 +167,7 @@ def arithmetic_and_logical_test_data():
     ]
 
 
-@pytest.mark.parametrize("as_column", [False, True])
+@pytest.mark.parametrize("as_column", [False, True], ids=["value_mode", "column_mode"])
 @pytest.mark.parametrize("builtin, inputs, expected", arithmetic_and_logical_test_data())
 def test_arithmetic_and_logical_builtins(program_processor, builtin, inputs, expected, as_column):
     program_processor, validate = program_processor

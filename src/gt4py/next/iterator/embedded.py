@@ -277,8 +277,10 @@ def can_deref(it):
 def if_(cond, t, f):
     # ensure someone doesn't accidentally pass an iterator
     assert not hasattr(cond, "shift")
-    if any(isinstance(arg, Column) for arg in (cond, t, f)):
-        return np.where(cond, t, f)
+    if any(isinstance(arg, common.Field) for arg in (cond, t, f)):
+        from gt4py.next.ffront import fbuiltins
+
+        return fbuiltins.where(cond, t, f)
     return t if cond else f
 
 
@@ -436,6 +438,10 @@ def mod(first, second):
 
 @builtins.eq.register(EMBEDDED)
 def eq(first, second):
+    if isinstance(first, common.Field):
+        from gt4py.next.ffront import fbuiltins
+
+        return fbuiltins.equal(first, second)
     return first == second
 
 
@@ -461,6 +467,10 @@ def greater_equal(first, second):
 
 @builtins.not_eq.register(EMBEDDED)
 def not_eq(first, second):
+    if isinstance(first, common.Field):
+        from gt4py.next.ffront import fbuiltins
+
+        return fbuiltins.not_equal(first, second)
     return first != second
 
 
@@ -754,8 +764,15 @@ def _make_tuple(
                 _make_tuple(f, _single_vertical_idx(named_indices, column_axis, column_range.start))
                 for f in field_or_tuple
             )
-            col = Column(
-                column_range.start, np.zeros(len(column_range), dtype=_column_dtype(first))
+            # col = Column(
+            #     column_range.start, np.zeros(len(column_range), dtype=_column_dtype(first))
+            # )
+            col = common.field(
+                np.zeros(len(column_range), dtype=_column_dtype(first)),
+                domain=common.Domain(
+                    (common.Dimension(column_axis, common.DimensionKind.VERTICAL),),
+                    (common.UnitRange(column_range.start, column_range.stop),),
+                ),
             )
             col[0] = first
             for i in column_range[1:]:
@@ -771,7 +788,17 @@ def _make_tuple(
         if column_axis is not None:
             # wraps a vertical slice of an input field into a `Column`
             assert column_range is not None
-            return Column(column_range.start, data.ndarray if hasattr(data, "ndarray") else data)
+            # return Column(column_range.start, )
+            if isinstance(data, common.Field):
+                return data
+            else:
+                return common.field(
+                    np.asarray([data] * len(column_range)),
+                    domain=common.Domain(
+                        (common.Dimension(column_axis, common.DimensionKind.VERTICAL),),
+                        (common.UnitRange(column_range.start, column_range.stop),),
+                    ),
+                )
         else:
             return data
 
@@ -1337,7 +1364,14 @@ class ScanArgIterator:
     def deref(self) -> Any:
         if not self.can_deref():
             return _UNDEFINED
-        return self.wrapped_iter.deref()[self.k_pos]
+        return self.wrapped_iter.deref()[
+            (
+                (
+                    common.Dimension(self.wrapped_iter.column_axis, common.DimensionKind.VERTICAL),
+                    self.k_pos,
+                ),
+            )
+        ]
 
     def can_deref(self) -> bool:
         return self.wrapped_iter.can_deref()
@@ -1423,8 +1457,8 @@ class TupleOfFields(TupleField):
         return _build_tuple_result(self.data, named_indices)
 
     def field_setitem(self, named_indices: NamedFieldIndices, value: Any):
-        if not isinstance(value, tuple):
-            raise RuntimeError(f"Value needs to be tuple, got `{value}`.")
+        # if not isinstance(value, tuple):
+        #     raise RuntimeError(f"Value needs to be tuple, got `{value}` of type `{type(value)}`.")
         _tuple_assign(self.data, value, named_indices)
 
 
@@ -1454,10 +1488,19 @@ def scan(scan_pass, is_forward: bool, init):
 
         sorted_column_range = column_range if is_forward else reversed(column_range)
         state = init
-        col = Column(column_range.start, np.zeros(len(column_range), dtype=_column_dtype(init)))
+        # col = Column(column_range.start, np.zeros(len(column_range), dtype=_column_dtype(init)))
+        # col = common.field(np.zeros(len(column_range), column_range.start, dtype=_column_dtype(init)))
+        vertical_dim = common.Dimension(iters[0].column_axis, common.DimensionKind.VERTICAL)
+        col = common.field(
+            np.zeros(len(column_range), dtype=_column_dtype(init)),
+            domain=common.Domain(
+                (vertical_dim,),
+                (common.UnitRange(column_range.start, column_range.stop),),
+            ),
+        )
         for i in sorted_column_range:
             state = scan_pass(state, *map(shifted_scan_arg(i), iters))
-            col[i] = state
+            col[((vertical_dim, i),)] = state
 
         return col
 
@@ -1536,7 +1579,19 @@ def fendef_embedded(fun: Callable[..., None], *args: Any, **kwargs: Any):
                     for k in column.col_range:
                         col_pos[column.axis] = k
                         assert _is_concrete_position(col_pos)
-                        out.field_setitem(col_pos, res[k])
+                        out.field_setitem(
+                            col_pos,
+                            res[
+                                (
+                                    (
+                                        common.Dimension(
+                                            column.axis, common.DimensionKind.VERTICAL
+                                        ),
+                                        k,
+                                    ),
+                                )
+                            ],
+                        )
 
         ctx = cvars.copy_context()
         ctx.run(_closure_runner)

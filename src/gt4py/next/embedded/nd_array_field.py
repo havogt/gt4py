@@ -70,6 +70,28 @@ def _make_binary_array_field_intrinsic_func(builtin_name: str, array_builtin_nam
 
         return a.__class__.from_array(new_data, domain=a.domain)
 
+
+def _make_ternary_array_field_intrinsic_func(
+    builtin_name: str, array_builtin_name: str
+) -> Callable:
+    def _builtin_binary_op(a: _BaseNdArrayField, b: common.Field, c: common.Field) -> common.Field:
+        xp = a.__class__.array_ns
+        op = getattr(xp, array_builtin_name)
+        if hasattr(b, "__gt_builtin_func__"):  # isinstance(b, common.Field):
+            if not a.domain == b.domain == c.domain:
+                domain_intersection = a.domain & b.domain & c.domain
+                a_slices = _get_slices_from_domain_slice(a.domain, domain_intersection)
+                b_slices = _get_slices_from_domain_slice(b.domain, domain_intersection)
+                c_slices = _get_slices_from_domain_slice(c.domain, domain_intersection)
+                new_data = op(a.ndarray[a_slices], b.ndarray[b_slices], c.ndarray[c_sliced])
+                return a.__class__.from_array(new_data, domain=domain_intersection)
+            new_data = op(a.ndarray, xp.asarray(b.ndarray), xp.asarray(c.ndarray))
+        else:
+            # assert isinstance(b, core_defs.SCALAR_TYPES) # TODO reenable this assert (if b is an array it should be wrapped into a field)
+            new_data = op(a.ndarray, b, c)
+
+        return a.__class__.from_array(new_data, domain=a.domain)
+
     _builtin_binary_op.__name__ = builtin_name
     return _builtin_binary_op
 
@@ -171,11 +193,11 @@ class _BaseNdArrayField(common.FieldABC[common.DimsT, core_defs.ScalarT]):
 
         value_type = array.dtype.type  # TODO add support for Dimensions as value_type
 
-        assert issubclass(array.dtype.type, core_defs.SCALAR_TYPES)
+        # assert issubclass(array.dtype.type, core_defs.SCALAR_TYPES)
 
         assert all(isinstance(d, common.Dimension) for d in domain.dims), domain
         assert len(domain) == array.ndim
-        assert all(len(r) == s for r, s in zip(domain.ranges, array.shape))
+        assert all(len(r) == s for r, s in zip(domain.ranges, array.shape)), domain.ranges
 
         assert value_type is not None  # for mypy
         return cls(domain, array, value_type)
@@ -191,25 +213,24 @@ class _BaseNdArrayField(common.FieldABC[common.DimsT, core_defs.ScalarT]):
         else:
             return self.ndarray[domain_slice]  # TODO should return field
 
-    def __setitem__(self, domain, value):
-        slices = _get_slices_from_domain_slice(self.domain, domain)
-        self.ndarray[slices] = value
+    def __setitem__(self, domain_slice, value):
+        if common.is_domain_slice(domain_slice):
+            slices, _ = _get_slices_from_domain_slice(self.domain, domain_slice)
+            self.ndarray[slices] = value
+        else:
+            self.ndarray[domain_slice] = value
 
     def _getitem_domain_slice(self, index: common.DomainSlice) -> common.Field:
-        slices = _get_slices_from_domain_slice(self.domain, index)
+        slices, new_domain = _get_slices_from_domain_slice(self.domain, index)
 
-        dims = []
-        ranges = []
-        for k, v in index:
-            if not common.is_int_index(v):
-                dims.append(k)
-                ranges.append(v)
-
-        new = self.ndarray[slices]
-        if len(dims) == 0:
-            return new  # scalar
+        if len(new_domain) == 0:
+            try:
+                new = self.ndarray[slices]
+                return new  # scalar
+            except IndexError:
+                return np.NaN
         else:
-            new_domain = common.Domain(tuple(dims), tuple(ranges))
+            new = self.ndarray[slices]
             return self.__class__(new_domain, new, self.value_type)
 
     __call__ = None  # type: ignore[assignment]  # TODO: remap
@@ -245,6 +266,13 @@ class _BaseNdArrayField(common.FieldABC[common.DimsT, core_defs.ScalarT]):
 
     __invert__ = _make_unary_array_field_intrinsic_func("invert", "invert")
 
+    __gt__ = _make_binary_array_field_intrinsic_func("greater", "greater")
+    __lt__ = _make_binary_array_field_intrinsic_func("less", "less")
+    __le__ = _make_binary_array_field_intrinsic_func("less_equal", "less_equal")
+    __ge__ = _make_binary_array_field_intrinsic_func("greater_equal", "greater_equal")
+    # __eq__ = _make_binary_array_field_intrinsic_func("equal", "equal")
+    # __ne__ = _make_binary_array_field_intrinsic_func("not_equal", "not_equal")
+
 
 # -- Specialized implementations for intrinsic operations on array fields --
 
@@ -271,6 +299,15 @@ _BaseNdArrayField.register_builtin_func(
 )
 _BaseNdArrayField.register_builtin_func(
     fbuiltins.fmod, _make_binary_array_field_intrinsic_func("fmod", "fmod")  # type: ignore[attr-defined]
+)
+_BaseNdArrayField.register_builtin_func(
+    fbuiltins.equal, _make_binary_array_field_intrinsic_func("equal", "equal")  # type: ignore[attr-defined]
+)
+_BaseNdArrayField.register_builtin_func(
+    fbuiltins.not_equal, _make_binary_array_field_intrinsic_func("not_equal", "not_equal")  # type: ignore[attr-defined]
+)
+_BaseNdArrayField.register_builtin_func(
+    fbuiltins.where, _make_ternary_array_field_intrinsic_func("where", "where")  # type: ignore[attr-defined]
 )
 
 # -- Concrete array implementations --
@@ -325,16 +362,34 @@ def _get_slices_from_domain_slice(
     """
     slice_indices: list[slice | int | None] = []
 
+    dims = []
+    ranges = []
     for new_dim, new_rng in domain_slice:
         pos_new = next(index for index, (dim, _) in enumerate(domain_slice) if dim == new_dim)
 
         if new_dim in domain.dims:
             pos_old = domain.dims.index(new_dim)
-            slice_indices.append(_compute_slice(new_rng, domain, pos_old))
+
+            slice_, dim = _compute_slice(new_rng, domain, pos_old)
+            if not common.is_int_index(slice_):
+                dims.append(dim)
+                ranges.append(
+                    common.UnitRange(
+                        slice_.start + domain.ranges[pos_old].start,
+                        slice_.stop + domain.ranges[pos_old].start,
+                    )
+                )
+            slice_indices.append(slice_)
         else:
             slice_indices.insert(pos_new, None)  # None is equal to np.newaxis
 
-    return tuple(slice_indices)
+    # for k, v in index:
+    #     if not common.is_int_index(v):
+    #         dims.append(k)
+    #         ranges.append(v)
+    new_domain = common.Domain(tuple(dims), tuple(ranges))
+
+    return tuple(slice_indices), new_domain
 
 
 def _compute_slice(rng: common.DomainRange, domain: common.Domain, pos: int) -> slice | int:
@@ -352,11 +407,14 @@ def _compute_slice(rng: common.DomainRange, domain: common.Domain, pos: int) -> 
         ValueError: If `new_rng` is not an integer or a UnitRange.
     """
     if isinstance(rng, common.UnitRange):
-        return slice(
-            rng.start - domain.ranges[pos].start,
-            rng.stop - domain.ranges[pos].start,
+        return (
+            slice(
+                max(rng.start - domain.ranges[pos].start, 0),
+                min(rng.stop - domain.ranges[pos].start, len(domain.ranges[pos])),
+            ),
+            domain.dims[pos],
         )
     elif common.is_int_index(rng):
-        return rng - domain.ranges[pos].start
+        return rng - domain.ranges[pos].start, None
     else:
         raise ValueError(f"Can only use integer or UnitRange ranges, provided type: {type(rng)}")
