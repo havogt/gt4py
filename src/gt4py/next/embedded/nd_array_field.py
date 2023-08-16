@@ -70,6 +70,9 @@ def _make_binary_array_field_intrinsic_func(builtin_name: str, array_builtin_nam
 
         return a.__class__.from_array(new_data, domain=a.domain)
 
+    _builtin_binary_op.__name__ = builtin_name
+    return _builtin_binary_op
+
 
 def _make_ternary_array_field_intrinsic_func(
     builtin_name: str, array_builtin_name: str
@@ -83,7 +86,7 @@ def _make_ternary_array_field_intrinsic_func(
                 a_slices = _get_slices_from_domain_slice(a.domain, domain_intersection)
                 b_slices = _get_slices_from_domain_slice(b.domain, domain_intersection)
                 c_slices = _get_slices_from_domain_slice(c.domain, domain_intersection)
-                new_data = op(a.ndarray[a_slices], b.ndarray[b_slices], c.ndarray[c_sliced])
+                new_data = op(a.ndarray[a_slices], b.ndarray[b_slices], c.ndarray[c_slices])
                 return a.__class__.from_array(new_data, domain=domain_intersection)
             new_data = op(a.ndarray, xp.asarray(b.ndarray), xp.asarray(c.ndarray))
         else:
@@ -231,7 +234,7 @@ class _BaseNdArrayField(common.FieldABC[common.DimsT, core_defs.ScalarT]):
                 return np.NaN
         else:
             new = self.ndarray[slices]
-            return self.__class__(new_domain, new, self.value_type)
+            return self.__class__.from_array(new, domain=new_domain, value_type=self.value_type)
 
     __call__ = None  # type: ignore[assignment]  # TODO: remap
 
