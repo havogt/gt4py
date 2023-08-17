@@ -553,13 +553,14 @@ def _get_slices_from_domain_slice(
     #     else:
     #         slice_indices.append(slice(None)) # ellipsis (take whole dimension)
 
-    for pos_old, (dim, rng) in enumerate(domain):
+    for dim, rng in domain:
         if (pos := _find_index_of_dim(dim, domain_slice)) is not None:
             index_or_range = domain_slice[pos][1]
             # if index_or_range is np.newaxis:
             #     slice_indices.append(index_or_range)
             # else:
-            slice_indices.append(_compute_slice(index_or_range, domain, pos_old))
+            shifted = index_or_range - rng.start
+            slice_indices.append(_to_slice(shifted))
         else:
             slice_indices.append(slice(None))
 
@@ -575,29 +576,11 @@ def _get_slices_from_domain_slice(
     return tuple(slice_indices)
 
 
-def _compute_slice(rng: common.DomainRange, domain: common.Domain, pos: int) -> slice | int:
-    """Compute a slice or integer based on the provided range, domain, and position.
-
-    Args:
-        rng (DomainRange): The range to be computed as a slice or integer.
-        domain (common.Domain): The domain containing dimension information.
-        pos (int): The position of the dimension in the domain.
-
-    Returns:
-        slice | int: Slice if `new_rng` is a UnitRange, otherwise an integer.
-
-    Raises:
-        ValueError: If `new_rng` is not an integer or a UnitRange.
-    """
-    if isinstance(rng, common.UnitRange):
-        if domain.ranges[pos] == common.UnitRange.infinity:
-            return slice(None)
-        else:
-            return slice(
-                rng.start - domain.ranges[pos].start,
-                rng.stop - domain.ranges[pos].start,
-            )
-    elif common.is_int_index(rng):
-        return rng - domain.ranges[pos].start
+def _to_slice(value: common.IntIndex | common.UnitRange) -> common.IntIndex | slice:
+    if isinstance(value, common.UnitRange):
+        return slice(
+            None if value.start == common.Infinity.negative() else value.start,
+            None if value.stop == common.Infinity.positive() else value.stop,
+        )
     else:
-        raise ValueError(f"Can only use integer or UnitRange ranges, provided type: {type(rng)}")
+        return value

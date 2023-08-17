@@ -12,6 +12,7 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 from typing import Optional, Pattern
+import operator
 
 import pytest
 
@@ -34,6 +35,54 @@ def domain():
     ranges = (range1, range2, range3)
 
     return Domain(dimensions, ranges)
+
+
+@pytest.fixture(params=[Infinity.positive(), Infinity.negative()])
+def inf(request):
+    yield request.param
+
+
+def test_infinity(inf):
+    assert inf + 1 == inf
+    assert inf - 1 == inf
+
+
+@pytest.mark.parametrize("value", [-1, 0, 1])
+@pytest.mark.parametrize("op", [operator.le, operator.lt])
+def test_infinity_comparison_less(value, op):
+    assert not op(Infinity.positive(), value)
+    assert op(value, Infinity.positive())
+
+    assert op(Infinity.negative(), value)
+    assert not op(value, Infinity.negative())
+
+    assert op(Infinity.negative(), Infinity.positive())
+
+
+@pytest.mark.parametrize("value", [-1, 0, 1])
+@pytest.mark.parametrize("op", [operator.ge, operator.gt])
+def test_infinity_comparison_greater(value, op):
+    assert op(Infinity.positive(), value)
+    assert not op(value, Infinity.positive())
+
+    assert not op(Infinity.negative(), value)
+    assert op(value, Infinity.negative())
+
+    assert not op(Infinity.negative(), Infinity.positive())
+
+
+def test_infinity_eq(inf):
+    assert inf == inf
+    assert inf <= inf
+    assert inf >= inf
+
+
+@pytest.mark.parametrize("value", [-1, 0, 1])
+def test_max_min(value):
+    assert max(Infinity.positive(), value) == Infinity.positive()
+    assert min(Infinity.positive(), value) == value
+    assert max(Infinity.negative(), value) == value
+    assert min(Infinity.negative(), value) == Infinity.negative()
 
 
 def test_empty_range():
@@ -132,6 +181,18 @@ def test_unit_range_infinite_intersection(rng1, rng2, expected):
     assert result == expected
 
 
+@pytest.mark.parametrize(
+    "rng, offset, expected",
+    [
+        (UnitRange(-2, 5), 5, UnitRange(3, 10)),
+        (UnitRange(Infinity.negative(), 5), 5, UnitRange(Infinity.negative(), 10)),
+    ],
+)
+def test_unit_range_shiftable(rng, offset, expected):
+    result = rng + offset
+    assert result == expected
+
+
 def test_positive_infinity_range():
     pos_inf_range = UnitRange(Infinity.positive(), Infinity.positive())
     assert len(pos_inf_range) == 0
@@ -139,7 +200,9 @@ def test_positive_infinity_range():
 
 def test_mixed_infinity_range():
     mixed_inf_range = UnitRange(Infinity.negative(), Infinity.positive())
-    assert len(mixed_inf_range) == Infinity.positive()
+
+    with pytest.raises(OverflowError):
+        assert len(mixed_inf_range)
 
 
 def test_domain_length(domain):
