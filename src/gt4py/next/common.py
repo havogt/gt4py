@@ -47,14 +47,45 @@ DimT = TypeVar("DimT", bound="Dimension")
 DimsT = TypeVar("DimsT", bound=Sequence["Dimension"], covariant=True)
 
 
-class Infinity(int):
+# @dataclasses.dataclass(frozen=True)
+class Infinity:
+    # pos: bool = True
+
+    def __init__(self, val=True):
+        self.pos = val
+
+    def __add__(self, _):
+        return self
+
+    __radd__ = __add__
+
+    def __sub__(self, _):
+        return self
+
+    __rsub__ = __sub__
+
+    def __eq__(self, other):
+        return isinstance(other, Infinity) and self.pos == other.pos
+
+    def __lt__(self, _):
+        return not self.pos
+
+    def __le__(self, other):
+        return self == other or not self.pos
+
+    def __gt__(self, _):
+        return self.pos
+
+    def __ge__(self, other):
+        return self == other or self.pos
+
     @classmethod
     def positive(cls) -> "Infinity":
-        return cls(sys.maxsize)
+        return cls(True)
 
     @classmethod
     def negative(cls) -> "Infinity":
-        return cls(-sys.maxsize)
+        return cls(False)
 
 
 @enum.unique
@@ -92,11 +123,11 @@ class Shiftable(Protocol):
 
 
 @dataclasses.dataclass(frozen=True)
-class UnitRange(Sequence[int], Set[int], Shiftable):
+class UnitRange(Sequence[int | Infinity], Set[int | Infinity], Shiftable):
     """Range from `start` to `stop` with step size one."""
 
-    start: int
-    stop: int
+    start: int | Infinity
+    stop: int | Infinity
 
     def __post_init__(self):
         if self.stop <= self.start:
@@ -105,13 +136,12 @@ class UnitRange(Sequence[int], Set[int], Shiftable):
             object.__setattr__(self, "stop", 0)
 
     @classmethod
-    @property
     def infinity(cls) -> UnitRange:
         return cls(Infinity.negative(), Infinity.positive())
 
     def __len__(self) -> int:
-        if Infinity.positive() in (abs(self.start), abs(self.stop)):
-            return Infinity.positive()
+        if self.start == Infinity.negative() or self.stop == Infinity.positive():
+            raise OverflowError("`UnitRange` has infinite length.")
         return max(0, self.stop - self.start)
 
     def __repr__(self) -> str:
@@ -247,7 +277,7 @@ def _broadcast_ranges(
     broadcast_dims: Sequence[Dimension], dims: Sequence[Dimension], ranges: Sequence[UnitRange]
 ) -> tuple[UnitRange, ...]:
     return tuple(
-        ranges[dims.index(d)] if d in dims else UnitRange.infinite() for d in broadcast_dims
+        ranges[dims.index(d)] if d in dims else UnitRange.infinity() for d in broadcast_dims
     )
 
 
@@ -507,20 +537,6 @@ def promote_dims(*dims_list: Sequence[Dimension]) -> list[Dimension]:
         )
 
     return topologically_sorted_list
-
-
-def is_named_range(v: Any) -> TypeGuard[NamedRange]:
-    return isinstance(v, tuple) and isinstance(v[0], Dimension) and isinstance(v[1], UnitRange)
-
-
-def is_named_index(v: Any) -> TypeGuard[NamedIndex]:
-    return isinstance(v, tuple) and isinstance(v[0], Dimension) and is_int_index(v[1])
-
-
-def is_domain_slice(index: Any) -> TypeGuard[DomainSlice]:
-    return isinstance(index, Sequence) and all(
-        is_named_range(idx) or is_named_index(idx) for idx in index
-    )
 
 
 def index_tuple_with_indices(target_tuple, indices_to_use):
