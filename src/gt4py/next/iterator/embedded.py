@@ -787,19 +787,8 @@ def _make_tuple(
     else:
         data = field_or_tuple.field_getitem(named_indices)
         if column_axis is not None:
-            # wraps a vertical slice of an input field into a `Column`
-            assert column_range is not None
-            # return Column(column_range.start, )
-            if isinstance(data, common.Field):
-                return data
-            else:
-                return common.field(
-                    np.asarray([data] * len(column_range)),
-                    domain=common.Domain(
-                        (common.Dimension(column_axis, common.DimensionKind.VERTICAL),),
-                        (common.UnitRange(column_range.start, column_range.stop),),
-                    ),
-                )
+            assert isinstance(data, common.Field)
+            return data
         else:
             return data
 
@@ -821,9 +810,29 @@ class MDIterator:
         complete_offsets = group_offsets(*offsets)
         offset_provider = offset_provider_cvar.get()
         assert offset_provider is not None
+        pos = self.pos
+        assert isinstance(self.field, NDArrayLocatedFieldWrapper)
+        newfield = self.field._ndarrayfield
+        # print(newfield)
+        for t, o in complete_offsets:
+            if offset_provider[t].value == self.column_axis:
+                domain = newfield.domain
+                new_ranges = []
+                for k, v in domain:
+                    if k.value == self.column_axis:
+                        new_ranges.append(common.UnitRange(v.start - o, v.stop - o))
+                    else:
+                        new_ranges.append(v)
+                new_domain = common.Domain(domain.dims, new_ranges)
+                print(f"{new_domain=}")
+                newfield = common.field(newfield.ndarray, domain=new_domain)
+            else:
+                pos = shift_position(self.pos, (t, o), offset_provider=offset_provider)
+        print(newfield)
         return MDIterator(
-            self.field,
-            shift_position(self.pos, *complete_offsets, offset_provider=offset_provider),
+            _wrap_field(newfield),
+            pos,
+            # shift_position(self.pos, *complete_offsets, offset_provider=offset_provider),
             column_axis=self.column_axis,
         )
 
@@ -851,7 +860,11 @@ class MDIterator:
             assert isinstance(k_pos, int)
             # the following range describes a range in the field
             # (negative values are relative to the origin, not relative to the size)
-            slice_column[self.column_axis] = range(k_pos, k_pos + len(column_range))
+            slice_column[self.column_axis] = self.field._ndarrayfield.domain[
+                common.Dimension(self.column_axis, common.DimensionKind.VERTICAL)
+            ][
+                1
+            ]  # range(k_pos, k_pos + len(column_range))
 
         assert _is_concrete_position(shifted_pos)
         position = {**shifted_pos, **slice_column}
@@ -939,6 +952,8 @@ class NDArrayLocatedFieldWrapper(MutableLocatedField):
                     v[0]
                 )  # derefing a concrete element in a sparse field, not a slice
                 domain_slice.append((d, v[0]))
+            elif isinstance(v, common.UnitRange):
+                domain_slice.append((d, v))
             else:
                 assert common.is_int_index(v)
                 domain_slice.append((d, v))
@@ -1548,7 +1563,21 @@ def fendef_embedded(fun: Callable[..., None], *args: Any, **kwargs: Any):
                     out.field_setitem(pos, res)
                 else:
                     col_pos = pos.copy()
-                    for k in column.col_range:
+                    # idea:
+                    # - multiply data with a field with ones and the domain of column_range
+                    # - only assign where the result is defined (everything else is NaN as it access values outside of domain)
+                    ones = common.field(
+                        np.ones((len(column_range),)),
+                        domain=common.Domain(
+                            (column_axis,),
+                            (common.UnitRange(column_range.start, column_range.stop),),
+                        ),
+                    )
+                    res = res * ones
+                    print(res)
+                    print(ones)
+                    for k in res.domain.ranges[0]:
+                        # for k in column.col_range:
                         col_pos[column.axis] = k
                         assert _is_concrete_position(col_pos)
                         out.field_setitem(

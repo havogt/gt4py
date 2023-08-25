@@ -82,7 +82,9 @@ def _make_ternary_array_field_intrinsic_func(
     def _builtin_binary_op(a: _BaseNdArrayField, b: common.Field, c: common.Field) -> common.Field:
         xp = a.__class__.array_ns
         op = getattr(xp, array_builtin_name)
-        if hasattr(b, "__gt_builtin_func__"):  # isinstance(b, common.Field):
+        if hasattr(b, "__gt_builtin_func__") and hasattr(
+            c, "__gt_builtin_func__"
+        ):  # isinstance(b, common.Field):
             if not a.domain == b.domain == c.domain:
                 domain_intersection = a.domain & b.domain & c.domain
                 a_slices = _get_slices_from_domain_slice(a.domain, domain_intersection)
@@ -558,7 +560,7 @@ def _compute_slice(
                 rng.stop - domain.ranges[pos].start,
             )
     elif common.is_int_index(rng):
-        return rng - domain.ranges[pos].start, None
+        return rng - domain.ranges[pos].start
     else:
         raise ValueError(f"Can only use integer or UnitRange ranges, provided type: {type(rng)}")
 

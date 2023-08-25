@@ -93,7 +93,7 @@ def test_basic_column_stencils(program_processor, lift_mode, basic_stencils):
     )
     out = gtx.np_as_located_field(IDim, KDim)(np.zeros(shape))
 
-    ref = ref_fun(inp)
+    ref = ref_fun(inp.ndarray)
 
     if (
         program_processor == run_dace_iterator
@@ -113,7 +113,7 @@ def test_basic_column_stencils(program_processor, lift_mode, basic_stencils):
     )
 
     if validate:
-        assert np.allclose(ref, out)
+        assert np.allclose(ref, out.ndarray)
 
 
 @fundef
