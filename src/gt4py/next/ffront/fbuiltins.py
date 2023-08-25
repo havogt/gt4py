@@ -225,7 +225,7 @@ for f in (
     _make_unary_math_builtin(f)
 
 
-BINARY_MATH_NUMBER_BUILTIN_NAMES = ["minimum", "maximum", "fmod", "power"]
+BINARY_MATH_NUMBER_BUILTIN_NAMES = ["minimum", "maximum", "fmod", "power", "equal", "not_equal"]
 
 
 def _make_binary_math_builtin(name):

@@ -76,6 +76,33 @@ def _make_binary_array_field_intrinsic_func(builtin_name: str, array_builtin_nam
     return _builtin_binary_op
 
 
+def _make_ternary_array_field_intrinsic_func(
+    builtin_name: str, array_builtin_name: str
+) -> Callable:
+    def _builtin_binary_op(a: _BaseNdArrayField, b: common.Field, c: common.Field) -> common.Field:
+        xp = a.__class__.array_ns
+        op = getattr(xp, array_builtin_name)
+        if hasattr(b, "__gt_builtin_func__") and hasattr(
+            c, "__gt_builtin_func__"
+        ):  # isinstance(b, common.Field):
+            if not a.domain == b.domain == c.domain:
+                domain_intersection = a.domain & b.domain & c.domain
+                a_slices = _get_slices_from_domain_slice(a.domain, domain_intersection)
+                b_slices = _get_slices_from_domain_slice(b.domain, domain_intersection)
+                c_slices = _get_slices_from_domain_slice(c.domain, domain_intersection)
+                new_data = op(a.ndarray[a_slices], b.ndarray[b_slices], c.ndarray[c_slices])
+                return a.__class__.from_array(new_data, domain=domain_intersection)
+            new_data = op(a.ndarray, xp.asarray(b.ndarray), xp.asarray(c.ndarray))
+        else:
+            # assert isinstance(b, core_defs.SCALAR_TYPES) # TODO reenable this assert (if b is an array it should be wrapped into a field)
+            new_data = op(a.ndarray, b, c)
+
+        return a.__class__.from_array(new_data, domain=a.domain)
+
+    _builtin_binary_op.__name__ = builtin_name
+    return _builtin_binary_op
+
+
 _Value: TypeAlias = common.Field | core_defs.ScalarT
 _P = ParamSpec("_P")
 _R = TypeVar("_R", _Value, tuple[_Value, ...])
@@ -173,7 +200,7 @@ class _BaseNdArrayField(common.MutableField[common.DimsT, core_defs.ScalarT]):
         if dtype_like is not None:
             assert array.dtype.type == core_defs.dtype(dtype_like).scalar_type
 
-        assert issubclass(array.dtype.type, core_defs.SCALAR_TYPES)
+        # assert issubclass(array.dtype.type, core_defs.SCALAR_TYPES)
 
         assert all(isinstance(d, common.Dimension) for d in domain.dims), domain
         assert len(domain) == array.ndim
@@ -308,6 +335,13 @@ class _BaseNdArrayField(common.MutableField[common.DimsT, core_defs.ScalarT]):
         else:
             return self.__class__.from_array(new, domain=new_domain)
 
+    __gt__ = _make_binary_array_field_intrinsic_func("greater", "greater")
+    __lt__ = _make_binary_array_field_intrinsic_func("less", "less")
+    __le__ = _make_binary_array_field_intrinsic_func("less_equal", "less_equal")
+    __ge__ = _make_binary_array_field_intrinsic_func("greater_equal", "greater_equal")
+    # __eq__ = _make_binary_array_field_intrinsic_func("equal", "equal")
+    # __ne__ = _make_binary_array_field_intrinsic_func("not_equal", "not_equal")
+
 
 # -- Specialized implementations for intrinsic operations on array fields --
 
@@ -334,6 +368,15 @@ _BaseNdArrayField.register_builtin_func(
 )
 _BaseNdArrayField.register_builtin_func(
     fbuiltins.fmod, _make_binary_array_field_intrinsic_func("fmod", "fmod")  # type: ignore[attr-defined]
+)
+_BaseNdArrayField.register_builtin_func(
+    fbuiltins.equal, _make_binary_array_field_intrinsic_func("equal", "equal")  # type: ignore[attr-defined]
+)
+_BaseNdArrayField.register_builtin_func(
+    fbuiltins.not_equal, _make_binary_array_field_intrinsic_func("not_equal", "not_equal")  # type: ignore[attr-defined]
+)
+_BaseNdArrayField.register_builtin_func(
+    fbuiltins.where, _make_ternary_array_field_intrinsic_func("where", "where")  # type: ignore[attr-defined]
 )
 
 

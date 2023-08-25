@@ -278,8 +278,10 @@ def can_deref(it):
 def if_(cond, t, f):
     # ensure someone doesn't accidentally pass an iterator
     assert not hasattr(cond, "shift")
-    if any(isinstance(arg, Column) for arg in (cond, t, f)):
-        return np.where(cond, t, f)
+    if any(isinstance(arg, common.Field) for arg in (cond, t, f)):
+        from gt4py.next.ffront import fbuiltins
+
+        return fbuiltins.where(cond, t, f)
     return t if cond else f
 
 
@@ -437,6 +439,10 @@ def mod(first, second):
 
 @builtins.eq.register(EMBEDDED)
 def eq(first, second):
+    if isinstance(first, common.Field):
+        from gt4py.next.ffront import fbuiltins
+
+        return fbuiltins.equal(first, second)
     return first == second
 
 
@@ -462,6 +468,10 @@ def greater_equal(first, second):
 
 @builtins.not_eq.register(EMBEDDED)
 def not_eq(first, second):
+    if isinstance(first, common.Field):
+        from gt4py.next.ffront import fbuiltins
+
+        return fbuiltins.not_equal(first, second)
     return first != second
 
 
@@ -755,8 +765,15 @@ def _make_tuple(
                 _make_tuple(f, _single_vertical_idx(named_indices, column_axis, column_range.start))
                 for f in field_or_tuple
             )
-            col = Column(
-                column_range.start, np.zeros(len(column_range), dtype=_column_dtype(first))
+            # col = Column(
+            #     column_range.start, np.zeros(len(column_range), dtype=_column_dtype(first))
+            # )
+            col = common.field(
+                np.zeros(len(column_range), dtype=_column_dtype(first)),
+                domain=common.Domain(
+                    (common.Dimension(column_axis, common.DimensionKind.VERTICAL),),
+                    (common.UnitRange(column_range.start, column_range.stop),),
+                ),
             )
             col[0] = first
             for i in column_range[1:]:
@@ -770,9 +787,8 @@ def _make_tuple(
     else:
         data = field_or_tuple.field_getitem(named_indices)
         if column_axis is not None:
-            # wraps a vertical slice of an input field into a `Column`
-            assert column_range is not None
-            return Column(column_range.start, data.ndarray if hasattr(data, "ndarray") else data)
+            assert isinstance(data, common.Field)
+            return data
         else:
             return data
 
@@ -794,9 +810,29 @@ class MDIterator:
         complete_offsets = group_offsets(*offsets)
         offset_provider = offset_provider_cvar.get()
         assert offset_provider is not None
+        pos = self.pos
+        assert isinstance(self.field, NDArrayLocatedFieldWrapper)
+        newfield = self.field._ndarrayfield
+        # print(newfield)
+        for t, o in complete_offsets:
+            if offset_provider[t].value == self.column_axis:
+                domain = newfield.domain
+                new_ranges = []
+                for k, v in domain:
+                    if k.value == self.column_axis:
+                        new_ranges.append(common.UnitRange(v.start - o, v.stop - o))
+                    else:
+                        new_ranges.append(v)
+                new_domain = common.Domain(domain.dims, new_ranges)
+                print(f"{new_domain=}")
+                newfield = common.field(newfield.ndarray, domain=new_domain)
+            else:
+                pos = shift_position(self.pos, (t, o), offset_provider=offset_provider)
+        print(newfield)
         return MDIterator(
-            self.field,
-            shift_position(self.pos, *complete_offsets, offset_provider=offset_provider),
+            _wrap_field(newfield),
+            pos,
+            # shift_position(self.pos, *complete_offsets, offset_provider=offset_provider),
             column_axis=self.column_axis,
         )
 
@@ -824,7 +860,11 @@ class MDIterator:
             assert isinstance(k_pos, int)
             # the following range describes a range in the field
             # (negative values are relative to the origin, not relative to the size)
-            slice_column[self.column_axis] = range(k_pos, k_pos + len(column_range))
+            slice_column[self.column_axis] = self.field._ndarrayfield.domain[
+                common.Dimension(self.column_axis, common.DimensionKind.VERTICAL)
+            ][
+                1
+            ]  # range(k_pos, k_pos + len(column_range))
 
         assert _is_concrete_position(shifted_pos)
         position = {**shifted_pos, **slice_column}
@@ -912,6 +952,8 @@ class NDArrayLocatedFieldWrapper(MutableLocatedField):
                     v[0]
                 )  # derefing a concrete element in a sparse field, not a slice
                 domain_slice.append((d, v[0]))
+            elif isinstance(v, common.UnitRange):
+                domain_slice.append((d, v))
             else:
                 assert common.is_int_index(v)
                 domain_slice.append((d, v))
@@ -1335,7 +1377,14 @@ class ScanArgIterator:
     def deref(self) -> Any:
         if not self.can_deref():
             return _UNDEFINED
-        return self.wrapped_iter.deref()[self.k_pos]
+        return self.wrapped_iter.deref()[
+            (
+                (
+                    common.Dimension(self.wrapped_iter.column_axis, common.DimensionKind.VERTICAL),
+                    self.k_pos,
+                ),
+            )
+        ]
 
     def can_deref(self) -> bool:
         return self.wrapped_iter.can_deref()
@@ -1405,8 +1454,8 @@ class TupleOfFields(TupleField):
         return _build_tuple_result(self.data, named_indices)
 
     def field_setitem(self, named_indices: NamedFieldIndices, value: Any):
-        if not isinstance(value, tuple):
-            raise RuntimeError(f"Value needs to be tuple, got `{value}`.")
+        # if not isinstance(value, tuple):
+        #     raise RuntimeError(f"Value needs to be tuple, got `{value}` of type `{type(value)}`.")
         _tuple_assign(self.data, value, named_indices)
 
 
@@ -1432,10 +1481,19 @@ def scan(scan_pass, is_forward: bool, init):
 
         sorted_column_range = column_range if is_forward else reversed(column_range)
         state = init
-        col = Column(column_range.start, np.zeros(len(column_range), dtype=_column_dtype(init)))
+        # col = Column(column_range.start, np.zeros(len(column_range), dtype=_column_dtype(init)))
+        # col = common.field(np.zeros(len(column_range), column_range.start, dtype=_column_dtype(init)))
+        vertical_dim = common.Dimension(iters[0].column_axis, common.DimensionKind.VERTICAL)
+        col = common.field(
+            np.zeros(len(column_range), dtype=_column_dtype(init)),
+            domain=common.Domain(
+                (vertical_dim,),
+                (common.UnitRange(column_range.start, column_range.stop),),
+            ),
+        )
         for i in sorted_column_range:
             state = scan_pass(state, *map(shifted_scan_arg(i), iters))
-            col[i] = state
+            col[((vertical_dim, i),)] = state
 
         return col
 
@@ -1505,10 +1563,36 @@ def fendef_embedded(fun: Callable[..., None], *args: Any, **kwargs: Any):
                     out.field_setitem(pos, res)
                 else:
                     col_pos = pos.copy()
-                    for k in column.col_range:
+                    # idea:
+                    # - multiply data with a field with ones and the domain of column_range
+                    # - only assign where the result is defined (everything else is NaN as it access values outside of domain)
+                    ones = common.field(
+                        np.ones((len(column_range),)),
+                        domain=common.Domain(
+                            (column_axis,),
+                            (common.UnitRange(column_range.start, column_range.stop),),
+                        ),
+                    )
+                    res = res * ones
+                    print(res)
+                    print(ones)
+                    for k in res.domain.ranges[0]:
+                        # for k in column.col_range:
                         col_pos[column.axis] = k
                         assert _is_concrete_position(col_pos)
-                        out.field_setitem(col_pos, res[k])
+                        out.field_setitem(
+                            col_pos,
+                            res[
+                                (
+                                    (
+                                        common.Dimension(
+                                            column.axis, common.DimensionKind.VERTICAL
+                                        ),
+                                        k,
+                                    ),
+                                )
+                            ],
+                        )
 
         ctx = cvars.copy_context()
         ctx.run(_closure_runner)
