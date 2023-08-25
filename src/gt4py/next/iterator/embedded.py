@@ -29,6 +29,7 @@ from typing import (
     Iterable,
     Literal,
     Mapping,
+    NoReturn,
     Optional,
     Protocol,
     Sequence,
@@ -491,7 +492,7 @@ def promote_scalars(val: CompositeOfScalarOrField):
     """Given a scalar, field or composite thereof promote all (contained) scalars to fields."""
     if isinstance(val, tuple):
         return tuple(promote_scalars(el) for el in val)
-    elif isinstance(val, common.Field):
+    elif common.is_field(val):
         return val
     val_type = infer_dtype_like_type(val)
     if isinstance(val, Scalar):  # type: ignore # mypy bug
@@ -812,7 +813,7 @@ def _axis_idx(axes: Sequence[common.Dimension], axis: Tag) -> Optional[int]:
 
 @dataclasses.dataclass(frozen=True)
 class MDIterator:
-    field: LocatedField
+    field: LocatedField | tuple[LocatedField | tuple, ...]  # arbitrary nesting
     pos: MaybePosition
     column_axis: Optional[Tag] = dataclasses.field(default=None, kw_only=True)
 
@@ -872,10 +873,9 @@ def _get_sparse_dimensions(axes: Sequence[common.Dimension]) -> list[Tag]:
 def _wrap_field(field: common.Field | tuple) -> NDArrayLocatedFieldWrapper | tuple:
     if isinstance(field, tuple):
         return tuple(_wrap_field(f) for f in field)
-    elif isinstance(field, common.Field):  # type: ignore[misc] # we use extended_runtime_checkable which is fine
-        return NDArrayLocatedFieldWrapper(field)
     else:
-        return field
+        assert common.is_field(field)
+        return NDArrayLocatedFieldWrapper(field)
 
 
 def make_in_iterator(
@@ -925,30 +925,33 @@ class NDArrayLocatedFieldWrapper(MutableLocatedField):
     def __gt_dims__(self) -> tuple[common.Dimension, ...]:
         return self._ndarrayfield.__gt_dims__
 
-    def _promote_tags_to_dims_and_sort(
-        self, named_indices: NamedFieldIndices
-    ) -> Mapping[common.Dimension, FieldIndex | SparsePositionEntry]:
-        return {d: named_indices[d.value] for d in self._ndarrayfield.__gt_dims__}
-
-    def _translate_named_indices(self, _named_indices: NamedFieldIndices):
-        named_indices = self._promote_tags_to_dims_and_sort(_named_indices)
-        dimensions = tuple(d for d in named_indices.keys())
-        ranges = tuple(
-            common.UnitRange(v.start, v.stop)
-            if isinstance(v, range)
-            else (v[0] if isinstance(v, list) else v)
-            for v in named_indices.values()
-        )
-        return common.Domain(dimensions, ranges)
+    def _translate_named_indices(self, _named_indices: NamedFieldIndices) -> common.DomainSlice:
+        named_indices: Mapping[common.Dimension, FieldIndex | SparsePositionEntry] = {
+            d: _named_indices[d.value] for d in self._ndarrayfield.__gt_dims__
+        }
+        domain_slice: list[common.NamedRange | common.NamedIndex] = []
+        for d, v in named_indices.items():
+            if isinstance(v, range):
+                domain_slice.append((d, common.UnitRange(v.start, v.stop)))
+            elif isinstance(v, list):
+                assert len(v) == 1  # only 1 sparse dimension is supported
+                assert common.is_int_index(
+                    v[0]
+                )  # derefing a concrete element in a sparse field, not a slice
+                domain_slice.append((d, v[0]))
+            else:
+                assert common.is_int_index(v)
+                domain_slice.append((d, v))
+        return tuple(domain_slice)
 
     def field_getitem(self, named_indices: NamedFieldIndices) -> Any:
         return self._ndarrayfield[self._translate_named_indices(named_indices)]
 
     def field_setitem(self, named_indices: NamedFieldIndices, value: Any):
-        self._ndarrayfield[self._translate_named_indices(named_indices)] = value
-
-    def __array__(self) -> np.ndarray:
-        return self._ndarrayfield.ndarray
+        if common.is_mutable_field(self._ndarrayfield):
+            self._ndarrayfield[self._translate_named_indices(named_indices)] = value
+        else:
+            raise RuntimeError("Assigment into a non-mutable Field.")
 
     @property
     def __gt_origin__(self) -> tuple[int, ...]:
@@ -1050,14 +1053,14 @@ def np_as_located_field(
             offset = origin.get(d, 0)
             ranges.append(common.UnitRange(-offset, s - offset))
 
-        res = common.field(a, domain=common.Domain(tuple(axes), ranges))
+        res = common.field(a, domain=common.Domain(tuple(axes), tuple(ranges)))
         return res
 
     return _maker
 
 
 @dataclasses.dataclass(frozen=True)
-class IndexField(common.FieldABC):
+class IndexField(common.Field):
     """
     Minimal index field implementation.
 
@@ -1065,28 +1068,26 @@ class IndexField(common.FieldABC):
     """
 
     _dimension: common.Dimension
-    _value_type: type
 
     @property
     def __gt_dims__(self) -> tuple[common.Dimension, ...]:
         return (self._dimension,)
 
+    @property
+    def __gt_origin__(self) -> tuple[int, ...]:
+        return (0,)
+
     @classmethod
-    def __gt_builtin_func__(func: Callable, /) -> None:
-        # not implemented, let's use the implmentation of the other field if we have it
-        return None
+    def __gt_builtin_func__(func: Callable, /) -> NoReturn:  # type: ignore[override] # Signature incompatible with supertype
+        raise NotImplementedError()
 
     @property
     def domain(self) -> common.Domain:
-        return common.Domain((self._dimension,), (common.UnitRange.infinite(),))
+        return common.Domain((self._dimension,), (common.UnitRange.infinity(),))
 
     @property
-    def dtype(self) -> core_defs.DType[core_defs.ScalarT]:
-        return np.dtype(self._value_type)
-
-    @property
-    def value_type(self) -> type[core_defs.ScalarT]:
-        return self._value_type
+    def dtype(self) -> core_defs.Int32DType:
+        return core_defs.Int32DType()
 
     @property
     def ndarray(self) -> core_defs.NDArrayObject:
@@ -1096,12 +1097,12 @@ class IndexField(common.FieldABC):
         # TODO can be implemented by constructing and ndarray (but do we know of which kind?)
         raise NotImplementedError()
 
-    def restrict(self, item: common.DomainLike) -> common.Field:
-        if isinstance(item, common.Domain):
+    def restrict(self, item: common.FieldSlice) -> common.Field | core_defs.int32:
+        if common.is_domain_slice(item) and all(common.is_named_index(e) for e in item):
             d, r = item[0]
             assert d == self._dimension
             assert isinstance(r, int)
-            return self.value_type(r)
+            return self.dtype.scalar_type(r)
         # TODO set a domain...
         raise NotImplementedError()
 
@@ -1148,12 +1149,12 @@ class IndexField(common.FieldABC):
         raise NotImplementedError()
 
 
-def index_field(axis: common.Dimension, dtype: npt.DTypeLike = np.int32) -> common.Field:
-    return IndexField(axis, dtype)
+def index_field(axis: common.Dimension) -> common.Field:
+    return IndexField(axis)
 
 
 @dataclasses.dataclass(frozen=True)
-class ConstantField(common.FieldABC[[], core_defs.ScalarT]):
+class ConstantField(common.Field[Any, core_defs.ScalarT]):
     """
     Minimal constant field implementation.
 
@@ -1161,16 +1162,18 @@ class ConstantField(common.FieldABC[[], core_defs.ScalarT]):
     """
 
     _value: core_defs.ScalarT
-    _value_type: type
 
     @property
     def __gt_dims__(self) -> tuple[common.Dimension, ...]:
         return tuple()
 
+    @property
+    def __gt_origin__(self) -> tuple[int, ...]:
+        return tuple()
+
     @classmethod
-    def __gt_builtin_func__(func: Callable) -> None:
-        # not implemented, let's use the implmentation of the other field if we have it
-        return None
+    def __gt_builtin_func__(func: Callable, /) -> NoReturn:  # type: ignore[override] # Signature incompatible with supertype
+        raise NotImplementedError()
 
     @property
     def domain(self) -> common.Domain:
@@ -1178,11 +1181,7 @@ class ConstantField(common.FieldABC[[], core_defs.ScalarT]):
 
     @property
     def dtype(self) -> core_defs.DType[core_defs.ScalarT]:
-        return np.dtype(self._value_type)
-
-    @property
-    def value_type(self) -> type[core_defs.ScalarT]:
-        return self._value_type
+        return core_defs.dtype(type(self._value))
 
     @property
     def ndarray(self) -> core_defs.NDArrayObject:
@@ -1192,11 +1191,9 @@ class ConstantField(common.FieldABC[[], core_defs.ScalarT]):
         # TODO can be implemented by constructing and ndarray (but do we know of which kind?)
         raise NotImplementedError()
 
-    def restrict(self, item: common.DomainLike) -> common.Field | core_defs.ScalarT:
-        if isinstance(item, common.Domain):
-            return self._value
+    def restrict(self, item: common.FieldSlice) -> common.Field | core_defs.ScalarT:
         # TODO set a domain...
-        raise NotImplementedError()
+        return self._value
 
     __call__ = remap
     __getitem__ = restrict
@@ -1241,10 +1238,11 @@ class ConstantField(common.FieldABC[[], core_defs.ScalarT]):
         raise NotImplementedError()
 
 
-def constant_field(value: Any, dtype: Optional[npt.DTypeLike] = None) -> common.Field:
-    if dtype is None:
-        dtype = infer_dtype_like_type(value)
-    return ConstantField(dtype(value), dtype)
+def constant_field(value: Any, dtype_like: Optional[core_defs.DTypeLike] = None) -> common.Field:
+    if dtype_like is None:
+        dtype_like = infer_dtype_like_type(value)
+    dtype = core_defs.dtype(dtype_like)
+    return ConstantField(dtype.scalar_type(value))
 
 
 @builtins.shift.register(EMBEDDED)
@@ -1395,30 +1393,14 @@ def is_mutable_located_field(field: Any) -> TypeGuard[MutableLocatedField]:
     return isinstance(field, MutableLocatedField)
 
 
-def has_uniform_tuple_element(field) -> bool:
-    dtype = np.dtype(field.value_type)
-    return dtype.fields is not None and all(
-        next(iter(dtype.fields))[0] == f[0] for f in iter(dtype.fields)
-    )
-
-
 def is_tuple_of_field(field) -> bool:
     return isinstance(field, tuple) and all(
-        isinstance(f, common.Field) or is_tuple_of_field(f) for f in field
+        common.is_field(f) or is_tuple_of_field(f) for f in field
     )
-
-
-def is_field_of_tuple(field) -> bool:
-    return isinstance(field, common.Field) and has_uniform_tuple_element(field)
-
-
-def can_be_tuple_field(field) -> bool:
-    return is_tuple_of_field(field) or is_field_of_tuple(field)
 
 
 class TupleFieldMeta(type):
-    def __instancecheck__(self, arg):
-        return super().__instancecheck__(arg) or is_field_of_tuple(arg)
+    ...
 
 
 class TupleField(metaclass=TupleFieldMeta):
@@ -1463,13 +1445,9 @@ class TupleOfFields(TupleField):
 
 
 def as_tuple_field(field: tuple | TupleField) -> TupleField:
-    assert can_be_tuple_field(field)
-
-    if is_tuple_of_field(field):
-        return TupleOfFields(tuple(_wrap_field(f) for f in field))
-
-    assert isinstance(field, TupleField)  # e.g. field of tuple is already TupleField
-    return field
+    assert is_tuple_of_field(field)
+    assert not isinstance(field, TupleField)
+    return TupleOfFields(tuple(_wrap_field(f) for f in field))
 
 
 def _column_dtype(elem: Any) -> np.dtype:
@@ -1534,7 +1512,7 @@ def fendef_embedded(fun: Callable[..., None], *args: Any, **kwargs: Any):
     ) -> None:
         _validate_domain(domain_, kwargs["offset_provider"])
         domain: dict[Tag, range] = _dimension_to_tag(domain_)
-        if not (isinstance(out, common.Field) or can_be_tuple_field(out)):
+        if not (common.is_field(out) or is_tuple_of_field(out)):
             raise TypeError("Out needs to be a located field.")
 
         column_range = None
@@ -1546,13 +1524,7 @@ def fendef_embedded(fun: Callable[..., None], *args: Any, **kwargs: Any):
 
             column_range = column.col_range
 
-        out = (
-            as_tuple_field(  # type:ignore[assignment]
-                out  # type:ignore[arg-type] # TODO(havogt) improve the code around TupleField construction
-            )
-            if can_be_tuple_field(out)
-            else _wrap_field(out)
-        )
+        out = as_tuple_field(out) if is_tuple_of_field(out) else _wrap_field(out)
 
         def _closure_runner():
             # Set context variables before executing the closure

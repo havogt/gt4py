@@ -20,6 +20,7 @@ import enum
 import functools
 import sys
 from collections.abc import Sequence, Set
+from types import EllipsisType
 from typing import TypeGuard, overload
 
 import numpy as np
@@ -36,25 +37,24 @@ from gt4py.eve.extended_typing import (
     Protocol,
     TypeAlias,
     TypeVar,
-    Union,
     extended_runtime_checkable,
-    final,
     runtime_checkable,
 )
 from gt4py.eve.type_definitions import StrEnum
 
 
-DimT = TypeVar("DimT", bound="Dimension")
-DimsT = TypeVar("DimsT", bound=Sequence["Dimension"], covariant=True)
+DimsT = TypeVar(
+    "DimsT", covariant=True
+)  # bound to `Sequence[Dimension]` if instance of Dimension would be a type
 
 
 class Infinity(int):
     @classmethod
-    def positive(cls) -> "Infinity":
+    def positive(cls) -> Infinity:
         return cls(sys.maxsize)
 
     @classmethod
-    def negative(cls) -> "Infinity":
+    def negative(cls) -> Infinity:
         return cls(-sys.maxsize)
 
 
@@ -77,23 +77,8 @@ class Dimension:
         return f'Dimension(value="{self.value}", kind={self.kind})'
 
 
-DomainLike: TypeAlias = Union[
-    Sequence[Dimension], Dimension, str
-]  # TODO(havogt): revisit once embedded implementation is concluded
-
-Self = TypeVar("Self", bound="Shiftable", covariant=True)
-
-
-class Shiftable(Protocol[Self]):
-    def __add__(self: Self, other: int) -> Self:
-        ...
-
-    def __sub__(self: Self, other: int) -> Self:
-        ...
-
-
 @dataclasses.dataclass(frozen=True)
-class UnitRange(Sequence[int], Set[int], Shiftable["UnitRange"]):
+class UnitRange(Sequence[int], Set[int]):
     """Range from `start` to `stop` with step size one."""
 
     start: int
@@ -106,7 +91,7 @@ class UnitRange(Sequence[int], Set[int], Shiftable["UnitRange"]):
             object.__setattr__(self, "stop", 0)
 
     @classmethod
-    def infinite(cls) -> UnitRange:
+    def infinity(cls) -> UnitRange:
         return cls(Infinity.negative(), Infinity.positive())
 
     def __len__(self) -> int:
@@ -142,17 +127,6 @@ class UnitRange(Sequence[int], Set[int], Shiftable["UnitRange"]):
             else:
                 raise IndexError("UnitRange index out of range")
 
-    def __add__(self, offset: int) -> UnitRange:
-        return UnitRange(self.start + offset, self.stop + offset)
-
-    def __sub__(self, offset: int | Set[Any]) -> UnitRange:
-        if isinstance(offset, int):
-            # Shiftable implementation
-            return self.__add__(-offset)
-        else:
-            # Set implementation
-            raise NotImplementedError()
-
     def __and__(self, other: Set[Any]) -> UnitRange:
         if isinstance(other, UnitRange):
             start = max(self.start, other.start)
@@ -163,11 +137,19 @@ class UnitRange(Sequence[int], Set[int], Shiftable["UnitRange"]):
 
 
 IntIndex: TypeAlias = int | np.integer
-DomainRange: TypeAlias = UnitRange | int
+DomainRange: TypeAlias = UnitRange | IntIndex
 NamedRange: TypeAlias = tuple[Dimension, UnitRange]
 NamedIndex: TypeAlias = tuple[Dimension, IntIndex]
 DomainSlice: TypeAlias = Sequence[NamedRange | NamedIndex]
-FieldSlice: TypeAlias = DomainSlice | tuple[slice | int, ...]
+FieldSlice: TypeAlias = (
+    DomainSlice
+    | tuple[slice | IntIndex | EllipsisType, ...]
+    | slice
+    | IntIndex
+    | EllipsisType
+    | NamedRange
+    | NamedIndex
+)
 
 
 def is_int_index(p: Any) -> TypeGuard[IntIndex]:
@@ -175,11 +157,18 @@ def is_int_index(p: Any) -> TypeGuard[IntIndex]:
 
 
 def is_named_range(v: Any) -> TypeGuard[NamedRange]:
-    return isinstance(v, tuple) and isinstance(v[0], Dimension) and isinstance(v[1], UnitRange)
+    return (
+        isinstance(v, tuple)
+        and len(v) == 2
+        and isinstance(v[0], Dimension)
+        and isinstance(v[1], UnitRange)
+    )
 
 
 def is_named_index(v: Any) -> TypeGuard[NamedRange]:
-    return isinstance(v, tuple) and isinstance(v[0], Dimension) and is_int_index(v[1])
+    return (
+        isinstance(v, tuple) and len(v) == 2 and isinstance(v[0], Dimension) and is_int_index(v[1])
+    )
 
 
 def is_domain_slice(v: Any) -> TypeGuard[DomainSlice]:
@@ -247,7 +236,7 @@ def _broadcast_ranges(
     broadcast_dims: Sequence[Dimension], dims: Sequence[Dimension], ranges: Sequence[UnitRange]
 ) -> tuple[UnitRange, ...]:
     return tuple(
-        ranges[dims.index(d)] if d in dims else UnitRange.infinite() for d in broadcast_dims
+        ranges[dims.index(d)] if d in dims else UnitRange.infinity() for d in broadcast_dims
     )
 
 
@@ -263,12 +252,22 @@ if TYPE_CHECKING:
             ...
 
 
-class NextGTDimsInferface(Protocol):
-    __gt_dims__: tuple[Dimension, ...]
+class NextGTDimsInterface(Protocol):
+    """
+    A `GTDimsInterface` is an object providing the `__gt_dims__` property, naming :class:`Field` dimensions.
+
+    The dimension names are objects of type :class:`Dimension`, in contrast to :py:mod:`gt4py.cartesian`,
+    where the labels are `str` s with implied semantics, see :py:class:`~gt4py._core.definitions.GTDimsInterface` .
+    """
+
+    # TODO(havogt): unify with GTDimsInterface, ideally in backward compatible way
+    @property
+    def __gt_dims__(self) -> tuple[Dimension, ...]:
+        ...
 
 
 @extended_runtime_checkable
-class Field(NextGTDimsInferface, Protocol[DimsT, core_defs.ScalarT]):
+class Field(NextGTDimsInterface, core_defs.GTOriginInterface, Protocol[DimsT, core_defs.ScalarT]):
     __gt_builtin_func__: ClassVar[GTBuiltInFuncDispatcher]
 
     @property
@@ -276,15 +275,7 @@ class Field(NextGTDimsInferface, Protocol[DimsT, core_defs.ScalarT]):
         ...
 
     @property
-    def shape(self) -> tuple[int, ...]:  # TODO discuss this
-        return tuple(len(r) for r in self.domain.ranges)
-
-    @property
     def dtype(self) -> core_defs.DType[core_defs.ScalarT]:
-        ...
-
-    @property
-    def value_type(self) -> type[core_defs.ScalarT]:
         ...
 
     @property
@@ -292,15 +283,14 @@ class Field(NextGTDimsInferface, Protocol[DimsT, core_defs.ScalarT]):
         ...
 
     def __str__(self) -> str:
-        codomain = self.value_type.__name__
-        return f"⟨{self.domain!s} → {codomain}⟩"
+        return f"⟨{self.domain!s} → {self.dtype}⟩"
 
     @abc.abstractmethod
     def remap(self, index_field: Field) -> Field:
         ...
 
     @abc.abstractmethod
-    def restrict(self, item: "DomainLike") -> Field:
+    def restrict(self, item: FieldSlice) -> Field | core_defs.ScalarT:
         ...
 
     # Operators
@@ -309,7 +299,7 @@ class Field(NextGTDimsInferface, Protocol[DimsT, core_defs.ScalarT]):
         ...
 
     @abc.abstractmethod
-    def __getitem__(self, item: "DomainLike") -> Field:
+    def __getitem__(self, item: FieldSlice) -> Field | core_defs.ScalarT:
         ...
 
     @abc.abstractmethod
@@ -365,18 +355,31 @@ class Field(NextGTDimsInferface, Protocol[DimsT, core_defs.ScalarT]):
         ...
 
 
-class MutableField(Field[DimsT, core_defs.ScalarT]):
+def is_field(
+    v: Any,
+) -> TypeGuard[Field]:
+    # This function is introduced to localize the `type: ignore` because
+    # extended_runtime_checkable does not make the protocol runtime_checkable
+    # for mypy.
+    # TODO(egparedes): remove it when extended_runtime_checkable is fixed
+    return isinstance(v, Field)  # type: ignore[misc] # we use extended_runtime_checkable
+
+
+@extended_runtime_checkable
+class MutableField(Field[DimsT, core_defs.ScalarT], Protocol[DimsT, core_defs.ScalarT]):
     @abc.abstractmethod
-    def __setitem__(self, key, value) -> None:
+    def __setitem__(self, index: FieldSlice, value: Field | core_defs.ScalarT) -> None:
         ...
 
 
-class FieldABC(Field[DimsT, core_defs.ScalarT]):
-    """Abstract base class for implementations of the :class:`Field` protocol."""
-
-    @final
-    def __setattr__(self, key, value) -> None:
-        raise TypeError("Immutable type")
+def is_mutable_field(
+    v: Any,
+) -> TypeGuard[MutableField]:
+    # This function is introduced to localize the `type: ignore` because
+    # extended_runtime_checkable does not make the protocol runtime_checkable
+    # for mypy.
+    # TODO(egparedes): remove it when extended_runtime_checkable is fixed
+    return isinstance(v, MutableField)  # type: ignore[misc] # we use extended_runtime_checkable
 
 
 @functools.singledispatch
@@ -385,7 +388,7 @@ def field(
     /,
     *,
     domain: Optional[Any] = None,  # TODO(havogt): provide domain_like to Domain conversion
-    value_type: Optional[type] = None,
+    dtype: Optional[core_defs.DType] = None,
 ) -> Field:
     raise NotImplementedError
 

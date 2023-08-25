@@ -253,7 +253,7 @@ def _contains_tuple_dtype_field(arg):
     #  other `np.int32`). We just ignore the error here and postpone fixing this to when
     #  the new storages land (The implementation here works for LocatedFieldImpl).
 
-    return isinstance(arg, common.Field) and any(dim is None for dim in arg.__gt_dims__)
+    return common.is_field(arg) and any(dim is None for dim in arg.__gt_dims__)
 
 
 def _make_fencil_params(fun, args, *, use_arg_types: bool) -> list[Sym]:
