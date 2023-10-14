@@ -26,6 +26,7 @@ vscode:
   - ms-toolsai.jupyter-keymap
   - ms-toolsai.jupyter-renderers
   - genuitecllc.codetogether
+  - https://vogt.online/gt4py/gt4py-0.0.1.vsix
 
 github:
   prebuilds:
@@ -45,7 +46,3 @@ github:
     addBadge: false
       # add a label once the prebuild is ready to pull requests (defaults to false)
     addLabel: false
-
-vscode:
-  extensions:
-  - https://vogt.online/gt4py/gt4py-0.0.1.vsix
