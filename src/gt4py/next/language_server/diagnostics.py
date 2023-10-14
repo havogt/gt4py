@@ -1,6 +1,6 @@
-# GT4Py Project - GridTools Framework
+# GT4Py - GridTools Framework
 #
-# Copyright (c) 2014-2021, ETH Zurich
+# Copyright (c) 2014-2023, ETH Zurich
 # All rights reserved.
 #
 # This file is part of the GT4Py project and the GridTools framework.
@@ -12,10 +12,10 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-from pygls.lsp import Diagnostic, Position, Range
+from lsprotocol.types import Diagnostic, Position, Range
 
-from functional.ffront.foast_passes.type_deduction import FieldOperatorTypeDeductionError
-from functional.ffront.func_to_foast import FieldOperatorSyntaxError
+from gt4py.next.ffront.foast_passes.type_deduction import FieldOperatorTypeDeductionError
+from gt4py.next.ffront.func_to_foast import FieldOperatorSyntaxError
 
 
 def from_exception(e: Exception) -> list[Diagnostic]:

@@ -33,6 +33,8 @@ def _getabsfile(func: Callable) -> str:
         return filename
     else:
         return str(pathlib.Path(inspect.getabsfile(func)).resolve())
+
+
 def get_closure_vars_from_function(function: Callable) -> dict[str, Any]:
     (nonlocals, globals, builtins, unbound) = inspect.getclosurevars(function)  # noqa: A001
     return {**builtins, **globals, **nonlocals}  # nonlocals override globals

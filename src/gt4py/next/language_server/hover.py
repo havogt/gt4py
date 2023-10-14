@@ -1,6 +1,6 @@
-# GT4Py Project - GridTools Framework
+# GT4Py - GridTools Framework
 #
-# Copyright (c) 2014-2021, ETH Zurich
+# Copyright (c) 2014-2023, ETH Zurich
 # All rights reserved.
 #
 # This file is part of the GT4Py project and the GridTools framework.
@@ -12,12 +12,12 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-from pygls.lsp import Hover, Position, Range
+from gt4py.eve import SourceLocation
+from gt4py.eve.visitors import NodeVisitor
+from lsprotocol.types import Hover, Position, Range
 
-from eve import SourceLocation
-from eve.visitors import NodeVisitor
-from functional.ffront.common_types import FieldType
-from functional.ffront.field_operator_ast import Call
+from gt4py.next.ffront.common_types import FieldType
+from gt4py.next.ffront.field_operator_ast import Call
 
 
 class _FindNodeByPosition(NodeVisitor):

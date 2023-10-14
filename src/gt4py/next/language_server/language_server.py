@@ -1,6 +1,6 @@
-# GT4Py Project - GridTools Framework
+# GT4Py - GridTools Framework
 #
-# Copyright (c) 2014-2021, ETH Zurich
+# Copyright (c) 2014-2023, ETH Zurich
 # All rights reserved.
 #
 # This file is part of the GT4Py project and the GridTools framework.
@@ -15,8 +15,10 @@
 import argparse
 import logging
 
-from pygls.lsp.methods import HOVER, TEXT_DOCUMENT_DID_CHANGE, TEXT_DOCUMENT_DID_OPEN
-from pygls.lsp.types import (
+from lsprotocol.types import (
+    TEXT_DOCUMENT_DID_CHANGE,
+    TEXT_DOCUMENT_DID_OPEN,
+    TEXT_DOCUMENT_HOVER,
     DidChangeTextDocumentParams,
     DidOpenTextDocumentParams,
     Hover,
@@ -24,7 +26,7 @@ from pygls.lsp.types import (
 )
 from pygls.server import LanguageServer
 
-from functional.language_server import diagnostics, hover, parser
+from gt4py.next.language_server import diagnostics, hover, parser
 
 
 gt4py_server = LanguageServer()
@@ -54,18 +56,18 @@ def _parse(server: LanguageServer, params):
 @gt4py_server.feature(TEXT_DOCUMENT_DID_CHANGE)
 def did_change(ls, params: DidChangeTextDocumentParams):
     """Text document did change notification."""
-    # ls.show_message("Text document did change")
+    ls.show_message("Text document did change")
     _parse(ls, params)
 
 
 @gt4py_server.feature(TEXT_DOCUMENT_DID_OPEN)
 async def did_open(ls: LanguageServer, params: DidOpenTextDocumentParams):
     """Text document did open notification."""
-    # ls.show_message("Text Document Did Open")
+    ls.show_message("Text Document Did Open")
     _parse(ls, params)
 
 
-@gt4py_server.feature(HOVER)
+@gt4py_server.feature(TEXT_DOCUMENT_HOVER)
 def hover_action(params: HoverParams) -> Hover:
     field_ops = (
         parsed_nodes[params.text_document.uri] if params.text_document.uri in parsed_nodes else []

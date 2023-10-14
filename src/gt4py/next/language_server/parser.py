@@ -1,6 +1,6 @@
-# GT4Py Project - GridTools Framework
+# GT4Py - GridTools Framework
 #
-# Copyright (c) 2014-2021, ETH Zurich
+# Copyright (c) 2014-2023, ETH Zurich
 # All rights reserved.
 #
 # This file is part of the GT4Py project and the GridTools framework.
@@ -14,9 +14,6 @@
 
 import ast
 import linecache
-
-from functional.ffront import decorator, func_to_foast, func_to_past
-from functional.ffront.source_utils import CapturedVars, SourceDefinition
 
 
 class _ExtractDecorated(ast.NodeVisitor):

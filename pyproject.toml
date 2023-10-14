@@ -82,9 +82,9 @@ full = [
   'jax[cpu]>=0.4.13'
 ]
 jax = ['jax[cpu]>=0.4.13']
+language_server = ['pygls>=0.11.3']
 performance = ['scipy>=1.7.2']
 testing = ['hypothesis>=6.0.0', 'pytest>=7.0']
-language_server = ['pygls>=0.11.3']
 
 [project.scripts]
 gtpyc = 'gt4py.cartesian.cli:gtpyc'
