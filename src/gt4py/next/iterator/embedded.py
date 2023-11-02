@@ -53,6 +53,8 @@ from gt4py.eve import extended_typing as xtyping
 from gt4py.next import common
 from gt4py.next.embedded import exceptions as embedded_exceptions
 from gt4py.next.iterator import builtins, runtime
+from gt4py.next.embedded import function_field
+from gt4py._core import definitions as core_defs
 
 
 EMBEDDED = "embedded"
@@ -226,7 +228,7 @@ class Column(np.lib.mixins.NDArrayOperatorsMixin):
             return Column(self.kstart, self.data[i, ...])
 
     def __setitem__(self, i: int, v: Any) -> None:
-        self.data[i - self.kstart] = v
+        self.data[i - self.kstart] = v.ndarray
 
     def __array__(self, dtype: Optional[npt.DTypeLike] = None) -> np.ndarray:
         return self.data.astype(dtype, copy=False)
@@ -393,10 +395,10 @@ Domain: TypeAlias = (
 @builtins.named_range.register(EMBEDDED)
 def named_range(tag: Tag | common.Dimension, start: int, end: int) -> NamedRange:
     # TODO revisit this pattern after the discussion of 0d-field vs scalar
-    if isinstance(start, ConstantField):
-        start = start.value
-    if isinstance(end, ConstantField):
-        end = end.value
+    if isinstance(start, function_field.FunctionField) and len(start.domain) == 0:
+        start = start.func()
+    if isinstance(end, function_field.FunctionField) and len(end.domain) == 0:
+        end = end.func()
     return (tag, range(start, end))
 
 
@@ -463,14 +465,9 @@ def not_eq(first, second):
 CompositeOfScalarOrField: TypeAlias = Scalar | LocatedField | tuple["CompositeOfScalarOrField", ...]
 
 
-def is_dtype_like(t: Any) -> TypeGuard[npt.DTypeLike]:
-    return issubclass(t, (np.generic, int, float))
-
-
-def infer_dtype_like_type(t: Any) -> npt.DTypeLike:
+def infer_dtype(t: Any) -> core_defs.DType:
     res = xtyping.infer_type(t)
-    assert is_dtype_like(res), res
-    return res
+    return core_defs.dtype(res)
 
 
 def promote_scalars(val: CompositeOfScalarOrField):
@@ -479,12 +476,11 @@ def promote_scalars(val: CompositeOfScalarOrField):
         return tuple(promote_scalars(el) for el in val)
     elif common.is_field(val):
         return val
-    val_type = infer_dtype_like_type(val)
     if isinstance(val, Scalar):  # type: ignore # mypy bug
         return constant_field(val)
     else:
         raise ValueError(
-            f"Expected a `Field` or a number (`float`, `np.int64`, ...), but got {val_type}."
+            f"Expected a `Field` or a number (`float`, `np.int64`, ...), but got {type(val)}."
         )
 
 
@@ -1031,214 +1027,19 @@ def np_as_located_field(
     return _maker
 
 
-@dataclasses.dataclass(frozen=True)
-class IndexField(common.Field):
-    """
-    Minimal index field implementation.
-
-    TODO: Improve implementation (e.g. support slicing) and move out of this module.
-    """
-
-    _dimension: common.Dimension
-
-    @property
-    def __gt_dims__(self) -> tuple[common.Dimension, ...]:
-        return (self._dimension,)
-
-    @property
-    def __gt_origin__(self) -> tuple[int, ...]:
-        return (0,)
-
-    @classmethod
-    def __gt_builtin_func__(func: Callable, /) -> NoReturn:  # type: ignore[override] # Signature incompatible with supertype # fmt: off
-        raise NotImplementedError()
-
-    @property
-    def domain(self) -> common.Domain:
-        return common.Domain((self._dimension, common.UnitRange.infinity()))
-
-    @property
-    def dtype(self) -> core_defs.Int32DType:
-        return core_defs.Int32DType()
-
-    @property
-    def ndarray(self) -> core_defs.NDArrayObject:
-        return AttributeError("Cannot get `ndarray` of an infinite Field.")
-
-    def remap(self, index_field: common.Field) -> common.Field:
-        # TODO can be implemented by constructing and ndarray (but do we know of which kind?)
-        raise NotImplementedError()
-
-    def restrict(self, item: common.AnyIndexSpec) -> common.Field | core_defs.int32:
-        if common.is_absolute_index_sequence(item) and all(common.is_named_index(e) for e in item):  # type: ignore[arg-type] # we don't want to pollute the typing of `is_absolute_index_sequence` for this temporary code # fmt: off
-            d, r = item[0]
-            assert d == self._dimension
-            assert isinstance(r, int)
-            return self.dtype.scalar_type(r)
-        # TODO set a domain...
-        raise NotImplementedError()
-
-    __call__ = remap
-    __getitem__ = restrict
-
-    def __abs__(self) -> common.Field:
-        raise NotImplementedError()
-
-    def __neg__(self) -> common.Field:
-        raise NotImplementedError()
-
-    def __invert__(self) -> common.Field:
-        raise NotImplementedError()
-
-    def __add__(self, other: common.Field | core_defs.ScalarT) -> common.Field:
-        raise NotImplementedError()
-
-    def __radd__(self, other: common.Field | core_defs.ScalarT) -> common.Field:
-        raise NotImplementedError()
-
-    def __sub__(self, other: common.Field | core_defs.ScalarT) -> common.Field:
-        raise NotImplementedError()
-
-    def __rsub__(self, other: common.Field | core_defs.ScalarT) -> common.Field:
-        raise NotImplementedError()
-
-    def __mul__(self, other: common.Field | core_defs.ScalarT) -> common.Field:
-        raise NotImplementedError()
-
-    def __rmul__(self, other: common.Field | core_defs.ScalarT) -> common.Field:
-        raise NotImplementedError()
-
-    def __floordiv__(self, other: common.Field | core_defs.ScalarT) -> common.Field:
-        raise NotImplementedError()
-
-    def __rfloordiv__(self, other: common.Field | core_defs.ScalarT) -> common.Field:
-        raise NotImplementedError()
-
-    def __truediv__(self, other: common.Field | core_defs.ScalarT) -> common.Field:
-        raise NotImplementedError()
-
-    def __rtruediv__(self, other: common.Field | core_defs.ScalarT) -> common.Field:
-        raise NotImplementedError()
-
-    def __pow__(self, other: common.Field | core_defs.ScalarT) -> common.Field:
-        raise NotImplementedError()
-
-    def __and__(self, other: common.Field | core_defs.ScalarT) -> common.Field:
-        raise NotImplementedError()
-
-    def __or__(self, other: common.Field | core_defs.ScalarT) -> common.Field:
-        raise NotImplementedError()
-
-    def __xor__(self, other: common.Field | core_defs.ScalarT) -> common.Field:
-        raise NotImplementedError()
 
 
 def index_field(axis: common.Dimension) -> common.Field:
-    return IndexField(axis)
+    return function_field.FunctionField(lambda idx: np.int32(idx), domain=common.Domain(dims=(axis,), ranges=common.UnitRange.infinity()))
 
 
-@dataclasses.dataclass(frozen=True)
-class ConstantField(common.Field[Any, core_defs.ScalarT]):
-    """
-    Minimal constant field implementation.
 
-    TODO: Improve implementation (e.g. support slicing) and move out of this module.
-    """
 
-    _value: core_defs.ScalarT
-
-    @property
-    def __gt_dims__(self) -> tuple[common.Dimension, ...]:
-        return tuple()
-
-    @property
-    def __gt_origin__(self) -> tuple[int, ...]:
-        return tuple()
-
-    @classmethod
-    def __gt_builtin_func__(func: Callable, /) -> NoReturn:  # type: ignore[override] # Signature incompatible with supertype # fmt: off
-        raise NotImplementedError()
-
-    @property
-    def domain(self) -> common.Domain:
-        return common.Domain(dims=(), ranges=())
-
-    @property
-    def dtype(self) -> core_defs.DType[core_defs.ScalarT]:
-        return core_defs.dtype(type(self._value))
-
-    @property
-    def ndarray(self) -> core_defs.NDArrayObject:
-        return AttributeError("Cannot get `ndarray` of an infinite Field.")
-
-    def remap(self, index_field: common.Field) -> common.Field:
-        # TODO can be implemented by constructing and ndarray (but do we know of which kind?)
-        raise NotImplementedError()
-
-    def restrict(self, item: common.AnyIndexSpec) -> common.Field | core_defs.ScalarT:
-        # TODO set a domain...
-        return self._value
-
-    __call__ = remap
-    __getitem__ = restrict
-
-    def __abs__(self) -> common.Field:
-        raise NotImplementedError()
-
-    def __neg__(self) -> common.Field:
-        raise NotImplementedError()
-
-    def __invert__(self) -> common.Field:
-        raise NotImplementedError()
-
-    def __add__(self, other: common.Field | core_defs.ScalarT) -> common.Field:
-        raise NotImplementedError()
-
-    def __radd__(self, other: common.Field | core_defs.ScalarT) -> common.Field:
-        raise NotImplementedError()
-
-    def __sub__(self, other: common.Field | core_defs.ScalarT) -> common.Field:
-        raise NotImplementedError()
-
-    def __rsub__(self, other: common.Field | core_defs.ScalarT) -> common.Field:
-        raise NotImplementedError()
-
-    def __mul__(self, other: common.Field | core_defs.ScalarT) -> common.Field:
-        raise NotImplementedError()
-
-    def __rmul__(self, other: common.Field | core_defs.ScalarT) -> common.Field:
-        raise NotImplementedError()
-
-    def __floordiv__(self, other: common.Field | core_defs.ScalarT) -> common.Field:
-        raise NotImplementedError()
-
-    def __rfloordiv__(self, other: common.Field | core_defs.ScalarT) -> common.Field:
-        raise NotImplementedError()
-
-    def __truediv__(self, other: common.Field | core_defs.ScalarT) -> common.Field:
-        raise NotImplementedError()
-
-    def __rtruediv__(self, other: common.Field | core_defs.ScalarT) -> common.Field:
-        raise NotImplementedError()
-
-    def __pow__(self, other: common.Field | core_defs.ScalarT) -> common.Field:
-        raise NotImplementedError()
-
-    def __and__(self, other: common.Field | core_defs.ScalarT) -> common.Field:
-        raise NotImplementedError()
-
-    def __or__(self, other: common.Field | core_defs.ScalarT) -> common.Field:
-        raise NotImplementedError()
-
-    def __xor__(self, other: common.Field | core_defs.ScalarT) -> common.Field:
-        raise NotImplementedError()
 
 
 def constant_field(value: Any, dtype_like: Optional[core_defs.DTypeLike] = None) -> common.Field:
-    if dtype_like is None:
-        dtype_like = infer_dtype_like_type(value)
-    dtype = core_defs.dtype(dtype_like)
-    return ConstantField(dtype.scalar_type(value))
+    dtype = infer_dtype(value) if dtype_like is None else core_defs.dtype(dtype)
+    return function_field.FunctionField(lambda: dtype.scalar_type(value), domain=common.Domain(dims=(), ranges=()))
 
 
 @builtins.shift.register(EMBEDDED)

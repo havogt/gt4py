@@ -89,7 +89,6 @@ class FunctionField(common.FieldBuiltinFuncRegistry, common.Field[common.DimsT, 
         return tuple(-r.start for _, r in self.domain)
 
     def _trigger_func(self):
-        # TODO what should happen when domain is empty? test that this is fine.
         target_shape = tuple(1 for _ in range(len(self.domain)))
         return np.fromfunction(self.func, target_shape)
 

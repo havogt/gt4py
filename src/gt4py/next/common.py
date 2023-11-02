@@ -239,10 +239,10 @@ class Domain(Sequence[NamedRange]):
     ) -> None:
         if dims is not None or ranges is not None:
             if dims is None and ranges is None:
-                raise ValueError("Either both none of `dims` and `ranges` must be specified.")
+                raise ValueError("Either both or none of `dims` and `ranges` must be specified.")
             if len(args) > 0:
                 raise ValueError(
-                    "No extra `args` allowed when constructing fomr `dims` and `ranges`."
+                    "No extra `args` allowed when constructing from `dims` and `ranges`."
                 )
 
             assert dims is not None and ranges is not None  # for mypy
