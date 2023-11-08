@@ -137,6 +137,10 @@ class UnitRange(Sequence[int], Set[int]):
             return UnitRange(start, stop)
         else:
             raise NotImplementedError("Can only find the intersection between UnitRange instances.")
+    
+    def __le__(self, other: UnitRange):
+        # TODO required for infinity comparison
+        return self.start >= other.start and self.stop <= other.stop
 
     def __str__(self) -> str:
         return f"({self.start}:{self.stop})"
@@ -186,7 +190,7 @@ def is_named_range(v: AnyIndexSpec) -> TypeGuard[NamedRange]:
     )
 
 
-def is_named_index(v: AnyIndexSpec) -> TypeGuard[NamedRange]:
+def is_named_index(v: AnyIndexSpec) -> TypeGuard[NamedIndex]:
     return (
         isinstance(v, tuple) and len(v) == 2 and isinstance(v[0], Dimension) and is_int_index(v[1])
     )

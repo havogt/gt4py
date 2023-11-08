@@ -51,10 +51,8 @@ import numpy.typing as npt
 from gt4py._core import definitions as core_defs
 from gt4py.eve import extended_typing as xtyping
 from gt4py.next import common
-from gt4py.next.embedded import exceptions as embedded_exceptions
+from gt4py.next.embedded import exceptions as embedded_exceptions, function_field
 from gt4py.next.iterator import builtins, runtime
-from gt4py.next.embedded import function_field
-from gt4py._core import definitions as core_defs
 
 
 EMBEDDED = "embedded"
@@ -228,7 +226,7 @@ class Column(np.lib.mixins.NDArrayOperatorsMixin):
             return Column(self.kstart, self.data[i, ...])
 
     def __setitem__(self, i: int, v: Any) -> None:
-        self.data[i - self.kstart] = v.ndarray
+        self.data[i - self.kstart] = v
 
     def __array__(self, dtype: Optional[npt.DTypeLike] = None) -> np.ndarray:
         return self.data.astype(dtype, copy=False)
@@ -1027,19 +1025,18 @@ def np_as_located_field(
     return _maker
 
 
-
-
 def index_field(axis: common.Dimension) -> common.Field:
-    return function_field.FunctionField(lambda idx: np.int32(idx), domain=common.Domain(dims=(axis,), ranges=common.UnitRange.infinity()))
-
-
-
-
+    return function_field.FunctionField(
+        lambda idx: np.int32(idx),
+        domain=common.Domain(dims=(axis,), ranges=(common.UnitRange.infinity(),)),
+    )
 
 
 def constant_field(value: Any, dtype_like: Optional[core_defs.DTypeLike] = None) -> common.Field:
     dtype = infer_dtype(value) if dtype_like is None else core_defs.dtype(dtype)
-    return function_field.FunctionField(lambda: dtype.scalar_type(value), domain=common.Domain(dims=(), ranges=()))
+    return function_field.FunctionField(
+        lambda: dtype.scalar_type(value), domain=common.Domain(dims=(), ranges=())
+    )
 
 
 @builtins.shift.register(EMBEDDED)

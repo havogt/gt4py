@@ -30,6 +30,64 @@ from gt4py.next.embedded import (
 )
 from gt4py.next.ffront import fbuiltins
 
+# TODO extract binding and adding arguments functionality: check boltons
+
+
+@dataclasses.dataclass(frozen=True)
+class _Unbound:
+    index: int
+
+
+@dataclasses.dataclass(frozen=True)
+class _Bound:
+    value: Any
+
+
+class _Unused:
+    ...
+
+
+@dataclasses.dataclass(frozen=True)
+class _FunWrapper:
+    fun: Callable
+    _args: list[_Unbound | _Bound | _Unused]
+
+    @property
+    def arity(self) -> int:
+        return len([arg for arg in self._args if not isinstance(arg, _Bound)])
+
+    @classmethod
+    def from_function(cls, fun: Callable) -> _FunWrapper:
+        params = inspect.signature(fun).parameters.values()
+        if not all(
+            p.kind in [inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.POSITIONAL_ONLY]
+            for p in params
+        ):
+            raise ValueError(
+                "Expected a function that accept only a fixed number of positional arguments."
+            )
+        return _FunWrapper(fun, [_Unbound(i) for i in range(len(params))])
+
+    def __call__(self, *args: Any) -> Any:  # TODO paramspec
+        return self.fun(
+            *[
+                args[arg.index] if isinstance(arg, _Unbound) else arg.value
+                for arg in self._args
+                if not isinstance(arg, _Unused)
+            ]
+        )
+
+    def bind(self, bind_args: dict[int, Any]) -> _FunWrapper:
+        new_args = [
+            arg if i not in bind_args else _Bound(bind_args[i])
+            for i, arg in enumerate(self._args)
+            if not isinstance(arg, _Unused)
+        ]
+        return _FunWrapper(self.fun, new_args)
+
+    def adjust_arity(self, param_pos: list[int], new_arity: int) -> _FunWrapper:
+        ...
+
 
 @dataclasses.dataclass(frozen=True)
 class FunctionField(common.FieldBuiltinFuncRegistry, common.Field[common.DimsT, core_defs.ScalarT]):
@@ -71,14 +129,14 @@ class FunctionField(common.FieldBuiltinFuncRegistry, common.Field[common.DimsT, 
             )
 
         if __debug__:
-            try:
-                self._trigger_func()
-            except Exception:
-                params = _get_params(self.func)
-                raise embedded_exceptions.FunctionFieldError(
-                    self.__class__.__name__,
-                    f"Invariant violation: len(self.domain) ({len(self.domain)}) does not match the number of parameters of the provided function ({params})",
-                )
+            # try:
+            self._trigger_func()
+            # except Exception:
+            #     params = _get_params(self.func)
+            #     raise embedded_exceptions.FunctionFieldError(
+            #         self.__class__.__name__,
+            #         f"Invariant violation: len(self.domain) ({len(self.domain)}) does not match the number of parameters of the provided function ({params})",
+            #     )
 
     @property
     def __gt_dims__(self) -> tuple[common.Dimension, ...]:
@@ -90,6 +148,7 @@ class FunctionField(common.FieldBuiltinFuncRegistry, common.Field[common.DimsT, 
 
     def _trigger_func(self):
         target_shape = tuple(1 for _ in range(len(self.domain)))
+        print(target_shape)
         return np.fromfunction(self.func, target_shape)
 
     @property
@@ -98,7 +157,29 @@ class FunctionField(common.FieldBuiltinFuncRegistry, common.Field[common.DimsT, 
 
     def restrict(self, index: common.AnyIndexSpec) -> FunctionField:
         new_domain = embedded_common.sub_domain(self.domain, index)
-        return self.__class__(self.func, new_domain)
+        print(new_domain)
+        index_sequence = common.as_any_index_sequence(index)
+
+        def new_func(*args):
+            if common.is_absolute_index_sequence(index_sequence):
+                index_dict = {d: i for d, i in index_sequence}
+                bound_args = []
+                i = 0
+                for dim, rng in self.domain:
+                    if dim in index_dict and common.is_int_index(index_dict[dim]):
+                        bound_args.append(index_dict[dim])
+                    else:
+                        bound_args.append(args[i])
+                        i = i + 1
+            else:  # relative
+                ...
+            return self.func(*bound_args)
+
+        if len(new_domain) == 0:
+            return self.__class__(
+                new_func, new_domain
+            ).ndarray  # TODO need to partially bind args in case we reduce dimension
+        return self.__class__(new_func, new_domain)
 
     __getitem__ = restrict
 

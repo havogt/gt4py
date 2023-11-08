@@ -32,6 +32,32 @@ I = Dimension("I")
 J = Dimension("J")
 K = Dimension("K")
 
+# FunWrapper tests
+
+
+def test_fun_wrapper_from_function():
+    testee = funcf._FunWrapper.from_function(lambda x, y: (x, y))
+    assert testee.arity == 2
+    assert testee(1, 2) == (1, 2)
+
+
+def test_fun_wrapper_bind():
+    testee = funcf._FunWrapper.from_function(lambda x, y: (x, y)).bind({1: 5})
+    assert testee.arity == 1
+    assert testee(2) == (2, 5)
+
+
+def test_fun_wrapper_bind_twice():
+    testee = funcf._FunWrapper.from_function(lambda x, y: (x, y)).bind({1: 5}).bind({0: 42})
+    assert testee.arity == 0
+    assert testee() == (42, 5)
+
+
+def test_fun_wrapper_bind_twice_reversed():
+    testee = funcf._FunWrapper.from_function(lambda x, y: (x, y)).bind({0: 5}).bind({0: 42})
+    assert testee.arity == 0
+    assert testee() == (5, 42)
+
 
 def test_constant_field_no_domain(binary_arithmetic_op, binary_reverse_arithmetic_op):
     cf1 = funcf.constant_field(10)
@@ -216,6 +242,56 @@ def test_function_field_unary(function_field):
 def test_function_field_scalar_op(function_field):
     new = function_field * 5.0
     assert new.func(1, 2) == 15
+
+
+@pytest.mark.parametrize(
+    "index,remaining_args,expected",
+    [
+        ((I, 2), (4, 5), (2, 4, 5)),
+        (((I, 2)), (4, 5), (2, 4, 5)),
+        ((J, 2), (4, 5), (4, 2, 5)),
+        (((J, 2), (I, 3)), (4,), (3, 2, 4)),
+        (((J, 2), (I, 3), (K, common.UnitRange.infinity())), (4,), (3, 2, 4)),
+    ],
+)
+def test_function_field_restrict_absolute(index, remaining_args, expected):
+    inp = funcf.FunctionField(
+        lambda x, y, z: (x, y, z),
+        domain=common.Domain(
+            dims=(I, J, K),
+            ranges=(
+                common.UnitRange.infinity(),
+                common.UnitRange.infinity(),
+                common.UnitRange.infinity(),
+            ),
+        ),
+    )
+
+    res = inp.restrict(index)
+    assert res.func(*remaining_args) == expected
+
+
+@pytest.mark.parametrize(
+    "index,remaining_args,expected",
+    [
+        ((2, 3, 4), (), (-3, 4, 10)),
+    ],
+)
+def test_function_field_restrict_relative(index, remaining_args, expected):
+    inp = funcf.FunctionField(
+        lambda x, y, z: (x, y, z),
+        domain=common.Domain(
+            dims=(I, J, K),
+            ranges=(
+                common.UnitRange(-5, 5),
+                common.UnitRange(0, 10),
+                common.UnitRange(5, 15),
+            ),
+        ),
+    )
+
+    res = inp.restrict(index)
+    assert res.func(*remaining_args) == expected
 
 
 @pytest.mark.parametrize("func", ["foo", 1.0, 1])
