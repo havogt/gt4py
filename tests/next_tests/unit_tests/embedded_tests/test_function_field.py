@@ -41,7 +41,13 @@ def test_fun_wrapper_from_function():
     assert testee(1, 2) == (1, 2)
 
 
-def test_fun_wrapper_bind():
+def test_fun_wrapper_bind_first():
+    testee = funcf._FunWrapper.from_function(lambda x, y: (x, y)).bind({0: 5})
+    assert testee.arity == 1
+    assert testee(2) == (5, 2)
+
+
+def test_fun_wrapper_bind_second():
     testee = funcf._FunWrapper.from_function(lambda x, y: (x, y)).bind({1: 5})
     assert testee.arity == 1
     assert testee(2) == (2, 5)
@@ -57,6 +63,35 @@ def test_fun_wrapper_bind_twice_reversed():
     testee = funcf._FunWrapper.from_function(lambda x, y: (x, y)).bind({0: 5}).bind({0: 42})
     assert testee.arity == 0
     assert testee() == (5, 42)
+
+
+def test_fun_wrapper_adjust_arity():
+    testee = funcf._FunWrapper.from_function(lambda x, y: (x, y)).add_unused_parameters(0, 2, 4)
+    assert testee.arity == 5
+    assert testee(1, 2, 3, 4, 5) == (2, 4)
+
+
+def test_fun_wrapper_adjust_arity_twice():
+    testee = (
+        funcf._FunWrapper.from_function(lambda x, y: (x, y))
+        .add_unused_parameters(1)
+        .add_unused_parameters(0, 2, 4)
+    )
+    assert testee.arity == 6
+    assert testee(1, 2, 3, 4, 5, 6) == (2, 6)
+
+
+def test_fun_wrapper_bind_adjust_arity():
+    testee = (
+        funcf._FunWrapper.from_function(lambda x, y, z: (x, y, z))
+        .bind({1: 42})
+        .add_unused_parameters(1)
+        .bind({0: 43})
+        .add_unused_parameters(0)
+        .add_unused_parameters(3)
+    )
+    assert testee.arity == 4
+    assert testee(1, 2, 3, 4) == (43, 42, 3)
 
 
 def test_constant_field_no_domain(binary_arithmetic_op, binary_reverse_arithmetic_op):

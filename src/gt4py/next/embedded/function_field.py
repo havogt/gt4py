@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import dataclasses
 import inspect
+import itertools
 import operator
 from typing import Any, Callable, TypeGuard, overload
 
@@ -35,7 +36,7 @@ from gt4py.next.ffront import fbuiltins
 
 @dataclasses.dataclass(frozen=True)
 class _Unbound:
-    index: int
+    pos: int
 
 
 @dataclasses.dataclass(frozen=True)
@@ -50,11 +51,16 @@ class _Unused:
 @dataclasses.dataclass(frozen=True)
 class _FunWrapper:
     fun: Callable
-    _args: list[_Unbound | _Bound | _Unused]
+    _bound: dict[int, Any]
+    _mask: list[bool]
 
     @property
     def arity(self) -> int:
-        return len([arg for arg in self._args if not isinstance(arg, _Bound)])
+        return len(self._mask)
+
+    @property
+    def _fun_arity(self) -> int:
+        return self._mask.count(True) + len(self._bound)
 
     @classmethod
     def from_function(cls, fun: Callable) -> _FunWrapper:
@@ -66,27 +72,32 @@ class _FunWrapper:
             raise ValueError(
                 "Expected a function that accept only a fixed number of positional arguments."
             )
-        return _FunWrapper(fun, [_Unbound(i) for i in range(len(params))])
+        return _FunWrapper(fun, {}, [True] * len(params))
 
     def __call__(self, *args: Any) -> Any:  # TODO paramspec
-        return self.fun(
-            *[
-                args[arg.index] if isinstance(arg, _Unbound) else arg.value
-                for arg in self._args
-                if not isinstance(arg, _Unused)
-            ]
-        )
+        unbound_pos = iter([i for i, m in enumerate(self._mask) if m])
+        fun_args = [self._bound.get(i) or args[next(unbound_pos)] for i in range(self._fun_arity)]
+        return self.fun(*fun_args)
 
     def bind(self, bind_args: dict[int, Any]) -> _FunWrapper:
-        new_args = [
-            arg if i not in bind_args else _Bound(bind_args[i])
-            for i, arg in enumerate(self._args)
-            if not isinstance(arg, _Unused)
-        ]
-        return _FunWrapper(self.fun, new_args)
+        unbound_pos = [i for i, m in enumerate(self._mask) if m]
+        mapping = [i for i in range(self._fun_arity) if self._bound.get(i) is None]
+        m = {k: v for k, v in zip(unbound_pos, mapping)}
+        new_bound = self._bound.copy()
+        new_mask = self._mask.copy()
+        for i, v in bind_args.items():
+            if self._mask[i]:
+                new_bound[m[i]] = v
+                new_mask.pop(i)
+        return _FunWrapper(self.fun, new_bound, new_mask)
 
-    def adjust_arity(self, param_pos: list[int], new_arity: int) -> _FunWrapper:
-        ...
+    def add_unused_parameters(self, *positions: int) -> _FunWrapper:
+        if max(positions) > self.arity + len(positions):
+            raise ValueError(f"Cannot fill with parameters.")
+
+        for i in positions:
+            self._mask.insert(i, False)
+        return _FunWrapper(self.fun, self._bound, self._mask)
 
 
 @dataclasses.dataclass(frozen=True)
