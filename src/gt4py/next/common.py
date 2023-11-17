@@ -51,14 +51,14 @@ DimsT = TypeVar(
 )  # bound to `Sequence[Dimension]` if instance of Dimension would be a type
 
 
-class Infinity(int):
-    @classmethod
-    def positive(cls) -> Infinity:
-        return cls(sys.maxsize)
+# class Infinity(int):
+#     @classmethod
+#     def positive(cls) -> Infinity:
+#         return cls(sys.maxsize)
 
-    @classmethod
-    def negative(cls) -> Infinity:
-        return cls(-sys.maxsize)
+#     @classmethod
+#     def negative(cls) -> Infinity:
+#         return cls(-sys.maxsize)
 
 
 @enum.unique
@@ -80,17 +80,63 @@ class Dimension:
         return f"{self.value}[{self.kind}]"
 
 
+@dataclasses.dataclass(frozen=True)
+class Infinity(type(1)):
+    pos: bool = True
+
+    def __init__(self, val=True, compare_eq=False):
+        object.__setattr__(self, "pos", val)
+
+    def __add__(self, _):
+        return self
+
+    __radd__ = __add__
+
+    def __sub__(self, _):
+        return self
+
+    __rsub__ = __sub__
+
+    def __eq__(self, other):
+        return isinstance(other, Infinity) and self.pos == other.pos
+
+    def __lt__(self, _):
+        return not self.pos
+
+    def __le__(self, other):
+        return self == other or not self.pos
+
+    def __gt__(self, _):
+        return self.pos
+
+    def __ge__(self, other):
+        return self == other or self.pos
+
+    def __neg__(self):
+        return self.__class__(not self.pos)
+
+    @classmethod
+    def positive(cls) -> Infinity:
+        return cls(True)
+
+    @classmethod
+    def negative(cls) -> Infinity:
+        return cls(False)
+
+
 @dataclasses.dataclass(frozen=True, init=False)
-class UnitRange(Sequence[int], Set[int]):
+class UnitRange(Sequence[int | Infinity], Set[int | Infinity]):
     """Range from `start` to `stop` with step size one."""
 
-    start: int
-    stop: int
+    start: int | Infinity
+    stop: int | Infinity
 
-    def __init__(self, start: core_defs.IntegralScalar, stop: core_defs.IntegralScalar) -> None:
+    def __init__(
+        self, start: core_defs.IntegralScalar | Infinity, stop: core_defs.IntegralScalar | Infinity
+    ) -> None:
         if start < stop:
-            object.__setattr__(self, "start", int(start))
-            object.__setattr__(self, "stop", int(stop))
+            object.__setattr__(self, "start", start if isinstance(start, Infinity) else int(start))
+            object.__setattr__(self, "stop", stop if isinstance(stop, Infinity) else int(stop))
         else:
             # make UnitRange(0,0) the single empty UnitRange
             object.__setattr__(self, "start", 0)
@@ -100,10 +146,15 @@ class UnitRange(Sequence[int], Set[int]):
     def infinity(cls) -> UnitRange:
         return cls(Infinity.negative(), Infinity.positive())
 
-    def __len__(self) -> int:
-        if Infinity.positive() in (abs(self.start), abs(self.stop)):
-            return Infinity.positive()
+    def __len__(self) -> int | Infinity:
+        if self.start == Infinity.negative() or self.stop == Infinity.positive():
+            # return sys.maxsize
+            return Infinity(True, compare_eq=True)
+            # raise OverflowError("`UnitRange` has infinite length.")
         return max(0, self.stop - self.start)
+        # if Infinity.positive() in (abs(self.start), abs(self.stop)):
+        #     return Infinity.positive()
+        # return max(0, self.stop - self.start)
 
     def __repr__(self) -> str:
         return f"UnitRange({self.start}, {self.stop})"
@@ -141,16 +192,18 @@ class UnitRange(Sequence[int], Set[int]):
         else:
             raise NotImplementedError("Can only find the intersection between UnitRange instances.")
 
-    def __le__(self, other: Set[Any]):
-        if isinstance(other, UnitRange):
-            # required for infinity comparison
-            return self.start >= other.start and self.stop <= other.stop
-        else:
-            return Set.__le__(self, other)
+    # def __lt__(self, other: Set[Any]):
+    #     if isinstance(other, UnitRange):
+    #         # required for infinity comparison
+    #         return self.start > other.start and self.stop < other.stop
+    #     else:
+    #         return Set.__lt__(self, other)
 
     def __str__(self) -> str:
         return f"({self.start}:{self.stop})"
 
+
+len(UnitRange(Infinity.negative(), 1))
 
 RangeLike: TypeAlias = (
     UnitRange
