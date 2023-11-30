@@ -541,6 +541,9 @@ if jnp:
     class JaxArrayField(NdArrayField):
         array_ns: ClassVar[ModuleType] = jnp
 
+        def __jax_array__(self):
+            return self.ndarray
+
         def __setitem__(
             self,
             index: common.AnyIndexSpec,
@@ -549,7 +552,15 @@ if jnp:
             # TODO(havogt): use something like `self.ndarray = self.ndarray.at(index).set(value)`
             raise NotImplementedError("`__setitem__` for JaxArrayField not yet implemented.")
 
+    @dataclasses.dataclass(frozen=True, eq=False)
+    class JaxArrayConnectivityField(NdArrayConnectivityField):
+        array_ns: ClassVar[ModuleType] = jnp
+
+        def __jax_array__(self):
+            return self.ndarray
+
     common.field.register(jnp.ndarray, JaxArrayField.from_array)
+    common.connectivity.register(jnp.ndarray, JaxArrayConnectivityField.from_array)
 
 
 def _broadcast(field: common.Field, new_dimensions: tuple[common.Dimension, ...]) -> common.Field:
