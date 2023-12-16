@@ -901,7 +901,8 @@ class NDArrayLocatedFieldWrapper(MutableLocatedField):
         self, _named_indices: NamedFieldIndices
     ) -> common.AbsoluteIndexSequence:
         named_indices: Mapping[common.Dimension, FieldIndex | SparsePositionEntry] = {
-            d: _named_indices[d.value] for d in self._ndarrayfield.__gt_dims__
+            d: _named_indices[d.value] if d.value in _named_indices else Ellipsis
+            for d in self._ndarrayfield.__gt_dims__
         }
         domain_slice: list[common.NamedRange | common.NamedIndex] = []
         for d, v in named_indices.items():
@@ -913,6 +914,8 @@ class NDArrayLocatedFieldWrapper(MutableLocatedField):
                     v[0]
                 )  # derefing a concrete element in a sparse field, not a slice
                 domain_slice.append((d, v[0]))
+            elif v is Ellipsis:
+                domain_slice.append((d, v))
             else:
                 assert common.is_int_index(v)
                 domain_slice.append((d, v))

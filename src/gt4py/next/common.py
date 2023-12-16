@@ -245,7 +245,10 @@ def is_named_range(v: AnyIndexSpec) -> TypeGuard[NamedRange]:
 
 def is_named_index(v: AnyIndexSpec) -> TypeGuard[NamedRange]:
     return (
-        isinstance(v, tuple) and len(v) == 2 and isinstance(v[0], Dimension) and is_int_index(v[1])
+        isinstance(v, tuple)
+        and len(v) == 2
+        and isinstance(v[0], Dimension)
+        and (is_int_index(v[1]) or v[1] is Ellipsis)
     )
 
 

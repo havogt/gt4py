@@ -76,6 +76,8 @@ def _absolute_sub_domain(
                     )
 
                 named_ranges.append((dim, idx))
+            elif idx is Ellipsis:
+                named_ranges.append((dim, rng))
             else:
                 # not in new domain
                 assert common.is_int_index(idx)

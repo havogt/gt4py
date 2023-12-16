@@ -231,14 +231,13 @@ class ProgramLowering(traits.VisitorWithSymbolTableTrait, NodeTranslator):
                     slices[dim_i].upper if slices else None, dim_size, dim_size
                 )
 
-            if dim.kind == DimensionKind.LOCAL:
-                raise ValueError(f"Dimension {dim.value} must not be local.")
-            domain_args.append(
-                itir.FunCall(
-                    fun=itir.SymRef(id="named_range"),
-                    args=[itir.AxisLiteral(value=dim.value), lower, upper],
+            if dim.kind != DimensionKind.LOCAL:
+                domain_args.append(
+                    itir.FunCall(
+                        fun=itir.SymRef(id="named_range"),
+                        args=[itir.AxisLiteral(value=dim.value), lower, upper],
+                    )
                 )
-            )
 
         if self.grid_type == GridType.CARTESIAN:
             domain_builtin = "cartesian_domain"

@@ -644,5 +644,7 @@ def _compute_slice(
             )
     elif common.is_int_index(rng):
         return rng - domain.ranges[pos].start
+    elif rng is Ellipsis:
+        return slice(None)
     else:
         raise ValueError(f"Can only use integer or UnitRange ranges, provided type: {type(rng)}")
