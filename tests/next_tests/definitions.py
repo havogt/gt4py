@@ -64,11 +64,13 @@ class ProgramBackendId(_PythonObjectIdMixin, str, enum.Enum):
 
 cpu_allocator = next_allocators.StandardCPUFieldBufferAllocator()
 gpu_allocator = next_allocators.StandardGPUFieldBufferAllocator()
+jax_cpu_allocator = next_allocators.StandardJAXCPUFieldBufferAllocator()
 
 
 class AllocatorId(_PythonObjectIdMixinForAllocator, str, enum.Enum):
     CPU_ALLOCATOR = "next_tests.definitions.cpu_allocator"
     GPU_ALLOCATOR = "next_tests.definitions.gpu_allocator"
+    JAX_CPU_ALLOCATOR = "next_tests.definitions.jax_cpu_allocator"
 
 
 class OptionalProgramBackendId(_PythonObjectIdMixin, str, enum.Enum):

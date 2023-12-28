@@ -76,6 +76,19 @@ class ProgramParser(DialectParser[past.Program]):
     def visit_Expr(self, node: ast.Expr) -> past.LocatedNode:
         return self.visit(node.value)
 
+    def visit_Assign(self, node: ast.Assign) -> past.LocatedNode:
+        # TODO alternative field_operator call: probably violates the idea that past reflects the source code (but we should decide for only one of the 2 ways)
+        value = self.visit(node.value)
+        assert isinstance(value, past.Call)
+        if len(node.targets) != 1:
+            raise errors.DSLError(self.get_location(node), "Only single assignment is supported.")
+        return past.Call(
+            func=value.func,
+            args=value.args,
+            kwargs={**value.kwargs, "out": self.visit(node.targets[0])},
+            location=self.get_location(node),
+        )
+
     def visit_Add(self, node: ast.Add, **kwargs) -> dialect_ast_enums.BinaryOperator:
         return dialect_ast_enums.BinaryOperator.ADD
 

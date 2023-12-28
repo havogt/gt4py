@@ -28,7 +28,7 @@ pytestmark = pytest.mark.uses_cartesian_shift
 
 
 @gtx.field_operator
-def lap(in_field: gtx.Field[[IDim, JDim], "float"]) -> gtx.Field[[IDim, JDim], "float"]:
+def lap(in_field: gtx.Field[[IDim, JDim], float]) -> gtx.Field[[IDim, JDim], float]:
     return (
         -4.0 * in_field
         + in_field(Ioff[1])
@@ -39,24 +39,24 @@ def lap(in_field: gtx.Field[[IDim, JDim], "float"]) -> gtx.Field[[IDim, JDim], "
 
 
 @gtx.field_operator
-def laplap(in_field: gtx.Field[[IDim, JDim], "float"]) -> gtx.Field[[IDim, JDim], "float"]:
+def laplap(in_field: gtx.Field[[IDim, JDim], float]) -> gtx.Field[[IDim, JDim], float]:
     return lap(lap(in_field))
 
 
 @gtx.program
 def lap_program(
-    in_field: gtx.Field[[IDim, JDim], "float"],
-    out_field: gtx.Field[[IDim, JDim], "float"],
+    in_field: gtx.Field[[IDim, JDim], float],
+    out_field: gtx.Field[[IDim, JDim], float],
 ):
-    lap(in_field, out=out_field[1:-1, 1:-1])
+    out_field[1:-1, 1:-1] = lap(in_field)
 
 
 @gtx.program
 def laplap_program(
-    in_field: gtx.Field[[IDim, JDim], "float"],
-    out_field: gtx.Field[[IDim, JDim], "float"],
+    in_field: gtx.Field[[IDim, JDim], float],
+    out_field: gtx.Field[[IDim, JDim], float],
 ):
-    laplap(in_field, out=out_field[2:-2, 2:-2])
+    out_field[2:-2, 2:-2] = laplap(in_field)
 
 
 def lap_ref(inp):
@@ -73,10 +73,12 @@ def test_ffront_lap(cartesian_case):
         lap_program,
         in_field,
         out_field,
-        inout=out_field[1:-1, 1:-1],
+        inout=lambda *args: args[1][1:-1, 1:-1],
         ref=lap_ref(in_field.ndarray),
     )
 
+
+def test_ffront_laplap(cartesian_case):
     in_field = cases.allocate(cartesian_case, laplap_program, "in_field")()
     out_field = cases.allocate(cartesian_case, laplap_program, "out_field")()
 
@@ -85,6 +87,6 @@ def test_ffront_lap(cartesian_case):
         laplap_program,
         in_field,
         out_field,
-        inout=out_field[2:-2, 2:-2],
+        inout=lambda *args: args[1][2:-2, 2:-2],
         ref=lap_ref(lap_ref(in_field.array_ns.asarray(in_field.ndarray))),
     )

@@ -391,7 +391,7 @@ def verify(
     *args: FieldViewArg,
     ref: ReferenceValue,
     out: Optional[FieldViewInout] = None,
-    inout: Optional[FieldViewInout] = None,
+    inout: Optional[Callable] = None,  # TODO discuss this change
     offset_provider: Optional[OffsetProvider] = None,
     comparison: Callable[[Any, Any], bool] = np.allclose,
 ) -> None:
@@ -434,7 +434,7 @@ def verify(
     else:
         run(case, fieldview_prog, *args, offset_provider=offset_provider)
 
-    out_comp = out or inout
+    out_comp = out or inout(*args)
     assert out_comp is not None
     out_comp_ndarray = utils.asnumpy(out_comp)
     ref_ndarray = utils.asnumpy(ref)

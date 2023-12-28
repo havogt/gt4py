@@ -548,10 +548,30 @@ if jnp:
             index: common.AnyIndexSpec,
             value: common.Field | core_defs.NDArrayObject | core_defs.ScalarT,
         ) -> None:
-            # TODO(havogt): use something like `self.ndarray = self.ndarray.at(index).set(value)`
-            raise NotImplementedError("`__setitem__` for JaxArrayField not yet implemented.")
+            target_domain, target_slice = self._slice(index)
+
+            if common.is_field(value):
+                if not value.domain == target_domain:
+                    raise ValueError(
+                        f"Incompatible `Domain` in assignment. Source domain = {value.domain}, target domain = {target_domain}."
+                    )
+                value = value.ndarray
+
+            assert hasattr(self._ndarray, "at")
+            # TODO must not update a field of a frozen obj
+            object.__setattr__(self, "_ndarray", self._ndarray.at[target_slice].set(value))
 
     common._field.register(jnp.ndarray, JaxArrayField.from_array)
+
+    def _flatten(v: JaxArrayField):
+        return (v.ndarray,), v.domain
+
+    def _unflatten(aux_data, children):
+        return JaxArrayField(aux_data, children[0])
+
+    import jax
+
+    jax.tree_util.register_pytree_node(JaxArrayField, _flatten, _unflatten)
 
 
 def _broadcast(field: common.Field, new_dimensions: tuple[common.Dimension, ...]) -> common.Field:
