@@ -545,6 +545,7 @@ class FieldOperator(GTCallable, Generic[OperatorNodeT]):
     definition: Optional[types.FunctionType] = None
     backend: Optional[ppi.ProgramExecutor] = DEFAULT_BACKEND
     grid_type: Optional[GridType] = None
+    jit: bool = False
 
     @classmethod
     def from_function(
@@ -552,6 +553,7 @@ class FieldOperator(GTCallable, Generic[OperatorNodeT]):
         definition: types.FunctionType,
         backend: Optional[ppi.ProgramExecutor] = DEFAULT_BACKEND,
         grid_type: Optional[GridType] = None,
+        jit: bool = False,
         *,
         operator_node_cls: type[OperatorNodeT] = foast.FieldOperator,
         operator_attributes: Optional[dict[str, Any]] = None,
@@ -580,6 +582,7 @@ class FieldOperator(GTCallable, Generic[OperatorNodeT]):
             definition=definition,
             backend=backend,
             grid_type=grid_type,
+            jit=jit,
         )
 
     def __gt_type__(self) -> ts.CallableType:
@@ -589,6 +592,9 @@ class FieldOperator(GTCallable, Generic[OperatorNodeT]):
 
     def with_backend(self, backend: ppi.ProgramExecutor) -> FieldOperator:
         return dataclasses.replace(self, backend=backend)
+
+    def with_jit(self, jit: bool) -> FieldOperator:
+        return dataclasses.replace(self, jit=jit)
 
     def with_grid_type(self, grid_type: GridType) -> FieldOperator:
         return dataclasses.replace(self, grid_type=grid_type)
@@ -709,7 +715,16 @@ class FieldOperator(GTCallable, Generic[OperatorNodeT]):
                 if not next_embedded.context.within_context():
                     # field_operator from Python in embedded execution
                     with next_embedded.context.new_context(offset_provider=offset_provider) as ctx:
-                        res = ctx.run(self.definition, *args, **kwargs)
+                        if self.jit:
+                            import jax
+
+                            def fun(*args, **kwargs):
+                                print(jax.make_jaxpr(self.definition)(*args, **kwargs))
+                                return jax.jit(self.definition)(*args, **kwargs)
+
+                        else:
+                            fun = self.definition
+                        res = ctx.run(fun, *args, **kwargs)
                 else:
                     # field_operator from program in embedded execution (offset_provicer is already set)
                     assert (
@@ -756,7 +771,7 @@ def field_operator(
     ...
 
 
-def field_operator(definition=None, *, backend=None, grid_type=None):
+def field_operator(definition=None, *, backend=None, grid_type=None, jit=False):
     """
     Generate an implementation of the field operator from a Python function object.
 
@@ -774,7 +789,7 @@ def field_operator(definition=None, *, backend=None, grid_type=None):
     """
 
     def field_operator_inner(definition: types.FunctionType) -> FieldOperator[foast.FieldOperator]:
-        return FieldOperator.from_function(definition, backend, grid_type)
+        return FieldOperator.from_function(definition, backend, grid_type, jit)
 
     return field_operator_inner if definition is None else field_operator_inner(definition)
 
