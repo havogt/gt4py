@@ -99,7 +99,7 @@ def test_math_function_builtins(builtin_name: str, inputs, nd_array_implementati
     builtin = getattr(fbuiltins, builtin_name)
     result = builtin(*field_inputs)
 
-    assert np.allclose(result.ndarray, expected)
+    assert np.allclose(result.asnumpy(), expected)
 
 
 def test_where_builtin(nd_array_implementation):
@@ -111,7 +111,7 @@ def test_where_builtin(nd_array_implementation):
     expected = np.where(cond, true_, false_)
 
     result = fbuiltins.where(*field_inputs)
-    assert np.allclose(result.ndarray, expected)
+    assert np.allclose(result.asnumpy(), expected)
 
 
 def test_where_builtin_different_domain(nd_array_implementation):
@@ -134,7 +134,7 @@ def test_where_builtin_different_domain(nd_array_implementation):
     expected = np.where(cond[np.newaxis, :], true_[:, 1:], false_[np.newaxis, 1:-1])
 
     result = fbuiltins.where(cond_field, true_field, false_field)
-    assert np.allclose(result.ndarray, expected)
+    assert np.allclose(result.asnumpy(), expected)
 
 
 def test_where_builtin_with_tuple(nd_array_implementation):
@@ -152,8 +152,8 @@ def test_where_builtin_with_tuple(nd_array_implementation):
     field_false = tuple(_make_field(inp, nd_array_implementation) for inp in [false0, false1])
 
     result = fbuiltins.where(cond_field, field_true, field_false)
-    assert np.allclose(result[0].ndarray, expected0)
-    assert np.allclose(result[1].ndarray, expected1)
+    assert np.allclose(result[0].asnumpy(), expected0)
+    assert np.allclose(result[1].asnumpy(), expected1)
 
 
 def test_binary_arithmetic_ops(binary_arithmetic_op, nd_array_implementation):
@@ -167,7 +167,7 @@ def test_binary_arithmetic_ops(binary_arithmetic_op, nd_array_implementation):
 
     result = binary_arithmetic_op(*field_inputs)
 
-    assert np.allclose(result.ndarray, expected)
+    assert np.allclose(result.asnumpy(), expected)
 
 
 def test_binary_logical_ops(binary_logical_op, nd_array_implementation):
@@ -181,7 +181,7 @@ def test_binary_logical_ops(binary_logical_op, nd_array_implementation):
 
     result = binary_logical_op(*field_inputs)
 
-    assert np.allclose(result.ndarray, expected)
+    assert np.allclose(result.asnumpy(), expected)
 
 
 def test_unary_logical_ops(unary_logical_op, nd_array_implementation):
@@ -196,7 +196,7 @@ def test_unary_logical_ops(unary_logical_op, nd_array_implementation):
 
     result = unary_logical_op(field_input)
 
-    assert np.allclose(result.ndarray, expected)
+    assert np.allclose(result.asnumpy(), expected)
 
 
 def test_unary_arithmetic_ops(unary_arithmetic_op, nd_array_implementation):
@@ -208,7 +208,7 @@ def test_unary_arithmetic_ops(unary_arithmetic_op, nd_array_implementation):
 
     result = unary_arithmetic_op(field_input)
 
-    assert np.allclose(result.ndarray, expected)
+    assert np.allclose(result.asnumpy(), expected)
 
 
 @pytest.mark.parametrize(

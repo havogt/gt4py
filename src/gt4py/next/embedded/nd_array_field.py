@@ -26,7 +26,7 @@ from numpy import typing as npt
 from gt4py._core import definitions as core_defs
 from gt4py.eve.extended_typing import Any, Never, Optional, ParamSpec, TypeAlias, TypeVar
 from gt4py.next import common
-from gt4py.next.embedded import common as embedded_common
+from gt4py.next.embedded import common as embedded_common, nd_function
 from gt4py.next.ffront import fbuiltins
 
 
@@ -56,7 +56,7 @@ def _make_builtin(builtin_name: str, array_builtin_name: str) -> Callable[..., N
         for f in fields:
             if common.is_field(f):
                 if f.domain == domain_intersection:
-                    transformed.append(xp.asarray(f.ndarray))
+                    transformed.append(f.asarray(xp))
                 else:
                     f_broadcasted = _broadcast(f, domain_intersection.dims)
                     f_slices = _get_slices_from_domain_slice(
@@ -120,11 +120,18 @@ class NdArrayField(
     def ndarray(self) -> core_defs.NDArrayObject:
         return self._ndarray
 
+    def asarray(self, xp=None) -> core_defs.NDArrayObject:
+        if xp is None or xp == self.array_ns:
+            return self._ndarray
+        elif hasattr(self.array_ns, "convert_array"):
+            return self.array_ns.convert_array(self._ndarray, xp)
+
     def asnumpy(self) -> np.ndarray:
-        if self.array_ns == cp:
-            return cp.asnumpy(self._ndarray)
+        if hasattr(self.array_ns, "asnumpy"):
+            return self.array_ns.asnumpy(self._ndarray)
         else:
-            return np.asarray(self._ndarray)
+            assert isinstance(self._ndarray, np.ndarray)
+            return self._ndarray
 
     @property
     def codomain(self) -> type[core_defs.ScalarT]:
@@ -557,6 +564,24 @@ if jnp:
             raise NotImplementedError("'__setitem__' for JaxArrayField not yet implemented.")
 
     common.field.register(jnp.ndarray, JaxArrayField.from_array)
+
+_nd_array_implementations.append(nd_function)
+
+
+@dataclasses.dataclass(frozen=True, eq=False)
+class FunctionField(NdArrayField):
+    array_ns: ClassVar[ModuleType] = nd_function
+
+    def __setitem__(
+        self,
+        index: common.AnyIndexSpec,
+        value: common.Field | core_defs.NDArrayObject | core_defs.ScalarT,
+    ) -> None:
+        return NotImplemented
+
+
+common.field.register(Callable, FunctionField.from_array)
+common.field.register(nd_function._LazyFunction, FunctionField.from_array)
 
 
 def _broadcast(field: common.Field, new_dimensions: tuple[common.Dimension, ...]) -> common.Field:
