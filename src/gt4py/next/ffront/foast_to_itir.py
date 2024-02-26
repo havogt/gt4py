@@ -245,6 +245,16 @@ class FieldOperatorLowering(PreserveLocationVisitor, NodeTranslator):
         return im.ref(node.id)
 
     def visit_Subscript(self, node: foast.Subscript, **kwargs) -> itir.Expr:
+        if isinstance(node.value.type, ts.FieldType):
+            return im.lift(
+                im.lambda_("it")(
+                    itir.FunCall(
+                        fun=itir.SymRef(id="list_get"),
+                        args=[im.literal_from_value(node.index.index), im.deref(im.ref("it"))],
+                        location=node.location,
+                    )
+                )
+            )(self.visit(node.value))
         return im.tuple_get(node.index, self.visit(node.value, **kwargs))
 
     def visit_TupleExpr(self, node: foast.TupleExpr, **kwargs) -> itir.Expr:

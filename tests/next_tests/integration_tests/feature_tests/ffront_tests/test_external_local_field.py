@@ -61,9 +61,7 @@ def test_external_local_field(unstructured_case):
 
 def test_external_local_field_slicing(unstructured_case):
     @gtx.field_operator
-    def testee(
-        inp: gtx.Field[[Vertex, V2EDim], int32], ones: gtx.Field[[Edge], int32]
-    ) -> gtx.Field[[Vertex], int32]:
+    def testee(inp: gtx.Field[[Vertex, V2EDim], int32]) -> gtx.Field[[Vertex], int32]:
         return inp[V2EDim[0]]
 
     inp = unstructured_case.as_field(
@@ -77,6 +75,23 @@ def test_external_local_field_slicing(unstructured_case):
         inp,
         out=cases.allocate(unstructured_case, testee, cases.RETURN)(),
         ref=v2e_table[:, 0],
+    )
+
+
+def test_shifted_field_slicing(unstructured_case):
+    @gtx.field_operator
+    def testee(inp: gtx.Field[[Edge], int32]) -> gtx.Field[[Vertex], int32]:
+        return inp(V2E)[V2EDim[0]]
+
+    inp = cases.allocate(unstructured_case, testee, "inp")()
+
+    v2e_table = unstructured_case.offset_provider["V2E"].table
+    cases.verify(
+        unstructured_case,
+        testee,
+        inp,
+        out=cases.allocate(unstructured_case, testee, cases.RETURN)(),
+        ref=inp.asnumpy()[v2e_table][:, 0],
     )
 
 

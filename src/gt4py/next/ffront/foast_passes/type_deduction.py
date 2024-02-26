@@ -17,7 +17,7 @@ from typing import Optional, cast
 import gt4py.next.ffront.field_operator_ast as foast
 from gt4py.eve import NodeTranslator, NodeVisitor, traits
 from gt4py.next import errors
-from gt4py.next.common import DimensionKind
+from gt4py.next.common import Dimension, DimensionKind
 from gt4py.next.ffront import (  # noqa
     dialect_ast_enums,
     fbuiltins,
@@ -197,6 +197,7 @@ class FieldOperatorTypeDeductionCompletnessValidator(NodeVisitor):
         cls().visit(node, incomplete_nodes=incomplete_nodes)
 
         if incomplete_nodes:
+            print(incomplete_nodes)
             raise AssertionError("'FOAST' expression is not fully typed.")
 
     def visit_LocatedNode(
@@ -340,7 +341,14 @@ class FieldOperatorTypeDeduction(traits.VisitorWithSymbolTableTrait, NodeTransla
 
     def visit_Name(self, node: foast.Name, **kwargs) -> foast.Name:
         symtable = kwargs["symtable"]
+
         if node.id not in symtable or symtable[node.id].type is None:
+            if node.id.endswith("Dim"):
+                return foast.Name(
+                    id=node.id,
+                    type=ts.DimensionType(dim=Dimension(value=node.id)),
+                    location=node.location,
+                )
             raise errors.DSLError(node.location, f"Undeclared symbol '{node.id}'.")
 
         symbol = symtable[node.id]
@@ -469,10 +477,17 @@ class FieldOperatorTypeDeduction(traits.VisitorWithSymbolTableTrait, NodeTransla
 
     def visit_Subscript(self, node: foast.Subscript, **kwargs) -> foast.Subscript:
         new_value = self.visit(node.value, **kwargs)
+        new_index = self.visit(node.index, **kwargs)
         new_type: Optional[ts.TypeSpec] = None
         match new_value.type:
             case ts.FieldType(dims=dims, dtype=dtype):
-                new_type = new_value.type  # TODO wrong
+                # foo = self.visit(node.index, **kwargs)
+                # new_type = new_value.type  # TODO wrong
+                # dims.pop(-1)
+                # new_type.dims = dims
+                new_type = ts.FieldType(dims=dims[:-1], dtype=dtype)
+            case ts.DimensionType(dim=dim):
+                new_type = new_value.type
             case ts.TupleType(types=types):
                 new_type = types[node.index]
             case ts.OffsetType(source=source, target=(target1, target2)):
@@ -497,7 +512,7 @@ class FieldOperatorTypeDeduction(traits.VisitorWithSymbolTableTrait, NodeTransla
                 )
 
         return foast.Subscript(
-            value=new_value, index=node.index, type=new_type, location=node.location
+            value=new_value, index=new_index, type=new_type, location=node.location
         )
 
     def visit_BinOp(self, node: foast.BinOp, **kwargs) -> foast.BinOp:
