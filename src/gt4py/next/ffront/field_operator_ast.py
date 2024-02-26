@@ -88,7 +88,7 @@ class Constant(Expr):
 
 class Subscript(Expr):
     value: Expr
-    index: int
+    index: Union[int, Subscript]
 
 
 class Attribute(Expr):

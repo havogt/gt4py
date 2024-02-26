@@ -471,6 +471,8 @@ class FieldOperatorTypeDeduction(traits.VisitorWithSymbolTableTrait, NodeTransla
         new_value = self.visit(node.value, **kwargs)
         new_type: Optional[ts.TypeSpec] = None
         match new_value.type:
+            case ts.FieldType(dims=dims, dtype=dtype):
+                new_type = new_value.type  # TODO wrong
             case ts.TupleType(types=types):
                 new_type = types[node.index]
             case ts.OffsetType(source=source, target=(target1, target2)):

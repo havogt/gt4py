@@ -285,12 +285,15 @@ class FieldOperatorParser(DialectParser[foast.FunctionDefinition]):
         raise ValueError(f"Not an index: '{node}'.")
 
     def visit_Subscript(self, node: ast.Subscript, **kwargs) -> foast.Subscript:
-        try:
-            index = self._match_index(node.slice)
-        except ValueError:
-            raise errors.DSLError(
-                self.get_location(node.slice), "Expected an integral index."
-            ) from None
+        if isinstance(node.slice, ast.Subscript):
+            index = self.visit(node.slice)
+        else:
+            try:
+                index = self._match_index(node.slice)
+            except ValueError:
+                raise errors.DSLError(
+                    self.get_location(node.slice), "Expected an integral index."
+                ) from None
 
         return foast.Subscript(
             value=self.visit(node.value),
