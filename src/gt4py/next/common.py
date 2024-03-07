@@ -894,6 +894,7 @@ OffsetProvider: TypeAlias = Mapping[Tag, OffsetProviderElem]
 class CartesianConnectivity(ConnectivityField[DimsT, DimT]):
     dimension: DimT
     offset: int = 0
+    new_dim: Optional[Dimension] = None
 
     @classmethod
     def __gt_builtin_func__(cls, _: fbuiltins.BuiltInFunction) -> Never:  # type: ignore[override]
@@ -948,16 +949,12 @@ class CartesianConnectivity(ConnectivityField[DimsT, DimT]):
         return cls(codomain, definition)
 
     def inverse_image(self, image_range: UnitRange | NamedRange) -> Sequence[NamedRange]:
+        new_dim = self.new_dim or self.codomain
         if not isinstance(image_range, UnitRange):
-            if image_range[0] != self.codomain:
-                raise ValueError(
-                    f"Dimension '{image_range[0]}' does not match the codomain dimension '{self.codomain}'."
-                )
-
             image_range = image_range[1]
 
         assert isinstance(image_range, UnitRange)
-        return ((self.codomain, image_range - self.offset),)
+        return ((new_dim, image_range - self.offset),)
 
     def remap(self, index_field: ConnectivityField | fbuiltins.FieldOffset) -> ConnectivityField:
         raise NotImplementedError()

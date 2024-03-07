@@ -176,65 +176,48 @@ class NdArrayField(
         self: NdArrayField,
         connectivity: common.ConnectivityField | fbuiltins.FieldOffset,
     ) -> NdArrayField:
-        if connectivity.__class__.__name__ == "FooOffset":
-            geo_dim = connectivity.dim
-            value = connectivity.value
-            topo_dim_source = [d for d in self.domain.dims if d in geo_dim.dims][0]
-            foo_cart_offset = connectivity(
-                self.domain.dims
-            )  # geo_dim._mapping[topo_dim_source, type(value)]
-            # TODO do the following via CartesianConnectivity
-            # connectivity = common.CartesianConnectivity()
-
-            nr = self.domain[topo_dim_source]
-            new_nr = (
-                foo_cart_offset.to_,
-                nr[1] - (value if isinstance(value, int) else value.value),
-            )  # think about the sign
-            new_domain = self.domain.replace(topo_dim_source, new_nr)
-            new_buffer = self.ndarray
-        else:
-            # For neighbor reductions, a FieldOffset is passed instead of an actual ConnectivityField
-            if not common.is_connectivity_field(connectivity):
+        # For neighbor reductions, a FieldOffset is passed instead of an actual ConnectivityField
+        if not common.is_connectivity_field(connectivity):
+            if callable(connectivity):  # TODO doesn't make sense
+                connectivity = connectivity(self.domain.dims)
+            else:
                 assert isinstance(connectivity, fbuiltins.FieldOffset)
                 connectivity = connectivity.as_connectivity_field()
-            assert common.is_connectivity_field(connectivity)
+        assert common.is_connectivity_field(connectivity)
 
-            # Current implementation relies on skip_value == -1:
-            # if we assume the indexed array has at least one element, we wrap around without out of bounds
-            assert connectivity.skip_value is None or connectivity.skip_value == -1
+        # Current implementation relies on skip_value == -1:
+        # if we assume the indexed array has at least one element, we wrap around without out of bounds
+        assert connectivity.skip_value is None or connectivity.skip_value == -1
 
-            # Compute the new domain
-            dim = connectivity.codomain
-            dim_idx = self.domain.dim_index(dim)
-            if dim_idx is None:
-                raise ValueError(
-                    f"Incompatible index field, expected a field with dimension '{dim}'."
-                )
+        # Compute the new domain
+        dim = connectivity.codomain
+        dim_idx = self.domain.dim_index(dim)
+        if dim_idx is None:
+            raise ValueError(f"Incompatible index field, expected a field with dimension '{dim}'.")
 
-            current_range: common.UnitRange = self.domain[dim_idx][1]
-            new_ranges = connectivity.inverse_image(current_range)
-            new_domain = self.domain.replace(dim_idx, *new_ranges)
+        current_range: common.UnitRange = self.domain[dim_idx][1]
+        new_ranges = connectivity.inverse_image(current_range)
+        new_domain = self.domain.replace(dim_idx, *new_ranges)
 
-            # perform contramap
-            if not (connectivity.kind & common.ConnectivityKind.MODIFY_STRUCTURE):
-                # shortcut for compact remap: don't change the array, only the domain
-                new_buffer = self._ndarray
-            else:
-                # general case: first restrict the connectivity to the new domain
-                restricted_connectivity_domain = common.Domain(*new_ranges)
-                restricted_connectivity = (
-                    connectivity.restrict(restricted_connectivity_domain)
-                    if restricted_connectivity_domain != connectivity.domain
-                    else connectivity
-                )
-                assert common.is_connectivity_field(restricted_connectivity)
+        # perform contramap
+        if not (connectivity.kind & common.ConnectivityKind.MODIFY_STRUCTURE):
+            # shortcut for compact remap: don't change the array, only the domain
+            new_buffer = self._ndarray
+        else:
+            # general case: first restrict the connectivity to the new domain
+            restricted_connectivity_domain = common.Domain(*new_ranges)
+            restricted_connectivity = (
+                connectivity.restrict(restricted_connectivity_domain)
+                if restricted_connectivity_domain != connectivity.domain
+                else connectivity
+            )
+            assert common.is_connectivity_field(restricted_connectivity)
 
-                # then compute the index array
-                xp = self.array_ns
-                new_idx_array = xp.asarray(restricted_connectivity.ndarray) - current_range.start
-                # finally, take the new array
-                new_buffer = xp.take(self._ndarray, new_idx_array, axis=dim_idx)
+            # then compute the index array
+            xp = self.array_ns
+            new_idx_array = xp.asarray(restricted_connectivity.ndarray) - current_range.start
+            # finally, take the new array
+            new_buffer = xp.take(self._ndarray, new_idx_array, axis=dim_idx)
 
         return self.__class__.from_array(
             new_buffer,

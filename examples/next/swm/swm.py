@@ -18,10 +18,11 @@ class FooOffset:
     def __call__(self, dims):
         dim_source = [d for d in dims if d in self.dim.dims][0]
         cart_offset = self.mapping[(dim_source, type(self.value))]
-        return cart_offset
-        # return fbuiltins.FieldOffset(
-        #     source=cart_offset.from_, target=cart_offset.to_, offset=cart_offset.offset
-        # )
+        return common.CartesianConnectivity(
+            cart_offset.from_,
+            self.value if isinstance(self.value, int) else self.value.value,
+            cart_offset.to_,
+        )
 
 
 TopologicalDimension = common.Dimension
@@ -53,20 +54,11 @@ class GeometricalDimension:
             ds.add(d)
         return ds
 
-    # def __init__(
-    #     self, value: str, kind: common.DimensionKind = common.DimensionKind.HORIZONTAL
-    # ):
-    #     super().__init__(value, kind)
-
     def __add__(self, value: Any):
         return FooOffset(self, value, self._mapping)
 
     def __sub__(self, value: Any):
         return FooOffset(self, -value, self._mapping)
-
-        # from gt4py.next.ffront import fbuiltins
-
-        # return fbuiltins.FieldOffset("Ioff", source=self, target=(self,))
 
     def add_mapping(self, dim, type_, offset):
         self._mapping[(dim, type_)] = offset
@@ -116,9 +108,8 @@ I = TopologicalDimension("I")
 J = TopologicalDimension("J")
 Ĵ = TopologicalDimension("Ĵ")
 
-X.add_mapping(
-    I, Half, FooCartesianOffset(I, î, -1)
-)  # the last argument of FooCartesianOffset should be a function
+# the last argument of FooCartesianOffset should be a function
+X.add_mapping(I, Half, FooCartesianOffset(I, î, -1))
 X.add_mapping(î, Half, FooCartesianOffset(î, I, 0))
 X.add_mapping(I, int, FooCartesianOffset(I, I, 1))
 X.add_mapping(î, int, FooCartesianOffset(î, î, 1))
