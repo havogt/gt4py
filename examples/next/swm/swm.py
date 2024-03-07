@@ -9,20 +9,20 @@ from gt4py import next as gtx
 from gt4py.next import common, fbuiltins, float64
 
 
-@dataclasses.dataclass
-class FooOffset:
-    dim: common.Dimension
-    value: Any
-    mapping: dict = dataclasses.field(default_factory=dict)
+# @dataclasses.dataclass
+# class FooOffset:
+#     dim: common.Dimension
+#     value: Any
+#     mapping: dict = dataclasses.field(default_factory=dict)
 
-    def __call__(self, dims):
-        dim_source = [d for d in dims if d in self.dim.dims][0]
-        cart_offset = self.mapping[(dim_source, type(self.value))]
-        return common.CartesianConnectivity(
-            cart_offset.from_,
-            self.value if isinstance(self.value, int) else self.value.value,
-            cart_offset.to_,
-        )
+#     def __call__(self, dims):
+#         dim_source = [d for d in dims if d in self.dim.dims][0]
+#         cart_offset = self.mapping[(dim_source, type(self.value))]
+#         return common.CartesianConnectivity(
+#             cart_offset.from_,
+#             self.value if isinstance(self.value, int) else self.value.value,
+#             cart_offset.to_,
+#         )
 
 
 TopologicalDimension = common.Dimension
@@ -38,32 +38,6 @@ class FooCartesianOffset:
 # Offset needs to be a callable that takes field dimensions and returns a ConnectivityType
 
 
-# TODO think about:
-# probably GeometricalDimension is a pure frontend feature
-# after parsing we should only deal with the original dimensions (TopologicalDimensions)
-@dataclasses.dataclass(frozen=True)
-class GeometricalDimension:
-    _mapping: dict[tuple[common.Dimension, type], FooCartesianOffset] = dataclasses.field(
-        default_factory=dict
-    )
-
-    @property
-    def dims(self):
-        ds = set()
-        for d, _ in self._mapping.keys():
-            ds.add(d)
-        return ds
-
-    def __add__(self, value: Any):
-        return FooOffset(self, value, self._mapping)
-
-    def __sub__(self, value: Any):
-        return FooOffset(self, -value, self._mapping)
-
-    def add_mapping(self, dim, type_, offset):
-        self._mapping[(dim, type_)] = offset
-
-
 @dataclasses.dataclass
 class Half:
     _value: int = 0
@@ -72,35 +46,52 @@ class Half:
     def value(self):
         return self._value
 
-    # def __add__(self, value: int):
-    #     return Half(self._value + value)
-
-    # def __radd__(self, value: int):
-    #     return Half(self._value + value)
-
-    # def __sub__(self, value: int):
-    #     return Half(self._value - value)
-
-    # def __rsub__(self, value: int):
-    #     return Half(value - self._value)
-
     def __neg__(self):
         return Half(self._value + 1)
 
 
-# TODO mechanism to register `float` as a offset type
+# TODO think about:
+# probably GeometricalDimension is a pure frontend feature
+# after parsing we should only deal with the original dimensions (TopologicalDimensions)
+@dataclasses.dataclass(frozen=True)
+class StaggeredDimension:
+    _d1: common.Dimension
+    _d2: common.Dimension
+    _value: int = 0
 
-_1̷2 = Half()
+    def __add__(self, value: Any):
+        return dataclasses.replace(self, _value=value)
+
+    def __sub__(self, value: Any):
+        return dataclasses.replace(self, _value=-value)
+
+    def _get_dual_dim(self, dim):
+        if dim == self._d1:
+            return self._d2
+        else:
+            assert dim == self._d2
+            return self._d1
+
+    def as_connectivity_field(self, dims):
+        dim_source = [d for d in dims if d in [self._d1, self._d2]][0]
+        if isinstance(self._value, int):
+            return common.CartesianConnectivity(dim_source, self._value)
+        elif isinstance(self._value, Half):
+            return common.CartesianConnectivity(
+                dim_source, self._value.value, self._get_dual_dim(dim_source)
+            )
+        else:
+            assert isinstance(self._value, float)
+            if self._value == 0.5:
+                offset = 0
+            elif self._value == -0.5:
+                offset = 1
+            else:
+                assert False
+            return common.CartesianConnectivity(dim_source, offset, self._get_dual_dim(dim_source))
+
+
 half = Half()
-# 𝟣⁄𝟤 = Half()
-
-# 2̸
-
-# 𝟏
-
-
-X = GeometricalDimension()
-Y = GeometricalDimension()
 
 I = TopologicalDimension("I")
 î = TopologicalDimension("î")
@@ -108,21 +99,13 @@ I = TopologicalDimension("I")
 J = TopologicalDimension("J")
 Ĵ = TopologicalDimension("Ĵ")
 
-# the last argument of FooCartesianOffset should be a function
-X.add_mapping(I, Half, FooCartesianOffset(I, î, -1))
-X.add_mapping(î, Half, FooCartesianOffset(î, I, 0))
-X.add_mapping(I, int, FooCartesianOffset(I, I, 1))
-X.add_mapping(î, int, FooCartesianOffset(î, î, 1))
-
-Y.add_mapping(J, Half, FooCartesianOffset(J, Ĵ, -1))
-Y.add_mapping(Ĵ, Half, FooCartesianOffset(Ĵ, J, 0))
-Y.add_mapping(J, int, FooCartesianOffset(J, J, 1))
-Y.add_mapping(Ĵ, int, FooCartesianOffset(Ĵ, Ĵ, 1))
+X = StaggeredDimension(I, î)
+Y = StaggeredDimension(J, Ĵ)
 
 
 @gtx.field_operator
 def avg_x(q: gtx.Field[[X, Y], float]) -> gtx.Field[[X + half, X], float]:
-    return 0.5 * (q(X + half) + q(X - half))
+    return 0.5 * (q(X + 0.5) + q(X - 0.5))
 
 
 @gtx.field_operator

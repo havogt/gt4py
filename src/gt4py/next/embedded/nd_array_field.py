@@ -173,16 +173,12 @@ class NdArrayField(
         return cls(domain, array)
 
     def remap(
-        self: NdArrayField,
-        connectivity: common.ConnectivityField | fbuiltins.FieldOffset,
+        self: NdArrayField, connectivity: common.ConnectivityField | fbuiltins.FieldOffset
     ) -> NdArrayField:
         # For neighbor reductions, a FieldOffset is passed instead of an actual ConnectivityField
         if not common.is_connectivity_field(connectivity):
-            if callable(connectivity):  # TODO doesn't make sense
-                connectivity = connectivity(self.domain.dims)
-            else:
-                assert isinstance(connectivity, fbuiltins.FieldOffset)
-                connectivity = connectivity.as_connectivity_field()
+            assert hasattr(connectivity, "as_connectivity_field")
+            connectivity = connectivity.as_connectivity_field(self.domain.dims)
         assert common.is_connectivity_field(connectivity)
 
         # Current implementation relies on skip_value == -1:
@@ -575,16 +571,13 @@ def _make_reduction(
 
 
 NdArrayField.register_builtin_func(
-    fbuiltins.neighbor_sum,
-    _make_reduction("neighbor_sum", "sum", lambda x: x.dtype.scalar_type(0)),
+    fbuiltins.neighbor_sum, _make_reduction("neighbor_sum", "sum", lambda x: x.dtype.scalar_type(0))
 )
 NdArrayField.register_builtin_func(
-    fbuiltins.max_over,
-    _make_reduction("max_over", "max", lambda x: x.array_ns.min(x._ndarray)),
+    fbuiltins.max_over, _make_reduction("max_over", "max", lambda x: x.array_ns.min(x._ndarray))
 )
 NdArrayField.register_builtin_func(
-    fbuiltins.min_over,
-    _make_reduction("min_over", "min", lambda x: x.array_ns.max(x._ndarray)),
+    fbuiltins.min_over, _make_reduction("min_over", "min", lambda x: x.array_ns.max(x._ndarray))
 )
 
 

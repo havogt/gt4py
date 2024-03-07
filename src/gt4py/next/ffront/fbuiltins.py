@@ -348,7 +348,7 @@ class FieldOffset(runtime.Offset):
 
         return connectivity
 
-    def as_connectivity_field(self):
+    def as_connectivity_field(self, _: tuple[common.Dimension, ...]):
         """Convert to connectivity field using the offset providers in current embedded execution context."""
         assert isinstance(self.value, str)
         current_offset_provider = embedded.context.offset_provider.get(None)
