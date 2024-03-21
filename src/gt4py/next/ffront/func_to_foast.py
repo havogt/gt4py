@@ -462,6 +462,8 @@ class FieldOperatorParser(DialectParser[foast.FunctionDefinition]):
         # TODO(tehrengruber): is this still needed or redundant with the checks in type deduction?
         if isinstance(node.func, ast.Name):
             func_name = self._func_name(node)
+            if func_name == "debug_mark":
+                return self.visit(node.args[1])
             if func_name in fbuiltins.TYPE_BUILTIN_NAMES:
                 self._verify_builtin_type_constructor(node)
 
