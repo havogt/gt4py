@@ -43,9 +43,7 @@ from gt4py.next.ffront import (
     type_specifications as ts_ffront,
 )
 from gt4py.next.ffront.fbuiltins import FieldOffset
-from gt4py.next.ffront.foast_passes.type_deduction import FieldOperatorTypeDeduction
 from gt4py.next.ffront.foast_to_itir import FieldOperatorLowering
-from gt4py.next.ffront.func_to_foast import FieldOperatorParser
 from gt4py.next.ffront.func_to_past import ProgramParser
 from gt4py.next.ffront.gtcallable import GTCallable
 from gt4py.next.ffront.past_passes.closure_var_type_deduction import (
@@ -586,21 +584,21 @@ class FieldOperator(GTCallable, Generic[OperatorNodeT]):
         source_def = SourceDefinition.from_function(definition)
         closure_vars = get_closure_vars_from_function(definition)
         annotations = typing.get_type_hints(definition)
-        foast_definition_node = FieldOperatorParser.apply(source_def, closure_vars, annotations)
-        loc = foast_definition_node.location
+        # foast_definition_node = FieldOperatorParser.apply(source_def, closure_vars, annotations)
+        # loc = foast_definition_node.location
         operator_attribute_nodes = {
             key: foast.Constant(value=value, type=type_translation.from_value(value), location=loc)
             for key, value in operator_attributes.items()
         }
-        untyped_foast_node = operator_node_cls(
-            id=foast_definition_node.id,
-            definition=foast_definition_node,
-            location=loc,
-            **operator_attribute_nodes,
-        )
-        foast_node = FieldOperatorTypeDeduction.apply(untyped_foast_node)
+        # untyped_foast_node = operator_node_cls(
+        #     id=foast_definition_node.id,
+        #     definition=foast_definition_node,
+        #     location=loc,
+        #     **operator_attribute_nodes,
+        # )
+        # foast_node = FieldOperatorTypeDeduction.apply(untyped_foast_node)
         return cls(
-            foast_node=foast_node,
+            foast_node=None,
             closure_vars=closure_vars,
             definition=definition,
             backend=backend,
@@ -636,7 +634,7 @@ class FieldOperator(GTCallable, Generic[OperatorNodeT]):
     def __gt_closure_vars__(self) -> dict[str, Any]:
         return self.closure_vars
 
-    def as_program(
+    def _as_program(
         self, arg_types: list[ts.TypeSpec], kwarg_types: dict[str, ts.TypeSpec]
     ) -> Program:
         # TODO(tehrengruber): implement mechanism to deduce default values
