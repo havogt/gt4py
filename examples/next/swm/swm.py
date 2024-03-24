@@ -25,6 +25,10 @@ from gt4py import next as gtx
 from gt4py.next import common, fbuiltins, float64
 
 
+# Thoughts
+# - don't hard-code staggering in parsing: tracing augmented parsing
+# - keep frontend beautification to execution, then it's easier to change
+
 TopologicalDimension: TypeAlias = common.Dimension
 
 
