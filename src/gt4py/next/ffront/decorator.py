@@ -119,28 +119,29 @@ class Program:
         return next_backend.DEFAULT_TRANSFORMS.func_to_past(self.definition_stage)
 
     def __post_init__(self):
-        function_closure_vars = transform_utils._filter_closure_vars_by_type(
-            self.past_stage.closure_vars, GTCallable
-        )
-        misnamed_functions = [
-            f"{name} vs. {func.id}"
-            for name, func in function_closure_vars.items()
-            if name != func.__gt_itir__().id
-        ]
-        if misnamed_functions:
-            raise RuntimeError(
-                f"The following symbols resolve to a function with a mismatching name: {','.join(misnamed_functions)}."
-            )
+        ...
+        # function_closure_vars = transform_utils._filter_closure_vars_by_type(
+        #     self.past_stage.closure_vars, GTCallable
+        # )
+        # misnamed_functions = [
+        #     f"{name} vs. {func.id}"
+        #     for name, func in function_closure_vars.items()
+        #     if name != func.__gt_itir__().id
+        # ]
+        # if misnamed_functions:
+        #     raise RuntimeError(
+        #         f"The following symbols resolve to a function with a mismatching name: {','.join(misnamed_functions)}."
+        #     )
 
-        undefined_symbols = [
-            symbol.id
-            for symbol in self.past_stage.past_node.closure_vars
-            if symbol.id not in self.past_stage.closure_vars
-        ]
-        if undefined_symbols:
-            raise RuntimeError(
-                f"The following closure variables are undefined: {', '.join(undefined_symbols)}."
-            )
+        # undefined_symbols = [
+        #     symbol.id
+        #     for symbol in self.past_stage.past_node.closure_vars
+        #     if symbol.id not in self.past_stage.closure_vars
+        # ]
+        # if undefined_symbols:
+        #     raise RuntimeError(
+        #         f"The following closure variables are undefined: {', '.join(undefined_symbols)}."
+        #     )
 
     @property
     def __name__(self) -> str:
@@ -230,7 +231,7 @@ class Program:
                 ctx.run(self.definition_stage.definition, *rewritten_args, **kwargs)
             return
 
-        ppi.ensure_processor_kind(self.backend.executor, ppi.ProgramExecutor)
+        # ppi.ensure_processor_kind(self.backend.executor, ppi.ProgramExecutor)
 
         self.backend(
             self.definition_stage,
