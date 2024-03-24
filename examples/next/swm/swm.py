@@ -12,8 +12,10 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
+from __future__ import annotations
+
 import dataclasses
-from typing import Any
+from typing import Any, TypeAlias
 
 import initial_conditions
 import numpy as np
@@ -23,23 +25,7 @@ from gt4py import next as gtx
 from gt4py.next import common, fbuiltins, float64
 
 
-# @dataclasses.dataclass
-# class FooOffset:
-#     dim: common.Dimension
-#     value: Any
-#     mapping: dict = dataclasses.field(default_factory=dict)
-
-#     def __call__(self, dims):
-#         dim_source = [d for d in dims if d in self.dim.dims][0]
-#         cart_offset = self.mapping[(dim_source, type(self.value))]
-#         return common.CartesianConnectivity(
-#             cart_offset.from_,
-#             self.value if isinstance(self.value, int) else self.value.value,
-#             cart_offset.to_,
-#         )
-
-
-TopologicalDimension = common.Dimension
+TopologicalDimension: TypeAlias = common.Dimension
 
 
 @dataclasses.dataclass
@@ -73,27 +59,26 @@ class StaggeredDimension:
     _d2: common.Dimension
     _value: int = 0
 
-    def __add__(self, value: Any):
+    def __add__(self, value: Any) -> StaggeredDimension:
         return dataclasses.replace(self, _value=value)
 
-    def __sub__(self, value: Any):
+    def __sub__(self, value: Any) -> StaggeredDimension:
         return dataclasses.replace(self, _value=-value)
 
     def _get_dual_dim(self, dim):
         if dim == self._d1:
-            return self._d2
+            return (self._d2, 0)
         else:
             assert dim == self._d2
-            return self._d1
+            return (self._d1, -1)
 
     def as_connectivity_field(self, dims):
         dim_source = [d for d in dims if d in [self._d1, self._d2]][0]
         if isinstance(self._value, int):
             return common.CartesianConnectivity(dim_source, self._value)
         elif isinstance(self._value, Half):
-            return common.CartesianConnectivity(
-                dim_source, self._value.value, self._get_dual_dim(dim_source)
-            )
+            dual_dim, offset = self._get_dual_dim(dim_source)
+            return common.CartesianConnectivity(dim_source, self._value.value + offset, dual_dim)
         else:
             assert isinstance(self._value, float)
             if self._value == 0.5:
@@ -102,7 +87,8 @@ class StaggeredDimension:
                 offset = 1
             else:
                 assert False
-            return common.CartesianConnectivity(dim_source, offset, self._get_dual_dim(dim_source))
+            dual_dim, dir_offset = self._get_dual_dim(dim_source)
+            return common.CartesianConnectivity(dim_source, offset + dir_offset, dual_dim)
 
 
 half = Half()
@@ -123,23 +109,31 @@ def avg_x(q: gtx.Field[[X, Y], float]) -> gtx.Field[[X + half, X], float]:
 
 
 @gtx.field_operator
-def calc_cu(p: gtx.Field[I, J], u: gtx.Field[î, J]) -> gtx.Field[î, J]:
-    return avg_x(p) * u
-
-
-@gtx.field_operator
 def avg_y(q: gtx.Field[[X, Y], float]) -> gtx.Field[[Y + half, Y], float]:
     return 0.5 * (q(Y + half) + q(Y - half))
 
 
 @gtx.field_operator
-def calc_cv(p: gtx.Field[I, J], v: gtx.Field[I, Ĵ]) -> gtx.Field[I, Ĵ]:
-    return avg_y(p) * v
+def delta_x(fsdx: float, q: gtx.Field[[X, Y], float]) -> gtx.Field[[X + Half, Y], float]:
+    return fsdx * (q(X + 0.5) - q(X - 0.5))
 
 
 @gtx.field_operator
-def calc_h(p: gtx.Field[I, J], u: gtx.Field[î, J], v: gtx.Field[I, Ĵ]) -> gtx.Field[I, J]:
-    return p + 0.5 * (avg_x(u * u) + avg_y(v * v))
+def delta_y(fsdy: float, q: gtx.Field[[X, Y], float]) -> gtx.Field[[X, Y + Half], float]:
+    return fsdy * (q(Y + 0.5) - q(Y - 0.5))
+
+
+@gtx.field_operator
+def calc_cucvzh(
+    p: gtx.Field[I, J], u: gtx.Field[î, J], v: gtx.Field[I, Ĵ], fsdx: float, fsdy: float
+) -> gtx.Field[I, J]:
+    cu = avg_x(p) * u
+    cv = avg_y(p) * v
+    h = p + 0.5 * (avg_x(u * u) + avg_y(v * v))
+    z = (
+        0.25 * (-delta_x(fsdx, v) + delta_y(fsdy, u)) / avg_x(avg_y(p))
+    )  # TODO: why is the sign wrong?
+    return cu, cv, z, h
 
 
 def calculate_gt4py(u, v, p, fsdx, fsdy):
@@ -150,55 +144,15 @@ def calculate_gt4py(u, v, p, fsdx, fsdy):
     v_field = gtx.as_field(common.domain({I: M + 1, Ĵ: (-1, N)}), v)
     p_field = gtx.as_field((I, J), p)
 
-    # print(u_field)
-    # print(u_field(X - 1))
-    # # v_field = gtx.as_field((I, Js), v[:-1, 1:])
-    # print(p_field)
-    # print(p_field(X + half))
-    # print(p_field(X - half))
-    # print(p_field(X - half)(X + half))
-    # print(p_field(X + half)(X - half))
+    cu, cv, z, h = calc_cucvzh(p_field, u_field, v_field, fsdx, fsdy)
 
-    # exit(1)
-
-    cu = np.zeros_like(u_field.ndarray)
-    cu_field = gtx.as_field((î, J), cu[:-1, :])
-
-    calc_cu(p_field, u_field, out=cu_field, offset_provider={})
-
-    cv = np.zeros_like(v_field.ndarray)
-    cv_field = gtx.as_field((I, Ĵ), cv[:, :-1])
-
-    print(avg_y(p_field))
-    calc_cv(p_field, v_field, out=cv_field, offset_provider={})
-
-    print(p_field.domain)
-    print(avg_x(u_field).domain)
-    print(avg_y(v_field).domain)
-    # h_field = gtx.as_field(common.domain({I: (0, 16), J: (0, 16)}), np.zeros((M, N)))
-    # calc_h(p_field, u_field, v_field, out=h_field, offset_provider={})
-
-    cu = np.zeros_like(u)
-    cu[1:, :] = cu_field.ndarray
-
-    cv = np.zeros_like(v)
-    cv[:, 1:] = cv_field.ndarray
-    # cv = np.zeros_like(v)
-    # cv[:-1, 1:] = cv_field.ndarray.reshape((M, N))
-    # z = np.zeros_like(u)
-    # z[1:, 1:] = z_field.ndarray.reshape((M, N))
-    # h = np.zeros_like(u)
-    # h[:-1, :-1] = h_field.ndarray.reshape((M, N))
-
-    return cu, cv  # , z, h
+    return cu, cv, z, h
 
 
 def main():
     M = 16
     N = 16
-    # u = np.random.rand(M + 1, N + 1)
-    # v = np.random.rand(M + 1, N + 1)
-    # p = np.random.rand(M + 1, N + 1)
+
     a = 1000000.0
     dx = 100000.0
     dy = 100000.0
@@ -207,31 +161,23 @@ def main():
 
     u, v, p = initial_conditions.initialize(M, N, dx, dy, a)
 
-    # u = np.fromfile("u_init.dat").reshape(M + 1, N + 1)
-    # v = np.fromfile("v_init.dat").reshape(M + 1, N + 1)
-    # p = np.fromfile("p_init.dat").reshape(M + 1, N + 1)
+    u_ref, v_ref, p_ref = utils.read_uvp(0, "init", M, N)
+    np.testing.assert_allclose(u, u_ref)
+    np.testing.assert_allclose(v, v_ref)
+    np.testing.assert_allclose(p, p_ref)
+    print("init passed")
 
-    cu_gt4py, cv_gt4py = calculate_gt4py(u, v, p, fsdx, fsdy)
+    cu_gt4py, cv_gt4py, z_gt4py, h_gt4py = calculate_gt4py(u, v, p, fsdx, fsdy)
 
     cu, cv, z, h = utils.read_cucvzh(0, "t100", M, N)
 
-    np.testing.assert_allclose(cu_gt4py[1:, :], cu[1:, :])
-    np.testing.assert_allclose(cv_gt4py[:, 1:], cv[:, 1:])
+    np.testing.assert_allclose(cu_gt4py.asnumpy(), cu[1:, :])
+    np.testing.assert_allclose(cv_gt4py.asnumpy(), cv[:, 1:])
+    np.testing.assert_allclose(h_gt4py.asnumpy(), h[:-1, :-1])
+    np.testing.assert_allclose(z_gt4py.asnumpy(), z[1:, 1:])
 
     print("t100 passed")
 
-    # cu_step0 = np.fromfile("cu_step0.dat").reshape(M + 1, N + 1)
-    # cv_step0 = np.fromfile("cv_step0.dat").reshape(M + 1, N + 1)
-    # z_step0 = np.fromfile("z_step0.dat").reshape(M + 1, N + 1)
-    # h_step0 = np.fromfile("h_step0.dat").reshape(M + 1, N + 1)
-
-    # assert np.allclose(cu_step0[1:, :-1], cu_gt4py[1:, :-1])
-    # assert np.allclose(cv_step0[:-1, 1:], cv_gt4py[:-1, 1:])
-    # assert np.allclose(h_step0[:-1, :-1], h_gt4py[:-1, :-1])
-    # # assert np.allclose(z_step0[1:, 1:], z_gt4py[1:, 1:])
-    # np.testing.assert_allclose(z_step0[1:, 1:], z_gt4py[1:, 1:])
-
 
 if __name__ == "__main__":
-    main()
     main()
