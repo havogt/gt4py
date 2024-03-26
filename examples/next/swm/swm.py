@@ -118,29 +118,105 @@ def avg_y(q: gtx.Field[[X, Y], float]) -> gtx.Field[[Y + half, Y], float]:
 
 
 @gtx.field_operator
-def delta_x(fsdx: float, q: gtx.Field[[X, Y], float]) -> gtx.Field[[X + Half, Y], float]:
-    return fsdx * (q(X + 0.5) - q(X - 0.5))
+def delta_x(dx: float, q: gtx.Field[[X, Y], float]) -> gtx.Field[[X + Half, Y], float]:
+    return (1.0 / dx) * (q(X + 0.5) - q(X - 0.5))
 
 
 @gtx.field_operator
-def delta_y(fsdy: float, q: gtx.Field[[X, Y], float]) -> gtx.Field[[X, Y + Half], float]:
-    return fsdy * (q(Y + 0.5) - q(Y - 0.5))
+def delta_y(dy: float, q: gtx.Field[[X, Y], float]) -> gtx.Field[[X, Y + Half], float]:
+    return (1.0 / dy) * (q(Y + 0.5) - q(Y - 0.5))
 
 
 @gtx.field_operator
 def calc_cucvzh(
-    p: gtx.Field[I, J], u: gtx.Field[î, J], v: gtx.Field[I, Ĵ], fsdx: float, fsdy: float
+    p: gtx.Field[I, J], u: gtx.Field[î, J], v: gtx.Field[I, Ĵ], dx: float, dy: float
 ) -> gtx.Field[I, J]:
     cu = avg_x(p) * u
     cv = avg_y(p) * v
     h = p + 0.5 * (avg_x(u * u) + avg_y(v * v))
-    z = (
-        0.25 * (-delta_x(fsdx, v) + delta_y(fsdy, u)) / avg_x(avg_y(p))
-    )  # TODO: why is the sign wrong?
+    z = (-delta_x(dx, v) + delta_y(dy, u)) / avg_x(avg_y(p))  # TODO: why is the sign wrong?
     return cu, cv, z, h
 
 
-def calculate_gt4py(u, v, p, fsdx, fsdy):
+# @gtx.field_operator
+# def calc_uvp()
+
+
+def apply_periodic_boundary_u(u: gtx.Field):
+    u = u[
+        J(0) : J(16)
+    ]  # TODO e.g. for cu we compute all J's including halo, so we need to slice the halo away
+    M = u.shape[0]
+    N = u.shape[1]
+    res = np.empty((M + 1, N + 1))
+    res[1:, :-1] = u.asnumpy()[...]
+    res[0, :-1] = u.asnumpy()[-1, :]
+    res[1:, N] = u.asnumpy()[:, 0]
+    res[0, N] = u.asnumpy()[-1, 0]
+
+    return gtx.as_field(gtx.domain({î: (-1, N), J: N + 1}), res)
+
+
+def apply_periodic_boundary_v(v: gtx.Field):
+    v = v[I(0) : I(16)]
+    M = v.shape[0]
+    N = v.shape[1]
+    res = np.empty((M + 1, N + 1))
+    res[:-1, 1:] = v.asnumpy()[...]
+    res[:-1, 0] = v.asnumpy()[:, -1]
+    res[M, 1:] = v.asnumpy()[0, :]
+    res[M, 0] = v.asnumpy()[0, -1]
+
+    return gtx.as_field(gtx.domain({I: M + 1, Ĵ: (-1, N)}), res)
+
+
+def apply_periodic_boundary_p(h: gtx.Field):
+    h = h[I(0) : I(16), J(0) : J(16)]
+    M = h.shape[0]
+    N = h.shape[1]
+    res = np.empty((M + 1, N + 1))
+    res[:-1, :-1] = h.asnumpy()[...]
+    res[-1, :-1] = h.asnumpy()[0, :]
+    res[:-1, -1] = h.asnumpy()[:, 0]
+    res[-1, -1] = h.asnumpy()[0, 0]
+
+    return gtx.as_field(gtx.domain({I: M + 1, J: N + 1}), res)
+
+
+def apply_periodic_boundary_z(z: gtx.Field):
+    z = z[I(0) : I(16), J(0) : J(16)]
+    M = z.shape[0]
+    N = z.shape[1]
+    res = np.empty((M + 1, N + 1))
+    res[1:, 1:] = z.asnumpy()[...]
+    res[0, 1:] = z.asnumpy()[-1, :]
+    res[1:, 0] = z.asnumpy()[:, -1]
+    res[0, 0] = z.asnumpy()[-1, -1]
+
+    return gtx.as_field(gtx.domain({î: (-1, M), Ĵ: (-1, N)}), res)
+
+    # h[M, :] = h[0, :]
+    # cv[M, 1:] = cv[0, 1:]
+    # z[0, 1:] = z[M, 1:]
+
+    # cv[:, 0] = cv[:, N]
+    # h[:, N] = h[:, 0]
+    # z[1:, N] = z[1:, 0]
+
+    # cv[M, 0] = cv[0, N]
+    # z[0, 0] = z[M, N]
+    # h[M, N] = h[0, 0]
+
+
+def calculate_unew(u, cv, z, h, dx, dt):
+    return u + avg_y(z) * avg_y(avg_x(cv)) * dt + delta_x(dx, h) * dt  # TODO sign in delta_x
+
+
+def calculate_pnew(p, cu, cv, dx, dy, dt):
+    return p + delta_x(dx, cu) * dt + delta_y(dy, cv) * dt  # TODO signs in delta
+
+
+def calculate_gt4py(u, v, p, dx, dy, dt):
     M = u.shape[0] - 1
     N = u.shape[1] - 1
 
@@ -148,9 +224,16 @@ def calculate_gt4py(u, v, p, fsdx, fsdy):
     v_field = gtx.as_field(common.domain({I: M + 1, Ĵ: (-1, N)}), v)
     p_field = gtx.as_field((I, J), p)
 
-    cu, cv, z, h = calc_cucvzh(p_field, u_field, v_field, fsdx, fsdy)
+    cu, cv, z, h = calc_cucvzh(p_field, u_field, v_field, dx, dy)
+    cu = apply_periodic_boundary_u(cu)
+    cv = apply_periodic_boundary_v(cv)
+    h = apply_periodic_boundary_p(h)
+    z = apply_periodic_boundary_z(z)
 
-    return cu, cv, z, h
+    unew = calculate_unew(u_field, cv, z, h, dx, dt)
+    pnew = calculate_pnew(p_field, cu, cv, dx, dy, dt)
+
+    return cu, cv, z, h, unew, pnew
 
 
 def main():
@@ -162,6 +245,7 @@ def main():
     dy = 100000.0
     fsdx = 4.0 / dx
     fsdy = 4.0 / dy
+    dt = 90.0
 
     u, v, p = initial_conditions.initialize(M, N, dx, dy, a)
 
@@ -171,16 +255,25 @@ def main():
     np.testing.assert_allclose(p, p_ref)
     print("init passed")
 
-    cu_gt4py, cv_gt4py, z_gt4py, h_gt4py = calculate_gt4py(u, v, p, fsdx, fsdy)
+    cu_gt4py, cv_gt4py, z_gt4py, h_gt4py, unew_gt4py, pnew_gt4py = calculate_gt4py(
+        u, v, p, dx, dy, dt
+    )
 
     cu, cv, z, h = utils.read_cucvzh(0, "t100", M, N)
 
-    np.testing.assert_allclose(cu_gt4py.asnumpy(), cu[1:, :])
-    np.testing.assert_allclose(cv_gt4py.asnumpy(), cv[:, 1:])
-    np.testing.assert_allclose(h_gt4py.asnumpy(), h[:-1, :-1])
-    np.testing.assert_allclose(z_gt4py.asnumpy(), z[1:, 1:])
+    np.testing.assert_allclose(cu_gt4py.asnumpy(), cu)
+    np.testing.assert_allclose(cv_gt4py.asnumpy(), cv)
+    np.testing.assert_allclose(h_gt4py.asnumpy(), h)
+    np.testing.assert_allclose(z_gt4py.asnumpy(), z)
 
     print("t100 passed")
+
+    unew, vnew, pnew = utils.read_uvp(0, "t200", M, N)
+    # print(unew_gt4py)
+    np.testing.assert_allclose(unew_gt4py.asnumpy(), unew[1:, :-1])
+    np.testing.assert_allclose(pnew_gt4py.asnumpy(), pnew[:-1, :-1])
+
+    print("t200 passed")
 
 
 if __name__ == "__main__":
