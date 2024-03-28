@@ -33,16 +33,6 @@ TopologicalDimension: TypeAlias = common.Dimension
 
 
 @dataclasses.dataclass
-class FooCartesianOffset:
-    from_: TopologicalDimension
-    to_: TopologicalDimension
-    offset: int
-
-
-# Offset needs to be a callable that takes field dimensions and returns a ConnectivityType
-
-
-@dataclasses.dataclass
 class Half:
     _value: int = 0
 
@@ -127,17 +117,6 @@ def delta_y(dy: float, q: gtx.Field[[X, Y], float]) -> gtx.Field[[X, Y + Half], 
     return (1.0 / dy) * (q(Y + 0.5) - q(Y - 0.5))
 
 
-@gtx.field_operator
-def calc_cucvzh(
-    u: gtx.Field[î, J], v: gtx.Field[I, Ĵ], p: gtx.Field[I, J], dx: float, dy: float
-) -> gtx.Field[I, J]:
-    cu = avg_x(p) * u
-    cv = avg_y(p) * v
-    h = p + 0.5 * (avg_x(u * u) + avg_y(v * v))
-    z = (delta_x(dx, v) - delta_y(dy, u)) / avg_x(avg_y(p))
-    return cu, cv, z, h
-
-
 def apply_periodic_boundary_u(u: gtx.Field):
     M = u.shape[0]
     N = u.shape[1]
@@ -184,6 +163,17 @@ def apply_periodic_boundary_z(z: gtx.Field):
     res[0, 0] = z.asnumpy()[-1, -1]
 
     return gtx.as_field(gtx.domain({î: (-1, M), Ĵ: (-1, N)}), res)
+
+
+@gtx.field_operator
+def calc_cucvzh(
+    u: gtx.Field[î, J], v: gtx.Field[I, Ĵ], p: gtx.Field[I, J], dx: float, dy: float
+) -> gtx.Field[I, J]:
+    cu = avg_x(p) * u
+    cv = avg_y(p) * v
+    h = p + 0.5 * (avg_x(u * u) + avg_y(v * v))
+    z = (delta_x(dx, v) - delta_y(dy, u)) / avg_x(avg_y(p))
+    return cu, cv, z, h
 
 
 def calculate_uvp_new(u, v, p, cu, cv, z, h, dx, dy, dt):
