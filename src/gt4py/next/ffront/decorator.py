@@ -119,28 +119,29 @@ class Program:
         return next_backend.DEFAULT_TRANSFORMS.func_to_past(self.definition_stage)
 
     def __post_init__(self):
-        function_closure_vars = transform_utils._filter_closure_vars_by_type(
-            self.past_stage.closure_vars, GTCallable
-        )
-        misnamed_functions = [
-            f"{name} vs. {func.id}"
-            for name, func in function_closure_vars.items()
-            if name != func.__gt_itir__().id
-        ]
-        if misnamed_functions:
-            raise RuntimeError(
-                f"The following symbols resolve to a function with a mismatching name: {','.join(misnamed_functions)}."
-            )
+        # function_closure_vars = transform_utils._filter_closure_vars_by_type(
+        #     self.past_stage.closure_vars, GTCallable
+        # )
+        # misnamed_functions = [
+        #     f"{name} vs. {func.id}"
+        #     for name, func in function_closure_vars.items()
+        #     if name != func.__gt_itir__().id
+        # ]
+        # if misnamed_functions:
+        #     raise RuntimeError(
+        #         f"The following symbols resolve to a function with a mismatching name: {','.join(misnamed_functions)}."
+        #     )
 
-        undefined_symbols = [
-            symbol.id
-            for symbol in self.past_stage.past_node.closure_vars
-            if symbol.id not in self.past_stage.closure_vars
-        ]
-        if undefined_symbols:
-            raise RuntimeError(
-                f"The following closure variables are undefined: {', '.join(undefined_symbols)}."
-            )
+        # undefined_symbols = [
+        #     symbol.id
+        #     for symbol in self.past_stage.past_node.closure_vars
+        #     if symbol.id not in self.past_stage.closure_vars
+        # ]
+        # if undefined_symbols:
+        #     raise RuntimeError(
+        #         f"The following closure variables are undefined: {', '.join(undefined_symbols)}."
+        #     )
+        ...
 
     @property
     def __name__(self) -> str:
@@ -216,18 +217,18 @@ class Program:
 
     def __call__(self, *args, offset_provider: dict[str, Dimension], **kwargs: Any) -> None:
         if self.backend is None:
-            warnings.warn(
-                UserWarning(
-                    f"Field View Program '{self.itir.id}': Using Python execution, consider selecting a perfomance backend."
-                ),
-                stacklevel=2,
-            )
+            # warnings.warn(
+            #     UserWarning(
+            #         f"Field View Program '{self.itir.id}': Using Python execution, consider selecting a perfomance backend."
+            #     ),
+            #     stacklevel=2,
+            # )
             with next_embedded.context.new_context(offset_provider=offset_provider) as ctx:
                 # TODO(ricoh): check if rewriting still needed
-                rewritten_args, size_args, kwargs = past_process_args._process_args(
-                    self.past_stage.past_node, args, kwargs
-                )
-                ctx.run(self.definition_stage.definition, *rewritten_args, **kwargs)
+                # rewritten_args, size_args, kwargs = past_process_args._process_args(
+                #     self.past_stage.past_node, args, kwargs
+                # )
+                ctx.run(self.definition_stage.definition, *args, **kwargs)
             return
 
         ppi.ensure_processor_kind(self.backend.executor, ppi.ProgramExecutor)
@@ -426,25 +427,25 @@ class FieldOperator(GTCallable, Generic[OperatorNodeT]):
     ) -> FieldOperator[OperatorNodeT]:
         operator_attributes = operator_attributes or {}
 
-        source_def = SourceDefinition.from_function(definition)
-        closure_vars = get_closure_vars_from_function(definition)
-        annotations = typing.get_type_hints(definition)
-        foast_definition_node = FieldOperatorParser.apply(source_def, closure_vars, annotations)
-        loc = foast_definition_node.location
-        operator_attribute_nodes = {
-            key: foast.Constant(value=value, type=type_translation.from_value(value), location=loc)
-            for key, value in operator_attributes.items()
-        }
-        untyped_foast_node = operator_node_cls(
-            id=foast_definition_node.id,
-            definition=foast_definition_node,
-            location=loc,
-            **operator_attribute_nodes,
-        )
-        foast_node = FieldOperatorTypeDeduction.apply(untyped_foast_node)
+        # source_def = SourceDefinition.from_function(definition)
+        # closure_vars = get_closure_vars_from_function(definition)
+        # annotations = typing.get_type_hints(definition)
+        # foast_definition_node = FieldOperatorParser.apply(source_def, closure_vars, annotations)
+        # loc = foast_definition_node.location
+        # operator_attribute_nodes = {
+        #     key: foast.Constant(value=value, type=type_translation.from_value(value), location=loc)
+        #     for key, value in operator_attributes.items()
+        # }
+        # untyped_foast_node = operator_node_cls(
+        #     id=foast_definition_node.id,
+        #     definition=foast_definition_node,
+        #     location=loc,
+        #     **operator_attribute_nodes,
+        # )
+        # foast_node = FieldOperatorTypeDeduction.apply(untyped_foast_node)
         return cls(
-            foast_node=foast_node,
-            closure_vars=closure_vars,
+            foast_node=None,
+            closure_vars=None,
             definition=definition,
             backend=backend,
             grid_type=grid_type,

@@ -569,6 +569,14 @@ def domain(domain_like: DomainLike) -> Domain:
     raise ValueError(f"'{domain_like}' is not 'DomainLike'.")
 
 
+def is_domain_like(v: Any) -> TypeGuard[DomainLike]:  # TODO
+    try:
+        domain(v)
+        return True
+    except ValueError:
+        return False
+
+
 def _broadcast_ranges(
     broadcast_dims: Sequence[Dimension], dims: Sequence[Dimension], ranges: Sequence[UnitRange]
 ) -> tuple[UnitRange, ...]:
