@@ -111,7 +111,7 @@ class Program:
 
     @functools.cached_property
     def past_stage(self):
-        if self.backend is not None and self.backend.transformer is not None:
+        if self.backend is not None and hasattr(self.backend, "transformer"):
             return self.backend.transformer.func_to_past(self.definition_stage)
         return next_backend.DEFAULT_TRANSFORMS.func_to_past(self.definition_stage)
 
@@ -227,7 +227,7 @@ class Program:
                 ctx.run(self.definition_stage.definition, *rewritten_args, **kwargs)
             return
 
-        ppi.ensure_processor_kind(self.backend.executor, ppi.ProgramExecutor)
+        # ppi.ensure_processor_kind(self.backend.executor, ppi.ProgramExecutor)
 
         self.backend(
             self.definition_stage, *args, **(kwargs | {"offset_provider": offset_provider})
