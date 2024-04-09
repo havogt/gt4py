@@ -31,7 +31,7 @@ from gt4py.next.program_processors.processor_interface import (
 )
 
 
-__all__ = ["offset", "fundef", "fendef", "closure"]
+__all__ = ["offset", "fundef", "fendef", "progdef", "closure"]
 
 
 @dataclass(frozen=True)
@@ -52,13 +52,19 @@ class UnstructuredDomain(dict): ...
 # dependency inversion, register fendef for embedded execution or for tracing/parsing here
 # TODO(ricoh): this pattern lead to import cycles with `fendef_codegen`
 #   and was changed there. Maybe applies to `fendef_embedded` too?
-fendef_embedded: Optional[Callable[[types.FunctionType], None]] = None
+fendef_embedded: Optional[Callable[[types.FunctionType], None]] = (
+    None  # TODO remove after refactoring
+)
+progdef_embedded: Optional[Callable[[types.FunctionType], None]] = None
 
 
 class FendefDispatcher:
-    def __init__(self, function: types.FunctionType, executor_kwargs: dict):
+    def __init__(
+        self, function: types.FunctionType, executor_kwargs: dict, is_progdef: bool = False
+    ):
         self.function = function
         self.executor_kwargs = executor_kwargs
+        self.is_progdef = is_progdef
 
     def itir(
         self,
@@ -78,9 +84,17 @@ class FendefDispatcher:
             # TODO(ricoh): refactor so that `tracing` does not import this module
             #   and can be imported top level. Then set `fendef_tracing` as a
             #   proper default value, instead of using `None` as a sentinel.
-            from gt4py.next.iterator.tracing import trace_fencil_definition
+            from gt4py.next.iterator.tracing import (
+                trace_fencil_definition,
+                trace_program_definition,
+            )
 
-            fendef_codegen = trace_fencil_definition
+            if self.is_progdef:
+                raise AssertionError("Not implemented.")
+
+            fendef_codegen = (
+                trace_program_definition if self.is_progdef else trace_fencil_definition
+            )
         fencil_definition = fendef_codegen(self.function, args, **kwargs)
         if debug:
             devtools.debug(fencil_definition)
@@ -118,6 +132,24 @@ def fendef(*dec_args, **dec_kwargs):
 
     def wrapper(fun):
         return FendefDispatcher(function=fun, executor_kwargs=dec_kwargs)
+
+    if len(dec_args) == 1 and len(dec_kwargs) == 0 and callable(dec_args[0]):
+        return wrapper(dec_args[0])
+    else:
+        assert len(dec_args) == 0
+        return wrapper
+
+
+def progdef(*dec_args, **dec_kwargs):
+    """
+    Dispatches to embedded execution or execution with code generation.
+
+    If `backend` keyword argument is not set or None `fendef_embedded` will be called,
+    else `fendef_codegen` will be called.
+    """
+
+    def wrapper(fun):
+        return FendefDispatcher(function=fun, executor_kwargs=dec_kwargs, is_progdef=True)
 
     if len(dec_args) == 1 and len(dec_kwargs) == 0 and callable(dec_args[0]):
         return wrapper(dec_args[0])

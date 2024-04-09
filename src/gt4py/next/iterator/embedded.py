@@ -1568,4 +1568,9 @@ def fendef_embedded(fun: Callable[..., None], *args: Any, **kwargs: Any):
     fun(*args)
 
 
+def progdef_embedded(fun: Callable[..., None], *args: Any, **kwargs: Any):
+    raise NotImplementedError("TODO")
+
+
 runtime.fendef_embedded = fendef_embedded
+runtime.progdef_embedded = progdef_embedded

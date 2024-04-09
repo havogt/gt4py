@@ -319,3 +319,9 @@ def trace_fencil_definition(
             params=params,
             closures=TracerContext.closures,
         )
+
+
+def trace_program_definition(
+    fun: typing.Callable, args: typing.Iterable, *, use_arg_types=True
+) -> FencilDefinition:
+    raise NotImplementedError("Programs are not supported yet.")

@@ -51,13 +51,24 @@ class EmbeddedDSL(codegen.TemplatedGenerator):
     AxisLiteral = as_fmt("{value}")
     FunCall = as_fmt("{fun}({','.join(args)})")
     Lambda = as_mako("(lambda ${','.join(params)}: ${expr})")
-    StencilClosure = as_mako("closure(${domain}, ${stencil}, ${output}, [${','.join(inputs)}])")
-    FencilDefinition = as_mako(
+    Assign = as_fmt("{target} = {expr}")  # TODO assign into buffer...
+    StencilClosure = as_mako(
+        "closure(${domain}, ${stencil}, ${output}, [${','.join(inputs)}])"
+    )  # TODO remove
+    FencilDefinition = as_mako(  # TODO remove
         """
 ${''.join(function_definitions)}
 @fendef
 def ${id}(${','.join(params)}):
     ${'\\n    '.join(closures)}
+    """
+    )
+    Program = as_mako(
+        """
+${''.join(function_definitions)}
+@progdef
+def ${id}(${','.join(params)}):
+    ${'\\n    '.join(body)}
     """
     )
     FunctionDefinition = as_mako(
@@ -190,7 +201,7 @@ def fencil_generator(
         if not debug:
             pathlib.Path(source_file_name).unlink(missing_ok=True)
 
-    assert isinstance(ir, (itir.FencilDefinition, gtmps_transform.FencilWithTemporaries))
+    assert isinstance(ir, itir.Program)
     fencil_name = (
         ir.fencil.id + "_wrapper"
         if isinstance(ir, gtmps_transform.FencilWithTemporaries)
