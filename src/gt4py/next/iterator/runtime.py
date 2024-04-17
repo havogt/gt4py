@@ -160,7 +160,7 @@ class FundefFencilWrapper:
                 # if passed as a dict, we need to convert back to builtins for interpretation by the backends
                 assert offset_provider is not None
                 dom = _deduce_domain(dom, offset_provider)
-            closure(dom, self.fundef_dispatcher, out, [*inps])
+            set_at(builtins.as_fieldop(self.fundef_dispatcher, dom)(*inps), dom, out)
 
         return impl
 
