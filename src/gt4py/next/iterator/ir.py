@@ -12,6 +12,8 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
+import dataclasses
+import functools
 import typing
 from typing import Any, ClassVar, List, Optional, Union
 
@@ -54,6 +56,7 @@ class Sym(Node):  # helper
     dtype: Optional[tuple[str, bool]] = (
         None  # format: name of primitive type, boolean indicating if it is a list
     )
+    type_: Optional[Any] = None
 
     @datamodels.validator("kind")
     def _kind_validator(self: datamodels.DataModelTP, attribute: datamodels.Attribute, value: str):
@@ -92,15 +95,44 @@ class AxisLiteral(Expr):
 class SymRef(Expr):
     id: Coerced[SymbolRef]
 
+    # @functools.cached_property
+    def type_(self, symtable):
+        return symtable[self.id].type_
+
 
 class Lambda(Expr, SymbolTableTrait):
     params: List[Sym]
     expr: Expr
 
 
+TYPED_BUILTINS = {"deref": (lambda it_t: it_t.dtype)}
+
+
+@dataclasses.dataclass
+class IteratorType:
+    dtype: Any
+
+
 class FunCall(Expr):
     fun: Expr  # VType[Callable]
     args: List[Expr]
+
+    def type_(self, symtable):
+        if self.fun.id in TYPED_BUILTINS:
+            if self.fun.id == "deref":
+                return self.args[0].type_(symtable).dtype
+            if self.fun.id == "shift":
+                raise NotImplementedError()
+        raise NotImplementedError()
+
+
+test_deref = FunCall(fun=SymRef(id="deref"), args=[SymRef(id="foo")])
+
+print(
+    test_deref.type_(
+        {"foo": Sym(id="foo", type_=IteratorType(dtype=ts.ScalarType(ts.ScalarKind.FLOAT32)))}
+    )
+)
 
 
 class FunctionDefinition(Node, SymbolTableTrait):
