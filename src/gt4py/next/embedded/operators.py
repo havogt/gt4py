@@ -22,6 +22,7 @@ from gt4py import eve
 from gt4py._core import definitions as core_defs
 from gt4py.next import common, errors, utils
 from gt4py.next.embedded import common as embedded_common, context as embedded_context
+from gt4py.next.ffront import fbuiltins
 
 
 _P = ParamSpec("_P")
@@ -82,6 +83,64 @@ class ScanOperator(EmbeddedOperator[core_defs.ScalarT | tuple[core_defs.ScalarT 
         else:
             for hpos in embedded_common.iterate_domain(non_scan_domain):
                 scan_loop(hpos)
+
+        return res
+
+
+@dataclasses.dataclass(frozen=True)
+class ScanOperatorVectorized(
+    EmbeddedOperator[core_defs.ScalarT | tuple[core_defs.ScalarT | tuple, ...], _P]
+):
+    forward: bool
+    init: core_defs.ScalarT | tuple[core_defs.ScalarT | tuple, ...]
+    axis: common.Dimension
+
+    def __call__(  # type: ignore[override]
+        self,
+        *args: common.Field | core_defs.Scalar,
+        **kwargs: common.Field | core_defs.Scalar,  # type: ignore[override]
+    ) -> (
+        common.Field[Any, core_defs.ScalarT]
+        | tuple[common.Field[Any, core_defs.ScalarT] | tuple, ...]
+    ):
+        scan_range = embedded_context.closure_column_range.get()
+        assert self.axis == scan_range.dim
+        scan_axis = scan_range.dim
+        all_args = [*args, *kwargs.values()]
+        domain_intersection = _intersect_scan_args(*all_args)
+        non_scan_domain = common.Domain(*[nr for nr in domain_intersection if nr.dim != scan_axis])
+
+        out_domain = common.Domain(
+            *[scan_range if nr.dim == scan_axis else nr for nr in domain_intersection]
+        )
+        if scan_axis not in out_domain.dims:
+            # even if the scan dimension is not in the input, we can scan over it
+            out_domain = common.Domain(*out_domain, (scan_range))
+
+        xp = _get_array_ns(*all_args)
+        res = _construct_scan_array(out_domain, xp)(self.init)
+
+        def scan_loop() -> None:
+            acc: common.MutableField | tuple[common.MutableField | tuple, ...] = (
+                _construct_scan_array(non_scan_domain, xp)(self.init)
+            )
+            _tuple_assign_field(target=acc, source=self.init, domain=non_scan_domain)
+            for k in scan_range.unit_range if self.forward else reversed(scan_range.unit_range):
+                new_args = [
+                    arg if core_defs.is_scalar_type(arg) else arg[common.NamedIndex(scan_axis, k)]
+                    for arg in args
+                ]
+                new_kwargs = {k: v[common.NamedIndex(scan_axis, k)] for k, v in kwargs.items()}
+                acc = self.fun(acc, *new_args, **new_kwargs)  # type: ignore[arg-type] # need to express that the first argument is the same type as the return
+
+                k_slice = common.Domain(
+                    *non_scan_domain,
+                    common.named_range((scan_axis, (k, k + 1))),
+                )
+                broadcasted_acc = _tuple_broadcast_field(acc, (*non_scan_domain.dims, scan_axis))
+                _tuple_assign_field(res, broadcasted_acc, k_slice)
+
+        scan_loop()
 
         return res
 
@@ -153,6 +212,14 @@ def _tuple_assign_field(
             target[domain] = source
 
     impl(target, source)
+
+
+def _tuple_broadcast_field(f, domain):
+    @utils.tree_map
+    def impl(f):
+        return fbuiltins.broadcast(f, domain)
+
+    return impl(f)
 
 
 def _intersect_scan_args(

@@ -107,9 +107,10 @@ class Program:
 
     # TODO(ricoh): linting should become optional, up to the backend.
     def __post_init__(self):
-        if self.backend is not None and self.backend.transforms_prog is not None:
-            self.backend.transforms_prog.past_lint(self.past_stage)
-        return next_backend.DEFAULT_PROG_TRANSFORMS.past_lint(self.past_stage)
+        ...
+        # if self.backend is not None and self.backend.transforms_prog is not None:
+        #     self.backend.transforms_prog.past_lint(self.past_stage)
+        # return next_backend.DEFAULT_PROG_TRANSFORMS.past_lint(self.past_stage)
 
     @property
     def __name__(self) -> str:
@@ -185,18 +186,18 @@ class Program:
 
     def __call__(self, *args, offset_provider: dict[str, Dimension], **kwargs: Any) -> None:
         if self.backend is None:
-            warnings.warn(
-                UserWarning(
-                    f"Field View Program '{self.itir.id}': Using Python execution, consider selecting a perfomance backend."
-                ),
-                stacklevel=2,
-            )
+            # warnings.warn(
+            #     UserWarning(
+            #         f"Field View Program '{self.itir.id}': Using Python execution, consider selecting a perfomance backend."
+            #     ),
+            #     stacklevel=2,
+            # )
             with next_embedded.context.new_context(offset_provider=offset_provider) as ctx:
                 # TODO(ricoh): check if rewriting still needed
-                rewritten_args, size_args, kwargs = past_process_args._process_args(
-                    self.past_stage.past_node, args, kwargs
-                )
-                ctx.run(self.definition_stage.definition, *rewritten_args, **kwargs)
+                # rewritten_args, size_args, kwargs = past_process_args._process_args(
+                #     self.past_stage.past_node, args, kwargs
+                # )
+                ctx.run(self.definition_stage.definition, *args, **kwargs)
             return
 
         ppi.ensure_processor_kind(self.backend.executor, ppi.ProgramExecutor)
@@ -405,7 +406,7 @@ class FieldOperator(GTCallable, Generic[OperatorNodeT]):
     # TODO(ricoh): linting should become optional, up to the backend.
     def __post_init__(self):
         """This ensures that DSL linting occurs at decoration time."""
-        _ = self.foast_stage
+        # _ = self.foast_stage
 
     @functools.cached_property
     def foast_stage(self) -> ffront_stages.FoastOperatorDefinition:
@@ -507,9 +508,20 @@ class FieldOperator(GTCallable, Generic[OperatorNodeT]):
                 forward = attributes["forward"]
                 init = attributes["init"]
                 axis = attributes["axis"]
-                op = embedded_operators.ScanOperator(
-                    self.definition_stage.definition, forward, init, axis
-                )
+                if attributes["vectorized"]:
+                    op = embedded_operators.ScanOperatorVectorized(
+                        self.definition_stage.definition,
+                        forward,
+                        init,
+                        axis,
+                    )
+                else:
+                    op = embedded_operators.ScanOperator(
+                        self.definition_stage.definition,
+                        forward,
+                        init,
+                        axis,
+                    )
             else:
                 op = embedded_operators.EmbeddedOperator(self.definition_stage.definition)
             return embedded_operators.field_operator_call(op, args, kwargs)
@@ -599,6 +611,7 @@ def scan_operator(
     init: core_defs.Scalar = 0.0,
     backend=eve.NOTHING,
     grid_type: GridType = None,
+    vectorized: bool = False,
 ) -> (
     FieldOperator[foast.ScanOperator]
     | Callable[[types.FunctionType], FieldOperator[foast.ScanOperator]]
@@ -638,7 +651,12 @@ def scan_operator(
             DEFAULT_BACKEND if backend is eve.NOTHING else backend,
             grid_type,
             operator_node_cls=foast.ScanOperator,
-            operator_attributes={"axis": axis, "forward": forward, "init": init},
+            operator_attributes={
+                "axis": axis,
+                "forward": forward,
+                "init": init,
+                "vectorized": vectorized,
+            },
         )
 
     return scan_operator_inner if definition is None else scan_operator_inner(definition)

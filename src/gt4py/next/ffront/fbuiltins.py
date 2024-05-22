@@ -188,6 +188,8 @@ def where(
     false_field: common.Field | core_defs.ScalarT | Tuple,
     /,
 ) -> common.Field | Tuple:
+    if all(core_defs.is_scalar_type(f) for f in [mask, true_field, false_field]):
+        return true_field if mask else false_field
     raise NotImplementedError()
 
 
@@ -233,8 +235,12 @@ UNARY_MATH_FP_PREDICATE_BUILTIN_NAMES = ["isfinite", "isinf", "isnan"]
 def _make_unary_math_builtin(name: str) -> None:
     def impl(value: common.Field | core_defs.ScalarT, /) -> common.Field | core_defs.ScalarT:
         # TODO(havogt): enable once we have a failing test (see `test_math_builtin_execution.py`)
-        # assert core_defs.is_scalar_type(value) # default implementation for scalars, Fields are handled via dispatch # noqa: ERA001 [commented-out-code]
-        # return getattr(math, name)(value)# noqa: ERA001 [commented-out-code]
+        import math
+
+        assert core_defs.is_scalar_type(
+            value
+        )  # default implementation for scalars, Fields are handled via dispatch # noqa: ERA001 [commented-out-code]
+        return getattr(math, name)(value)  # noqa: ERA001 [commented-out-code]
         raise NotImplementedError()
 
     impl.__name__ = name
