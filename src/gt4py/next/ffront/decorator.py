@@ -508,20 +508,29 @@ class FieldOperator(GTCallable, Generic[OperatorNodeT]):
                 forward = attributes["forward"]
                 init = attributes["init"]
                 axis = attributes["axis"]
-                if attributes["vectorized"]:
+                if attributes["strategy"] == "scalar":
                     op = embedded_operators.ScanOperatorVectorized(
                         self.definition_stage.definition,
                         forward,
                         init,
                         axis,
                     )
-                else:
+                elif attributes["strategy"] == "vectorized":
                     op = embedded_operators.ScanOperator(
                         self.definition_stage.definition,
                         forward,
                         init,
                         axis,
                     )
+                elif attributes["strategy"] == "jax":
+                    op = embedded_operators.ScanOperatorJax(
+                        self.definition_stage.definition,
+                        forward,
+                        init,
+                        axis,
+                    )
+                else:
+                    raise RuntimeError(f"Scan strategy {attributes['strategy']} is not supported.")
             else:
                 op = embedded_operators.EmbeddedOperator(self.definition_stage.definition)
             return embedded_operators.field_operator_call(op, args, kwargs)
@@ -611,7 +620,7 @@ def scan_operator(
     init: core_defs.Scalar = 0.0,
     backend=eve.NOTHING,
     grid_type: GridType = None,
-    vectorized: bool = False,
+    strategy: str = "scalar",
 ) -> (
     FieldOperator[foast.ScanOperator]
     | Callable[[types.FunctionType], FieldOperator[foast.ScanOperator]]
@@ -655,7 +664,7 @@ def scan_operator(
                 "axis": axis,
                 "forward": forward,
                 "init": init,
-                "vectorized": vectorized,
+                "strategy": strategy,
             },
         )
 

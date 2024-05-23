@@ -145,6 +145,122 @@ class ScanOperatorVectorized(
         return res
 
 
+def to_jax_field(field):
+    from gt4py.next.embedded import nd_array_field
+    from jax import numpy as jnp
+
+    if not isinstance(field, common.Field) or isinstance(field, nd_array_field.JaxArrayField):
+        return field
+    else:
+        assert isinstance(field, nd_array_field.NumPyArrayField)
+        return common._field(jnp.asarray(field.ndarray), domain=field.domain)
+
+
+def to_numpy_field(field):
+    if not isinstance(field, common.Field):
+        return field
+    return common._field(np.asarray(field.ndarray), domain=field.domain)
+
+
+def transpose(f, dims):
+    @utils.tree_map
+    def impl(f):
+        xp = _get_array_ns(f)
+        arr = xp.transpose(
+            f.ndarray,
+            axes=[f.domain.dim_index(dim) for dim in dims],
+        )
+        domain = common.Domain(*(f.domain[dim] for dim in dims))
+        return common._field(arr, domain=domain)
+
+    return impl(f)
+
+
+def broadcast_to(f, domain):
+    xp = _get_array_ns(f)
+    return common._field(xp.broadcast_to(f.ndarray, domain.shape), domain=domain)
+
+
+@dataclasses.dataclass(frozen=True)
+class ScanOperatorJax(
+    EmbeddedOperator[core_defs.ScalarT | tuple[core_defs.ScalarT | tuple, ...], _P]
+):
+    forward: bool
+    init: core_defs.ScalarT | tuple[core_defs.ScalarT | tuple, ...]
+    axis: common.Dimension
+
+    def __call__(  # type: ignore[override]
+        self,
+        *args: common.Field | core_defs.Scalar,
+        **kwargs: common.Field | core_defs.Scalar,  # type: ignore[override]
+    ) -> (
+        common.Field[Any, core_defs.ScalarT]
+        | tuple[common.Field[Any, core_defs.ScalarT] | tuple, ...]
+    ):
+        scan_range = embedded_context.closure_column_range.get()
+        assert self.axis == scan_range.dim
+        scan_axis = scan_range.dim
+
+        args = [to_jax_field(arg) for arg in args]
+        kwargs = {k: to_jax_field(v) for k, v in kwargs.items()}
+
+        all_args = [*args, *kwargs.values()]
+        domain_intersection = _intersect_scan_args(*all_args)
+        non_scan_domain = common.Domain(*[nr for nr in domain_intersection if nr.dim != scan_axis])
+
+        out_domain = common.Domain(
+            *[scan_range if nr.dim == scan_axis else nr for nr in domain_intersection]
+        )
+        if scan_axis not in out_domain.dims:
+            # even if the scan dimension is not in the input, we can scan over it
+            out_domain = common.Domain(*out_domain, (scan_range))
+
+        from jax import numpy as jnp, lax
+
+        # res = _construct_scan_array(out_domain, jnp)(self.init)
+
+        def jax_fun(carry, x):
+            x = utils.tree_map(lambda f: common._field(f.ndarray, domain=f.domain[1:]))(x)
+            res = self.fun(carry, *x)
+            return (res, res)
+
+        def make_field(f):
+            return common._field(jnp.full(out_domain.shape, f), domain=out_domain)
+
+        def scan_loop() -> None:
+            new_dims = (scan_axis, *non_scan_domain.dims)
+            new_args = tuple(
+                make_field(arg) if not isinstance(arg, common.Field) else arg for arg in args
+            )
+            new_args = tuple(
+                transpose(
+                    broadcast_to(
+                        fbuiltins.broadcast(arg[scan_range], (*non_scan_domain.dims, scan_axis)),
+                        out_domain,
+                    ),
+                    new_dims,
+                )
+                for arg in new_args
+            )
+            assert len(kwargs) == 0
+
+            init: common.MutableField | tuple[common.MutableField | tuple, ...] = (
+                _construct_scan_array(non_scan_domain, jnp)(self.init)
+            )
+            _tuple_assign_field(target=init, source=self.init, domain=non_scan_domain)
+            res = lax.scan(jax_fun, init, new_args, reverse=not self.forward)
+            res = res[1]
+            res = utils.tree_map(
+                lambda f: common._field(f.ndarray, domain=common.Domain(scan_range, *f.domain))
+            )(res)
+            res = transpose(res, out_domain.dims)
+            return res
+
+        res = scan_loop()
+
+        return utils.tree_map(lambda a: to_numpy_field(a))(res)
+
+
 def _get_out_domain(
     out: common.MutableField | tuple[common.MutableField | tuple, ...],
 ) -> common.Domain:
