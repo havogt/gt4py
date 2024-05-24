@@ -86,7 +86,7 @@ def _make_builtin(
                     )
                     transformed.append(xp.asarray(f_broadcasted.ndarray[f_slices]))
             else:
-                assert core_defs.is_scalar_type(f)
+                # assert core_defs.is_scalar_type(f), f
                 transformed.append(f)
         if reverse:
             transformed.reverse()

@@ -201,8 +201,8 @@ class ScanOperatorJax(
         assert self.axis == scan_range.dim
         scan_axis = scan_range.dim
 
-        args = [to_jax_field(arg) for arg in args]
-        kwargs = {k: to_jax_field(v) for k, v in kwargs.items()}
+        # args = [to_jax_field(arg) for arg in args]
+        # kwargs = {k: to_jax_field(v) for k, v in kwargs.items()}
 
         all_args = [*args, *kwargs.values()]
         domain_intersection = _intersect_scan_args(*all_args)
@@ -257,8 +257,9 @@ class ScanOperatorJax(
             return res
 
         res = scan_loop()
+        return res
 
-        return utils.tree_map(lambda a: to_numpy_field(a))(res)
+        # return utils.tree_map(lambda a: to_numpy_field(a))(res)
 
 
 def _get_out_domain(
@@ -302,9 +303,26 @@ def field_operator_call(op: EmbeddedOperator[_R, _P], args: Any, kwargs: Any) ->
         return None
     else:
         # called from other field_operator or missing `out` argument
+        new_context_kwargs = {}
         if "offset_provider" in kwargs:
-            # assuming we wanted to call the field_operator as program, otherwise `offset_provider` would not be there
-            raise errors.MissingArgumentError(None, "out", True)
+            # this enables calling a field operator entry point which returns (if `out` is omitted)
+            offset_provider = kwargs.pop("offset_provider", None)
+            new_context_kwargs["offset_provider"] = offset_provider
+            domain = kwargs.pop("domain", None)
+            assert domain
+            out_domain = common.domain(domain)
+            new_context_kwargs["closure_column_range"] = _get_vertical_range(out_domain)
+            use_jax = kwargs.pop("use_jax", False)
+            with embedded_context.new_context(**new_context_kwargs) as ctx:
+                if not use_jax:
+                    return ctx.run(op, *args, **kwargs)
+                else:
+                    import jax
+
+                    print(ctx.run(jax.make_jaxpr(op), *args, **kwargs))
+
+                    return ctx.run(jax.jit(op), *args, **kwargs)
+
         return op(*args, **kwargs)
 
 
