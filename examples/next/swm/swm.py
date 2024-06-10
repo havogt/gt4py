@@ -97,26 +97,6 @@ X = StaggeredDimension(I, î)
 Y = StaggeredDimension(J, Ĵ)
 
 
-@gtx.field_operator
-def avg_x(q: gtx.Field[[X, Y], float]) -> gtx.Field[[X + half, X], float]:
-    return 0.5 * (q(X + 0.5) + q(X - 0.5))
-
-
-@gtx.field_operator
-def avg_y(q: gtx.Field[[X, Y], float]) -> gtx.Field[[Y + half, Y], float]:
-    return 0.5 * (q(Y + 0.5) + q(Y - 0.5))
-
-
-@gtx.field_operator
-def delta_x(dx: float, q: gtx.Field[[X, Y], float]) -> gtx.Field[[X + Half, Y], float]:
-    return (1.0 / dx) * (q(X + 0.5) - q(X - 0.5))
-
-
-@gtx.field_operator
-def delta_y(dy: float, q: gtx.Field[[X, Y], float]) -> gtx.Field[[X, Y + Half], float]:
-    return (1.0 / dy) * (q(Y + 0.5) - q(Y - 0.5))
-
-
 def apply_periodic_boundary_u(u: gtx.Field):
     M = u.shape[0]
     N = u.shape[1]
@@ -163,6 +143,26 @@ def apply_periodic_boundary_z(z: gtx.Field):
     res[0, 0] = z.asnumpy()[-1, -1]
 
     return gtx.as_field(gtx.domain({î: (-1, M), Ĵ: (-1, N)}), res)
+
+
+@gtx.field_operator
+def avg_x(q: gtx.Field[[X, Y], float]) -> gtx.Field[[X + half, X], float]:
+    return 0.5 * (q(X + 0.5) + q(X - 0.5))
+
+
+@gtx.field_operator
+def avg_y(q: gtx.Field[[X, Y], float]) -> gtx.Field[[X, Y + half], float]:
+    return 0.5 * (q(Y + 0.5) + q(Y - 0.5))
+
+
+@gtx.field_operator
+def delta_x(dx: float, q: gtx.Field[[X, Y], float]) -> gtx.Field[[X + Half, Y], float]:
+    return (1.0 / dx) * (q(X + 0.5) - q(X - 0.5))
+
+
+@gtx.field_operator
+def delta_y(dy: float, q: gtx.Field[[X, Y], float]) -> gtx.Field[[X, Y + Half], float]:
+    return (1.0 / dy) * (q(Y + 0.5) - q(Y - 0.5))
 
 
 @gtx.field_operator
