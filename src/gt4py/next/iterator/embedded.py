@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import abc
-import contextvars as cvars
 import copy
 import dataclasses
 import itertools
@@ -28,6 +27,7 @@ import warnings
 import numpy as np
 import numpy.typing as npt
 
+from gt4py import eve
 from gt4py._core import definitions as core_defs
 from gt4py.eve import extended_typing as xtyping
 from gt4py.eve.extended_typing import (
@@ -52,10 +52,15 @@ from gt4py.eve.extended_typing import (
     overload,
     runtime_checkable,
 )
-from gt4py.next import common, embedded as next_embedded
-from gt4py.next.embedded import exceptions as embedded_exceptions
+from gt4py.next import common, field_utils
+from gt4py.next.embedded import (
+    context as embedded_context,
+    exceptions as embedded_exceptions,
+    operators,
+)
 from gt4py.next.ffront import fbuiltins
 from gt4py.next.iterator import builtins, runtime
+from gt4py.next.type_system import type_specifications as ts, type_translation
 
 
 EMBEDDED = "embedded"
@@ -191,12 +196,6 @@ class MutableLocatedField(LocatedField, Protocol):
     def field_setitem(self, indices: NamedFieldIndices, value: Any) -> None: ...
 
 
-#: Column range used in column mode (`column_axis != None`) in the current closure execution context.
-column_range_cvar: cvars.ContextVar[common.NamedRange] = next_embedded.context.closure_column_range
-#: Offset provider dict in the current closure execution context.
-offset_provider_cvar: cvars.ContextVar[OffsetProvider] = next_embedded.context.offset_provider
-
-
 class Column(np.lib.mixins.NDArrayOperatorsMixin):
     """Represents a column when executed in column mode (`column_axis != None`).
 
@@ -207,10 +206,15 @@ class Column(np.lib.mixins.NDArrayOperatorsMixin):
     def __init__(self, kstart: int, data: np.ndarray | Scalar) -> None:
         self.kstart = kstart
         assert isinstance(data, (np.ndarray, Scalar))  # type: ignore # mypy bug #11673
-        column_range: common.NamedRange = column_range_cvar.get()
+        column_range: common.NamedRange = embedded_context.closure_column_range.get()
         self.data = (
             data if isinstance(data, np.ndarray) else np.full(len(column_range.unit_range), data)
         )
+
+    @property
+    def dtype(self) -> np.dtype:
+        # not directly dtype of `self.data` as that might be a structured type containing `None`
+        return _elem_dtype(self.data[self.kstart])
 
     def __getitem__(self, i: int) -> Any:
         result = self.data[i - self.kstart]
@@ -288,8 +292,18 @@ def cast_(obj, new_dtype):
 @builtins.not_.register(EMBEDDED)
 def not_(a):
     if isinstance(a, Column):
-        return np.logical_not(a.data)
+        return np.logical_not(a)
     return not a
+
+
+@builtins.gamma.register(EMBEDDED)
+def gamma(a):
+    gamma_ = np.vectorize(math.gamma)
+    if isinstance(a, Column):
+        return Column(kstart=a.kstart, data=gamma_(a.data))
+    res = gamma_(a)
+    assert res.ndim == 0
+    return res.item()
 
 
 @builtins.and_.register(EMBEDDED)
@@ -460,7 +474,7 @@ def not_eq(first, second):
     return first != second
 
 
-CompositeOfScalarOrField: TypeAlias = Scalar | LocatedField | tuple["CompositeOfScalarOrField", ...]
+CompositeOfScalarOrField: TypeAlias = Scalar | common.Field | tuple["CompositeOfScalarOrField", ...]
 
 
 def is_dtype_like(t: Any) -> TypeGuard[npt.DTypeLike]:
@@ -493,8 +507,7 @@ for math_builtin_name in builtins.MATH_BUILTINS:
     decorator = getattr(builtins, math_builtin_name).register(EMBEDDED)
     impl: Callable
     if math_builtin_name == "gamma":
-        # numpy has no gamma function
-        impl = np.vectorize(math.gamma)
+        continue  # treated explicitly
     elif math_builtin_name in python_builtins:
         # TODO: Should potentially use numpy fixed size types to be consistent
         #   with compiled backends. Currently using Python types to preserve
@@ -502,6 +515,7 @@ for math_builtin_name in builtins.MATH_BUILTINS:
         impl = python_builtins[math_builtin_name]
     else:
         impl = getattr(np, math_builtin_name)
+
     globals()[math_builtin_name] = decorator(impl)
 
 
@@ -509,7 +523,7 @@ def _named_range(axis: str, range_: Iterable[int]) -> Iterable[CompleteOffset]:
     return ((axis, i) for i in range_)
 
 
-def _domain_iterator(domain: dict[Tag, range]) -> Iterable[Position]:
+def _domain_iterator(domain: dict[Tag, range]) -> Iterable[ConcretePosition]:
     return (
         dict(elem)
         for elem in itertools.product(*(_named_range(axis, rang) for axis, rang in domain.items()))
@@ -751,7 +765,7 @@ def _make_tuple(
             except embedded_exceptions.IndexOutOfBounds:
                 return _UNDEFINED
     else:
-        column_range = column_range_cvar.get().unit_range
+        column_range = embedded_context.closure_column_range.get().unit_range
         assert column_range is not None
 
         col: list[
@@ -784,7 +798,7 @@ def _make_tuple(
             raise RuntimeError(
                 "Found 'Undefined' value, this should not happen for a legal program."
             )
-        dtype = _column_dtype(first)
+        dtype = _elem_dtype(first)
         return Column(column_range.start, np.asarray(col, dtype=dtype))
 
 
@@ -796,7 +810,7 @@ class MDIterator:
 
     def shift(self, *offsets: OffsetPart) -> MDIterator:
         complete_offsets = group_offsets(*offsets)
-        offset_provider = offset_provider_cvar.get()
+        offset_provider = embedded_context.offset_provider.get()
         assert offset_provider is not None
         return MDIterator(
             self.field,
@@ -821,8 +835,8 @@ class MDIterator:
             if not all(axis.value in shifted_pos.keys() for axis in axes if axis is not None):
                 raise IndexError("Iterator position doesn't point to valid location for its field.")
         slice_column = dict[Tag, range]()
-        column_range = column_range_cvar.get()
         if self.column_axis is not None:
+            column_range = embedded_context.closure_column_range.get()
             assert column_range is not None
             k_pos = shifted_pos.pop(self.column_axis)
             assert isinstance(k_pos, int)
@@ -852,7 +866,7 @@ def _wrap_field(field: common.Field | tuple) -> NDArrayLocatedFieldWrapper | tup
 
 
 def make_in_iterator(
-    inp_: common.Field, pos: Position, *, column_axis: Optional[Tag]
+    inp_: common.Field, pos: Position, *, column_dimension: Optional[common.Dimension]
 ) -> ItIterator:
     inp = _wrap_field(inp_)
     axes = _get_axes(inp)
@@ -861,12 +875,14 @@ def make_in_iterator(
     for sparse_dim in set(sparse_dimensions):
         init = [None] * sparse_dimensions.count(sparse_dim)
         new_pos[sparse_dim] = init  # type: ignore[assignment] # looks like mypy is confused
-    if column_axis is not None:
-        column_range = column_range_cvar.get().unit_range
+    if column_dimension is not None:
+        column_range = embedded_context.closure_column_range.get().unit_range
         # if we deal with column stencil the column position is just an offset by which the whole column needs to be shifted
         assert column_range is not None
-        new_pos[column_axis] = column_range.start
-    it = MDIterator(inp, new_pos, column_axis=column_axis)
+        new_pos[column_dimension.value] = column_range.start
+    it = MDIterator(
+        inp, new_pos, column_axis=column_dimension.value if column_dimension is not None else None
+    )
     if len(sparse_dimensions) >= 1:
         if len(sparse_dimensions) == 1:
             return SparseListIterator(it, sparse_dimensions[0])
@@ -1077,7 +1093,7 @@ class IndexField(common.Field):
         assert self._cur_index is not None
         return self._cur_index
 
-    def remap(self, index_field: common.ConnectivityField | fbuiltins.FieldOffset) -> common.Field:
+    def premap(self, index_field: common.ConnectivityField | fbuiltins.FieldOffset) -> common.Field:
         # TODO can be implemented by constructing and ndarray (but do we know of which kind?)
         raise NotImplementedError()
 
@@ -1091,7 +1107,7 @@ class IndexField(common.Field):
         # TODO set a domain...
         raise NotImplementedError()
 
-    __call__ = remap
+    __call__ = premap
     __getitem__ = restrict
 
     def __abs__(self) -> common.Field:
@@ -1197,7 +1213,7 @@ class ConstantField(common.Field[Any, core_defs.ScalarT]):
     def asnumpy(self) -> np.ndarray:
         raise NotImplementedError()
 
-    def remap(self, index_field: common.ConnectivityField | fbuiltins.FieldOffset) -> common.Field:
+    def premap(self, index_field: common.ConnectivityField | fbuiltins.FieldOffset) -> common.Field:
         # TODO can be implemented by constructing and ndarray (but do we know of which kind?)
         raise NotImplementedError()
 
@@ -1209,7 +1225,7 @@ class ConstantField(common.Field[Any, core_defs.ScalarT]):
         assert self.domain.ndim == 0
         return self._value
 
-    __call__ = remap
+    __call__ = premap
     __getitem__ = restrict
 
     def __abs__(self) -> common.Field:
@@ -1303,7 +1319,7 @@ class _ConstList(Generic[DT]):
 def neighbors(offset: runtime.Offset, it: ItIterator) -> _List:
     offset_str = offset.value if isinstance(offset, runtime.Offset) else offset
     assert isinstance(offset_str, str)
-    offset_provider = offset_provider_cvar.get()
+    offset_provider = embedded_context.offset_provider.get()
     assert offset_provider is not None
     connectivity = offset_provider[offset_str]
     assert isinstance(connectivity, common.Connectivity)
@@ -1359,7 +1375,7 @@ class SparseListIterator:
     offsets: Sequence[OffsetPart] = dataclasses.field(default_factory=list, kw_only=True)
 
     def deref(self) -> Any:
-        offset_provider = offset_provider_cvar.get()
+        offset_provider = embedded_context.offset_provider.get()
         assert offset_provider is not None
         connectivity = offset_provider[self.list_offset]
         assert isinstance(connectivity, common.Connectivity)
@@ -1374,12 +1390,6 @@ class SparseListIterator:
 
     def shift(self, *offsets: OffsetPart) -> SparseListIterator:
         return SparseListIterator(self.it, self.list_offset, offsets=[*offsets, *self.offsets])
-
-
-@dataclasses.dataclass(frozen=True)
-class ColumnDescriptor:
-    axis: str
-    col_range: range  # TODO(havogt) introduce range type that doesn't have step
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1470,23 +1480,24 @@ def as_tuple_field(field: tuple | TupleField) -> TupleField:
     return TupleOfFields(tuple(_wrap_field(f) for f in field))
 
 
-def _column_dtype(elem: Any) -> np.dtype:
+def _elem_dtype(elem: Any) -> np.dtype:
+    if hasattr(elem, "dtype"):
+        return elem.dtype
     if isinstance(elem, tuple):
-        return np.dtype([(f"f{i}", _column_dtype(e)) for i, e in enumerate(elem)])
-    else:
-        return np.dtype(type(elem))
+        return np.dtype([(f"f{i}", _elem_dtype(e)) for i, e in enumerate(elem)])
+    return np.dtype(type(elem))
 
 
 @builtins.scan.register(EMBEDDED)
 def scan(scan_pass, is_forward: bool, init):
     def impl(*iters: ItIterator):
-        column_range = column_range_cvar.get().unit_range
+        column_range = embedded_context.closure_column_range.get().unit_range
         if column_range is None:
             raise RuntimeError("Column range is not defined, cannot scan.")
 
         sorted_column_range = column_range if is_forward else reversed(column_range)
         state = init
-        col = Column(column_range.start, np.zeros(len(column_range), dtype=_column_dtype(init)))
+        col = Column(column_range.start, np.zeros(len(column_range), dtype=_elem_dtype(init)))
         for i in sorted_column_range:
             state = scan_pass(state, *map(shifted_scan_arg(i), iters))
             col[i] = state
@@ -1508,64 +1519,144 @@ def _validate_domain(domain: Domain, offset_provider: OffsetProvider) -> None:
             )
 
 
-def fendef_embedded(fun: Callable[..., None], *args: Any, **kwargs: Any):
-    if "offset_provider" not in kwargs:
-        raise RuntimeError("'offset_provider' not provided.")
+@runtime.set_at.register(EMBEDDED)
+def set_at(expr: common.Field, domain: common.DomainLike, target: common.MutableField) -> None:
+    operators._tuple_assign_field(target, expr, common.domain(domain))
 
-    offset_provider = kwargs["offset_provider"]
 
-    @runtime.closure.register(EMBEDDED)
-    def closure(
-        domain_: Domain,
-        sten: Callable[..., Any],
-        out,  #: MutableLocatedField,
-        ins: list[common.Field],
-    ) -> None:
-        _validate_domain(domain_, kwargs["offset_provider"])
-        domain: dict[Tag, range] = _dimension_to_tag(domain_)
-        if not (isinstance(out, common.Field) or is_tuple_of_field(out)):
-            raise TypeError("'Out' needs to be a located field.")
+def _compute_at_position(
+    sten: Callable,
+    ins: Sequence[common.Field],
+    pos: ConcretePosition,
+    column_dimension: Optional[common.Dimension],
+) -> Scalar | tuple[Scalar | tuple, ...]:
+    ins_iters = list(
+        make_in_iterator(
+            inp,
+            pos,
+            column_dimension=column_dimension,
+        )
+        for inp in ins
+    )
+    return sten(*ins_iters)
 
-        column_range = None
-        column: Optional[ColumnDescriptor] = None
-        if kwargs.get("column_axis") and kwargs["column_axis"].value in domain:
-            column_axis = kwargs["column_axis"]
-            column = ColumnDescriptor(column_axis.value, domain[column_axis.value])
-            del domain[column_axis.value]
 
-            column_range = common.NamedRange(
-                column_axis, common.UnitRange(column.col_range.start, column.col_range.stop)
+def _extract_column_range(domain) -> common.NamedRange | eve.NothingType:
+    if (col_range_placeholder := embedded_context.closure_column_range.get(None)) is not None:
+        assert (
+            col_range_placeholder.unit_range.is_empty()
+        )  # check it's just the placeholder with empty range
+        column_axis = col_range_placeholder.dim
+        if column_axis is not None and column_axis.value in domain:
+            return common.NamedRange(
+                column_axis,
+                common.UnitRange(domain[column_axis.value].start, domain[column_axis.value].stop),
             )
+    return eve.NOTHING
 
-        out = as_tuple_field(out) if is_tuple_of_field(out) else _wrap_field(out)
 
-        def _closure_runner():
-            # Set context variables before executing the closure
-            column_range_cvar.set(column_range)
-            offset_provider_cvar.set(offset_provider)
+def _structured_dtype_to_typespec(structured_dtype: np.dtype) -> ts.ScalarType | ts.TupleType:
+    if structured_dtype.names is None:
+        return type_translation.from_dtype(core_defs.dtype(structured_dtype))
+    return ts.TupleType(
+        types=[
+            _structured_dtype_to_typespec(structured_dtype[name]) for name in structured_dtype.names
+        ]
+    )
 
+
+def _get_output_type(
+    fun: Callable,
+    domain_: runtime.CartesianDomain | runtime.UnstructuredDomain,
+    args: tuple[Any, ...],
+) -> ts.TypeSpec:
+    domain = _dimension_to_tag(domain_)
+    col_range = _extract_column_range(domain)
+
+    col_dim: Optional[common.Dimension] = None
+    if isinstance(col_range, common.NamedRange):
+        col_dim = col_range.dim
+        del domain[col_range.dim.value]
+
+    # determine dtype by computing result at one point
+    pos_in_domain = next(iter(_domain_iterator(domain)))
+    with embedded_context.new_context(closure_column_range=col_range) as ctx:
+        single_pos_result = ctx.run(_compute_at_position, fun, args, pos_in_domain, col_dim)
+    dtype = _elem_dtype(single_pos_result)
+    return _structured_dtype_to_typespec(dtype)
+
+
+@builtins.as_fieldop.register(EMBEDDED)
+def as_fieldop(fun: Callable, domain: runtime.CartesianDomain | runtime.UnstructuredDomain):
+    def impl(*args):
+        xp = field_utils.get_array_ns(*args)
+        type_ = _get_output_type(fun, domain, [promote_scalars(arg) for arg in args])
+        out = field_utils.field_from_typespec(type_, common.domain(domain), xp)
+
+        # TODO(havogt): after updating all tests to use the new program,
+        # we should get rid of closure and move the implementation to this function
+        closure(_dimension_to_tag(domain), fun, out, list(args))
+        return out
+
+    return impl
+
+
+@runtime.closure.register(EMBEDDED)
+def closure(
+    domain_: Domain,
+    sten: Callable[..., Any],
+    out,  #: MutableLocatedField,
+    ins: list[common.Field | Scalar | tuple[common.Field | Scalar | tuple, ...]],
+) -> None:
+    assert embedded_context.within_valid_context()
+    offset_provider = embedded_context.offset_provider.get()
+    _validate_domain(domain_, offset_provider)
+    domain: dict[Tag, range] = _dimension_to_tag(domain_)
+    if not (isinstance(out, common.Field) or is_tuple_of_field(out)):
+        raise TypeError("'Out' needs to be a located field.")
+
+    column_range: common.NamedRange | eve.NothingType = _extract_column_range(domain)
+
+    column_dim = None
+    if isinstance(column_range, common.NamedRange):
+        column_dim = column_range.dim
+        del domain[column_range.dim.value]
+
+    out = as_tuple_field(out) if is_tuple_of_field(out) else _wrap_field(out)
+    promoted_ins = [promote_scalars(inp) for inp in ins]
+
+    with embedded_context.new_context(closure_column_range=column_range) as ctx:
+
+        def _iterate():
             for pos in _domain_iterator(domain):
-                promoted_ins = [promote_scalars(inp) for inp in ins]
-                ins_iters = list(
-                    make_in_iterator(inp, pos, column_axis=column.axis if column else None)
-                    for inp in promoted_ins
-                )
-                res = sten(*ins_iters)
+                res = _compute_at_position(sten, promoted_ins, pos, column_dim)
 
-                if column is None:
+                if column_range is eve.NOTHING:
                     assert _is_concrete_position(pos)
                     out.field_setitem(pos, res)
                 else:
                     col_pos = pos.copy()
-                    for k in column.col_range:
-                        col_pos[column.axis] = k
+                    for k in column_range.unit_range:
+                        col_pos[column_range.dim.value] = k
                         assert _is_concrete_position(col_pos)
                         out.field_setitem(col_pos, res[k])
 
-        ctx = cvars.copy_context()
-        ctx.run(_closure_runner)
+        ctx.run(_iterate)
 
-    fun(*args)
+
+def fendef_embedded(fun: Callable[..., None], *args: Any, **kwargs: Any):
+    if "offset_provider" not in kwargs:
+        raise RuntimeError("'offset_provider' not provided.")
+
+    context_vars = {"offset_provider": kwargs["offset_provider"]}
+    if "column_axis" in kwargs:
+        context_vars["closure_column_range"] = common.NamedRange(
+            kwargs["column_axis"],
+            common.UnitRange(0, 0),  # empty: indicates column operation, will update later
+        )
+
+    with embedded_context.new_context(**context_vars) as ctx:
+        ctx.run(fun, *args)
 
 
 runtime.fendef_embedded = fendef_embedded

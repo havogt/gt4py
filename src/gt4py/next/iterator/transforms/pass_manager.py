@@ -17,7 +17,6 @@ from typing import Callable, Optional
 
 from gt4py.eve import utils as eve_utils
 from gt4py.next.iterator import ir as itir
-from gt4py.next.iterator.transforms import simple_inline_heuristic
 from gt4py.next.iterator.transforms.collapse_list_get import CollapseListGet
 from gt4py.next.iterator.transforms.collapse_tuple import CollapseTuple
 from gt4py.next.iterator.transforms.constant_folding import ConstantFolding
@@ -41,14 +40,11 @@ from gt4py.next.iterator.transforms.unroll_reduce import UnrollReduce
 class LiftMode(enum.Enum):
     FORCE_INLINE = enum.auto()
     USE_TEMPORARIES = enum.auto()
-    SIMPLE_HEURISTIC = enum.auto()
 
 
 def _inline_lifts(ir, lift_mode):
     if lift_mode == LiftMode.FORCE_INLINE:
         return InlineLifts().visit(ir)
-    elif lift_mode == LiftMode.SIMPLE_HEURISTIC:
-        return InlineLifts(simple_inline_heuristic.is_eligible_for_inlining).visit(ir)
     elif lift_mode == LiftMode.USE_TEMPORARIES:
         return InlineLifts(
             flags=InlineLifts.Flag.INLINE_TRIVIAL_DEREF_LIFT
@@ -88,7 +84,11 @@ def apply_common_transforms(
         Callable[[itir.StencilClosure], Callable[[itir.Expr], bool]]
     ] = None,
     symbolic_domain_sizes: Optional[dict[str, str]] = None,
-) -> itir.FencilDefinition | FencilWithTemporaries:
+) -> itir.FencilDefinition | FencilWithTemporaries | itir.Program:
+    if isinstance(ir, itir.Program):
+        # TODO(havogt): during refactoring to GTIR, we bypass transformations in case we already translated to itir.Program
+        # (currently the case when using the roundtrip backend)
+        return ir
     icdlv_uids = eve_utils.UIDGenerator()
 
     if lift_mode is None:
@@ -96,6 +96,7 @@ def apply_common_transforms(
     assert isinstance(lift_mode, LiftMode)
     ir = MergeLet().visit(ir)
     ir = InlineFundefs().visit(ir)
+
     ir = PruneUnreferencedFundefs().visit(ir)
     ir = PropagateDeref.apply(ir)
     ir = NormalizeShifts().visit(ir)
@@ -119,8 +120,7 @@ def apply_common_transforms(
         # is constant-folded the surrounding tuple_get calls can be removed.
         inlined = CollapseTuple.apply(
             inlined,
-            # to limit number of times global type inference is executed, only in the last iterations.
-            use_global_type_inference=inlined == ir,
+            offset_provider=offset_provider,
             # TODO(tehrengruber): disabled since it increases compile-time too much right now
             flags=~CollapseTuple.Flag.PROPAGATE_TO_IF_ON_TUPLES,
         )
@@ -166,7 +166,8 @@ def apply_common_transforms(
     if unconditionally_collapse_tuples:
         ir = CollapseTuple.apply(
             ir,
-            ignore_tuple_size=unconditionally_collapse_tuples,
+            ignore_tuple_size=True,
+            offset_provider=offset_provider,
             # TODO(tehrengruber): disabled since it increases compile-time too much right now
             flags=~CollapseTuple.Flag.PROPAGATE_TO_IF_ON_TUPLES,
         )

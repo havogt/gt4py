@@ -54,7 +54,8 @@ class ProgramBackendId(_PythonObjectIdMixin, str, enum.Enum):
         "gt4py.next.program_processors.runners.gtfn.run_gtfn_with_temporaries"
     )
     GTFN_GPU = "gt4py.next.program_processors.runners.gtfn.run_gtfn_gpu"
-    ROUNDTRIP = "gt4py.next.program_processors.runners.roundtrip.backend"
+    ROUNDTRIP = "gt4py.next.program_processors.runners.roundtrip.default"
+    ROUNDTRIP_WITH_TEMPORARIES = "gt4py.next.program_processors.runners.roundtrip.with_temporaries"
     DOUBLE_ROUNDTRIP = "gt4py.next.program_processors.runners.double_roundtrip.backend"
 
 
@@ -92,7 +93,6 @@ class ProgramFormatterId(_PythonObjectIdMixin, str, enum.Enum):
     ITIR_PRETTY_PRINTER = (
         "gt4py.next.program_processors.formatters.pretty_print.format_itir_and_check"
     )
-    ITIR_TYPE_CHECKER = "gt4py.next.program_processors.formatters.type_check.check_type_inference"
     LISP_FORMATTER = "gt4py.next.program_processors.formatters.lisp.format_lisp"
 
 
@@ -175,11 +175,7 @@ BACKEND_SKIP_TEST_MATRIX = {
     EmbeddedIds.NUMPY_EXECUTION: EMBEDDED_SKIP_LIST,
     EmbeddedIds.CUPY_EXECUTION: EMBEDDED_SKIP_LIST,
     OptionalProgramBackendId.DACE_CPU: DACE_SKIP_TEST_LIST,
-    OptionalProgramBackendId.DACE_GPU: DACE_SKIP_TEST_LIST
-    + [
-        # awaiting dace fix, see https://github.com/spcl/dace/pull/1442
-        (USES_FLOORDIV, XFAIL, BINDINGS_UNSUPPORTED_MESSAGE)
-    ],
+    OptionalProgramBackendId.DACE_GPU: DACE_SKIP_TEST_LIST,
     ProgramBackendId.GTFN_CPU: GTFN_SKIP_TEST_LIST
     + [(USES_SCAN_NESTED, XFAIL, UNSUPPORTED_MESSAGE)],
     ProgramBackendId.GTFN_CPU_IMPERATIVE: GTFN_SKIP_TEST_LIST
@@ -192,4 +188,9 @@ BACKEND_SKIP_TEST_MATRIX = {
         (USES_REDUCTION_WITH_ONLY_SPARSE_FIELDS, XFAIL, REDUCTION_WITH_ONLY_SPARSE_FIELDS_MESSAGE)
     ],
     ProgramBackendId.ROUNDTRIP: [(USES_SPARSE_FIELDS_AS_OUTPUT, XFAIL, UNSUPPORTED_MESSAGE)],
+    ProgramBackendId.ROUNDTRIP_WITH_TEMPORARIES: [
+        (USES_SPARSE_FIELDS_AS_OUTPUT, XFAIL, UNSUPPORTED_MESSAGE),
+        (USES_DYNAMIC_OFFSETS, XFAIL, UNSUPPORTED_MESSAGE),
+        (USES_STRIDED_NEIGHBOR_OFFSET, XFAIL, UNSUPPORTED_MESSAGE),
+    ],
 }

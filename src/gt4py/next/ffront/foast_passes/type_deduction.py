@@ -12,7 +12,7 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-from typing import Any, Optional, cast
+from typing import Any, Optional, TypeVar, cast
 
 import gt4py.next.ffront.field_operator_ast as foast
 from gt4py.eve import NodeTranslator, NodeVisitor, traits
@@ -27,6 +27,9 @@ from gt4py.next.ffront import (  # noqa
 )
 from gt4py.next.ffront.foast_passes.utils import compute_assign_indices
 from gt4py.next.type_system import type_info, type_specifications as ts, type_translation
+
+
+OperatorNodeT = TypeVar("OperatorNodeT", bound=foast.LocatedNode)
 
 
 def with_altered_scalar_kind(
@@ -247,7 +250,7 @@ class FieldOperatorTypeDeduction(traits.VisitorWithSymbolTableTrait, NodeTransla
     """
 
     @classmethod
-    def apply(cls, node: foast.FunctionDefinition) -> foast.FunctionDefinition:
+    def apply(cls, node: OperatorNodeT) -> OperatorNodeT:
         typed_foast_node = cls().visit(node)
 
         FieldOperatorTypeDeductionCompletnessValidator.apply(typed_foast_node)
@@ -831,10 +834,10 @@ class FieldOperatorTypeDeduction(traits.VisitorWithSymbolTableTrait, NodeTransla
             )
 
         return_type = type_info.apply_to_primitive_constituents(
-            value.type,
             lambda primitive_type: with_altered_scalar_kind(
                 primitive_type, getattr(ts.ScalarKind, new_type.id.upper())
             ),
+            value.type,
         )
         assert isinstance(return_type, (ts.TupleType, ts.ScalarType, ts.FieldType))
 

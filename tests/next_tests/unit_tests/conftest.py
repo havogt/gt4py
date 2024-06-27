@@ -35,18 +35,6 @@ except ModuleNotFoundError as e:
 import next_tests
 
 
-@pytest.fixture(
-    params=[
-        transforms.LiftMode.FORCE_INLINE,
-        transforms.LiftMode.USE_TEMPORARIES,
-        transforms.LiftMode.SIMPLE_HEURISTIC,
-    ],
-    ids=lambda p: f"lift_mode={p.name}",
-)
-def lift_mode(request):
-    return request.param
-
-
 OPTIONAL_PROCESSORS = []
 if dace_iterator:
     OPTIONAL_PROCESSORS.append((next_tests.definitions.OptionalProgramBackendId.DACE_CPU, True))
@@ -62,6 +50,7 @@ if dace_iterator:
     params=[
         (None, True),
         (next_tests.definitions.ProgramBackendId.ROUNDTRIP, True),
+        (next_tests.definitions.ProgramBackendId.ROUNDTRIP_WITH_TEMPORARIES, True),
         (next_tests.definitions.ProgramBackendId.DOUBLE_ROUNDTRIP, True),
         (next_tests.definitions.ProgramBackendId.GTFN_CPU, True),
         (next_tests.definitions.ProgramBackendId.GTFN_CPU_IMPERATIVE, True),
@@ -69,7 +58,6 @@ if dace_iterator:
         # pytest.param((definitions.ProgramBackendId.GTFN_GPU, True), marks=pytest.mark.requires_gpu), # TODO(havogt): update tests to use proper allocation
         (next_tests.definitions.ProgramFormatterId.LISP_FORMATTER, False),
         (next_tests.definitions.ProgramFormatterId.ITIR_PRETTY_PRINTER, False),
-        (next_tests.definitions.ProgramFormatterId.ITIR_TYPE_CHECKER, False),
         (next_tests.definitions.ProgramFormatterId.GTFN_CPP_FORMATTER, False),
     ]
     + OPTIONAL_PROCESSORS,

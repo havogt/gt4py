@@ -20,24 +20,31 @@ from gt4py.next.iterator import ir as itir
 from gt4py.next.type_system import type_specifications as ts, type_translation
 
 
-def sym(sym_or_name: Union[str, itir.Sym]) -> itir.Sym:
+def sym(sym_or_name: Union[str, itir.Sym], type_: str | ts.TypeSpec | None = None) -> itir.Sym:
     """
     Convert to Sym if necessary.
 
     Examples
     --------
     >>> sym("a")
-    Sym(id=SymbolName('a'), kind=None, dtype=None)
+    Sym(id=SymbolName('a'))
 
     >>> sym(itir.Sym(id="b"))
-    Sym(id=SymbolName('b'), kind=None, dtype=None)
+    Sym(id=SymbolName('b'))
+
+    >>> a = sym("a", "float32")
+    >>> a.id, a.type
+    (SymbolName('a'), ScalarType(kind=<ScalarKind.FLOAT32: 1032>, shape=None))
     """
     if isinstance(sym_or_name, itir.Sym):
+        assert not type_
         return sym_or_name
-    return itir.Sym(id=sym_or_name)
+    return itir.Sym(id=sym_or_name, type=ensure_type(type_))
 
 
-def ref(ref_or_name: Union[str, itir.SymRef]) -> itir.SymRef:
+def ref(
+    ref_or_name: Union[str, itir.SymRef], type_: str | ts.TypeSpec | None = None
+) -> itir.SymRef:
     """
     Convert to SymRef if necessary.
 
@@ -48,10 +55,15 @@ def ref(ref_or_name: Union[str, itir.SymRef]) -> itir.SymRef:
 
     >>> ref(itir.SymRef(id="b"))
     SymRef(id=SymbolRef('b'))
+
+    >>> a = ref("a", "float32")
+    >>> a.id, a.type
+    (SymbolRef('a'), ScalarType(kind=<ScalarKind.FLOAT32: 1032>, shape=None))
     """
     if isinstance(ref_or_name, itir.SymRef):
+        assert not type_
         return ref_or_name
-    return itir.SymRef(id=ref_or_name)
+    return itir.SymRef(id=ref_or_name, type=ensure_type(type_))
 
 
 def ensure_expr(literal_or_expr: Union[str, core_defs.Scalar, itir.Expr]) -> itir.Expr:
@@ -64,7 +76,7 @@ def ensure_expr(literal_or_expr: Union[str, core_defs.Scalar, itir.Expr]) -> iti
     SymRef(id=SymbolRef('a'))
 
     >>> ensure_expr(3)
-    Literal(value='3', type='int32')
+    Literal(value='3', type=ScalarType(kind=<ScalarKind.INT32: 32>, shape=None))
 
     >>> ensure_expr(itir.OffsetLiteral(value="i"))
     OffsetLiteral(value='i')
@@ -94,6 +106,13 @@ def ensure_offset(str_or_offset: Union[str, int, itir.OffsetLiteral]) -> itir.Of
     return str_or_offset
 
 
+def ensure_type(type_: str | ts.TypeSpec | None) -> ts.TypeSpec | None:
+    if isinstance(type_, str):
+        return ts.ScalarType(kind=getattr(ts.ScalarKind, type_.upper()))
+    assert isinstance(type_, ts.TypeSpec) or type_ is None
+    return type_
+
+
 class lambda_:
     """
     Create a lambda from params and an expression.
@@ -101,7 +120,7 @@ class lambda_:
     Examples
     --------
     >>> lambda_("a")(deref("a"))  # doctest: +ELLIPSIS
-    Lambda(params=[Sym(id=SymbolName('a'), kind=None, dtype=None)], expr=FunCall(fun=SymRef(id=SymbolRef('deref')), args=[SymRef(id=SymbolRef('a'))]))
+    Lambda(params=[Sym(id=SymbolName('a'))], expr=FunCall(fun=SymRef(id=SymbolRef('deref')), args=[SymRef(id=SymbolRef('a'))]))
     """
 
     def __init__(self, *args):
@@ -118,7 +137,7 @@ class call:
     Examples
     --------
     >>> call("plus")(1, 1)
-    FunCall(fun=SymRef(id=SymbolRef('plus')), args=[Literal(value='1', type='int32'), Literal(value='1', type='int32')])
+    FunCall(fun=SymRef(id=SymbolRef('plus')), args=[Literal(value='1', type=ScalarType(kind=<ScalarKind.INT32: 32>, shape=None)), Literal(value='1', type=ScalarType(kind=<ScalarKind.INT32: 32>, shape=None))])
     """
 
     def __init__(self, expr):
@@ -291,8 +310,8 @@ def shift(offset, value=None):
     return call(call("shift")(*args))
 
 
-def literal(value: str, typename: str):
-    return itir.Literal(value=value, type=typename)
+def literal(value: str, typename: str) -> itir.Literal:
+    return itir.Literal(value=value, type=ensure_type(typename))
 
 
 def literal_from_value(val: core_defs.Scalar) -> itir.Literal:
@@ -300,13 +319,13 @@ def literal_from_value(val: core_defs.Scalar) -> itir.Literal:
     Make a literal node from a value.
 
     >>> literal_from_value(1.0)
-    Literal(value='1.0', type='float64')
+    Literal(value='1.0', type=ScalarType(kind=<ScalarKind.FLOAT64: 1064>, shape=None))
     >>> literal_from_value(1)
-    Literal(value='1', type='int32')
+    Literal(value='1', type=ScalarType(kind=<ScalarKind.INT32: 32>, shape=None))
     >>> literal_from_value(2147483648)
-    Literal(value='2147483648', type='int64')
+    Literal(value='2147483648', type=ScalarType(kind=<ScalarKind.INT64: 64>, shape=None))
     >>> literal_from_value(True)
-    Literal(value='True', type='bool')
+    Literal(value='True', type=ScalarType(kind=<ScalarKind.BOOL: 1>, shape=None))
     """
     if not isinstance(val, core_defs.Scalar):  # type: ignore[arg-type] # mypy bug #11673
         raise ValueError(f"Value must be a scalar, got '{type(val).__name__}'.")
@@ -321,7 +340,7 @@ def literal_from_value(val: core_defs.Scalar) -> itir.Literal:
     typename = type_spec.kind.name.lower()
     assert typename in itir.TYPEBUILTINS
 
-    return itir.Literal(value=str(val), type=typename)
+    return literal(str(val), typename)
 
 
 def neighbors(offset, it):
