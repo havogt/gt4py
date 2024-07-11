@@ -42,6 +42,7 @@ from next_tests.integration_tests.cases import (
     E2V,
     V2E,
     E2VDim,
+    Edge,
     IDim,
     Ioff,
     JDim,
@@ -49,7 +50,6 @@ from next_tests.integration_tests.cases import (
     Koff,
     V2EDim,
     Vertex,
-    Edge,
     cartesian_case,
     unstructured_case,
 )
@@ -60,6 +60,14 @@ from next_tests.integration_tests.feature_tests.ffront_tests.ffront_test_utils i
 
 
 def test_copy(cartesian_case):
+    @gtx.field_operator
+    def testee(a: cases.IJKField) -> cases.IJKField:
+        return a
+
+    cases.verify_with_default_data(cartesian_case, testee, ref=lambda a: a)
+
+
+def test_copy_with_tuple(cartesian_case):
     @gtx.field_operator
     def testee(a: cases.IJKField) -> cases.IJKField:
         field_tuple = (a, a)

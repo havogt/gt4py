@@ -30,6 +30,9 @@ class InlineFundefs(PreserveLocationVisitor, NodeTranslator):
     def visit_FencilDefinition(self, node: ir.FencilDefinition):
         return self.generic_visit(node, symtable=node.annex.symtable)
 
+    def visit_Program(self, node: ir.Program):
+        return self.generic_visit(node, symtable=node.annex.symtable)
+
 
 class PruneUnreferencedFundefs(PreserveLocationVisitor, NodeTranslator):
     def visit_FunctionDefinition(
