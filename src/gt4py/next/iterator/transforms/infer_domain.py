@@ -83,11 +83,12 @@ def infer_as_fieldop(
     # temporary id.
     tmp_uid_gen = eve_utils.UIDGenerator(prefix="__dom_inf")
     for in_field in inputs:
-        if isinstance(in_field, itir.FunCall):
+        if isinstance(in_field, itir.FunCall) or isinstance(in_field, itir.Literal):
             id_ = tmp_uid_gen.sequential_id()
-        else:
-            assert isinstance(in_field, itir.SymRef), in_field
+        elif isinstance(in_field, itir.SymRef):
             id_ = in_field.id
+        else:
+            raise ValueError(f"Unsupported type {type(in_field)}")
         input_ids.append(id_)
 
     if isinstance(input_domain, itir.FunCall):
@@ -108,9 +109,10 @@ def infer_as_fieldop(
 
             # Merge accessed_domains and accessed_domains_tmp
             accessed_domains = _merge_domains(accessed_domains, accessed_domains_tmp)
-        else:
-            assert isinstance(in_field, itir.SymRef)
+        elif isinstance(in_field, itir.SymRef) or isinstance(in_field, itir.Literal):
             transformed_inputs.append(in_field)
+        else:
+            raise ValueError(f"Unsupported type {type(in_field)}")
 
     transformed_call = im.as_fieldop(stencil, SymbolicDomain.as_expr(input_domain))(
         *transformed_inputs
@@ -196,7 +198,6 @@ def infer_program(
         if isinstance(set_at.expr, itir.SymRef):
             transformed_set_ats.insert(0, set_at)
             continue
-
         assert isinstance(set_at.expr, itir.FunCall)
         assert isinstance(
             set_at.target, itir.SymRef

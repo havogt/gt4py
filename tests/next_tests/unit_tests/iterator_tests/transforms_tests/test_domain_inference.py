@@ -15,18 +15,21 @@
 # TODO(SF-N): test scan operator
 
 import copy
-import numpy as np
 from typing import List
-from gt4py.next.iterator.ir_utils import common_pattern_matcher as cpm, ir_makers as im
-from gt4py.next.iterator import ir as itir
-from gt4py.next.iterator.transforms.infer_domain import infer_as_fieldop, infer_program, infer_let
-from gt4py.next.iterator.transforms.global_tmps import SymbolicDomain, AUTO_DOMAIN
+
+import numpy as np
 import pytest
+
 from gt4py.eve.extended_typing import Dict
+from gt4py.next import NeighborTableOffsetProvider, common
 from gt4py.next.common import Dimension, DimensionKind
-from gt4py.next import common, NeighborTableOffsetProvider
-from gt4py.next.type_system import type_specifications as ts
+from gt4py.next.iterator import ir as itir
+from gt4py.next.iterator.ir_utils import common_pattern_matcher as cpm, ir_makers as im
 from gt4py.next.iterator.transforms.constant_folding import ConstantFolding
+from gt4py.next.iterator.transforms.global_tmps import AUTO_DOMAIN, SymbolicDomain
+from gt4py.next.iterator.transforms.infer_domain import infer_as_fieldop, infer_let, infer_program
+from gt4py.next.type_system import type_specifications as ts
+
 
 float_type = ts.ScalarType(kind=ts.ScalarKind.FLOAT64)
 
@@ -192,7 +195,9 @@ def program_constant_folding(program_call: itir.Program) -> itir.Program:
     for j, tmp in enumerate(new_call.declarations):
         tmp.domain = domain_constant_folding(tmp.domain)
     for j, set_at in enumerate(new_call.body):
-        if isinstance(set_at.expr.fun, itir.FunCall) and cpm.is_call_to(
+        if isinstance(set_at.expr, itir.SymRef):
+            continue
+        elif isinstance(set_at.expr.fun, itir.FunCall) and cpm.is_call_to(
             set_at.expr.fun, "as_fieldop"
         ):
             set_at.expr = as_fieldop_domains_constant_folding(set_at.expr)
@@ -274,6 +279,27 @@ def test_shift_x_y_two_inputs(offset_provider):
         offset_provider,
         im.ref("in_field1"),
         im.ref("in_field2"),
+    )
+
+
+def test_shift_x_y_two_inputs_literal(offset_provider):
+    stencil = im.lambda_("arg0", "arg1")(
+        im.plus(
+            im.deref(im.shift(itir.SymbolRef("Ioff"), -1)("arg0")),
+            im.deref(im.shift(itir.SymbolRef("Joff"), 1)("arg1")),
+        )
+    )
+    domain = im.domain(common.GridType.CARTESIAN, {"IDim": (0, 11), "JDim": (0, 7)})
+    expected_domains_dict = {
+        "in_field1": {"IDim": (-1, 10), "JDim": (0, 7)},
+    }
+    run_test_as_fieldop(
+        stencil,
+        domain,
+        expected_domains_dict,
+        offset_provider,
+        im.ref("in_field1"),
+        2,
     )
 
 
