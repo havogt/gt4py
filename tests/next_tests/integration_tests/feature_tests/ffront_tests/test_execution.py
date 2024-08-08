@@ -178,7 +178,6 @@ def test_tuples(cartesian_case):
     )
 
 
-@pytest.mark.gtir_bug
 def test_scalar_arg(unstructured_case):
     """Test scalar argument being turned into 0-dim field."""
 
@@ -194,7 +193,6 @@ def test_scalar_arg(unstructured_case):
     )
 
 
-@pytest.mark.gtir_bug
 def test_nested_scalar_arg(unstructured_case):
     @gtx.field_operator
     def testee_inner(a: int32) -> cases.VField:
@@ -1134,7 +1132,6 @@ def test_tuple_unpacking_too_few_values(cartesian_case):
             return a
 
 
-@pytest.mark.gtir_bug
 def test_constant_closure_vars(cartesian_case):
     from gt4py.eve.utils import FrozenNamespace
 
