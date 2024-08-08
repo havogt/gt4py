@@ -145,8 +145,6 @@ def fencil_generator(
         )
         ir = fencil_to_program.FencilToProgram.apply(ir)
 
-    ir = fencil_to_program.FencilToProgram.apply(ir)
-
     program = EmbeddedDSL.apply(ir)
 
     # format output in debug mode for better debuggability
