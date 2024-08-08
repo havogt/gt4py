@@ -30,6 +30,7 @@ from gt4py.next.otf import languages, stages, step_types, workflow
 from gt4py.next.otf.binding import interface
 from gt4py.next.otf.compilation import cache
 from gt4py.next.otf.languages import LanguageSettings
+from gt4py.next.program_processors.runners.dace_fieldview import gtir_to_sdfg
 from gt4py.next.type_system import type_specifications as ts, type_translation as tt
 
 from . import get_sdfg_args
@@ -58,20 +59,26 @@ class DaCeTranslator(
 
     def generate_sdfg(
         self,
-        program: itir.FencilDefinition,
+        program: itir.Program,
         arg_types: list[ts.TypeSpec],
         offset_provider: dict[str, common.Dimension | common.Connectivity],
         column_axis: Optional[common.Dimension],
     ) -> dace.SDFG:
-        # FIXME[#1582](edopao): Generate SDFG and run SDFG transformation for program optimization
-        raise NotImplementedError
+        from gt4py.next.iterator.transforms import infer_domain, inline_fundefs, inline_lambdas
+
+        program = inline_fundefs.InlineFundefs().visit(program)
+        program = inline_fundefs.PruneUnreferencedFundefs().visit(program)
+        program = inline_lambdas.InlineLambdas.apply(program)
+        program = infer_domain.infer_program(program, offset_provider=offset_provider)
+        print(program)
+        return gtir_to_sdfg.build_sdfg_from_gtir(program=program, offset_provider=offset_provider)
 
     def __call__(
         self, inp: stages.ProgramCall
     ) -> stages.ProgramSource[languages.SDFG, LanguageSettings]:
-        """Generate DaCe SDFG file from the ITIR definition."""
+        """Generate DaCe SDFG file from the GTIR definition."""
         program = inp.program
-        assert isinstance(program, itir.FencilDefinition)
+        assert isinstance(program, itir.Program)
         arg_types = [tt.from_value(arg) for arg in inp.args]
 
         sdfg = self.generate_sdfg(
