@@ -64,11 +64,22 @@ class DaCeTranslator(
         offset_provider: dict[str, common.Dimension | common.Connectivity],
         column_axis: Optional[common.Dimension],
     ) -> dace.SDFG:
-        from gt4py.next.iterator.transforms import infer_domain, inline_fundefs, inline_lambdas
+        from gt4py.next.iterator.transforms import (
+            collapse_tuple,
+            infer_domain,
+            inline_fundefs,
+            inline_lambdas,
+        )
 
         program = inline_fundefs.InlineFundefs().visit(program)
         program = inline_fundefs.PruneUnreferencedFundefs().visit(program)
         program = inline_lambdas.InlineLambdas.apply(program)
+        try:
+            program = collapse_tuple.CollapseTuple.apply(
+                program
+            )  # uses type inference and therefore should only run after domain propagation, but makes some simple cases work for now
+        except:
+            ...
         program = infer_domain.infer_program(program, offset_provider=offset_provider)
         print(program)
         sdfg = gtir_to_sdfg.build_sdfg_from_gtir(program=program, offset_provider=offset_provider)
