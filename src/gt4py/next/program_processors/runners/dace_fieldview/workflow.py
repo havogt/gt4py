@@ -71,7 +71,9 @@ class DaCeTranslator(
         program = inline_lambdas.InlineLambdas.apply(program)
         program = infer_domain.infer_program(program, offset_provider=offset_provider)
         print(program)
-        return gtir_to_sdfg.build_sdfg_from_gtir(program=program, offset_provider=offset_provider)
+        sdfg = gtir_to_sdfg.build_sdfg_from_gtir(program=program, offset_provider=offset_provider)
+        sdfg.view()
+        return sdfg
 
     def __call__(
         self, inp: stages.ProgramCall

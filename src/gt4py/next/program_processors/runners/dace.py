@@ -46,9 +46,6 @@ class DaCeWorkflowFactory(factory.Factory):
     translation = factory.SubFactory(
         DaCeTranslationStepFactory,
         device_type=factory.SelfAttribute("..device_type"),
-        use_field_canonical_representation=factory.SelfAttribute(
-            "..use_field_canonical_representation"
-        ),
     )
     bindings = _no_bindings
     compilation = factory.SubFactory(
@@ -84,9 +81,7 @@ class DaCeWorkflowFactory(factory.Factory):
 
 
 run_dace_cpu = next_backend.Backend(
-    executor=modular_executor.ModularExecutor(
-        otf_workflow=DaCeWorkflowFactory(use_field_canonical_representation=True), name="dace_cpu"
-    ),
+    executor=modular_executor.ModularExecutor(otf_workflow=DaCeWorkflowFactory(), name="dace_cpu"),
     allocator=next_allocators.StandardCPUFieldBufferAllocator(),
     transforms_fop=next_backend.FieldopTransformWorkflow(
         past_to_itir=past_to_itir.PastToItirFactory(to_gtir=True),

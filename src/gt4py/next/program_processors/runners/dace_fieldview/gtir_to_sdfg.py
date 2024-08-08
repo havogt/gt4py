@@ -177,8 +177,14 @@ class GTIRToSDFG(eve.NodeVisitor, SDFGBuilder):
             sdfg.add_array(name, sym_shape, dtype, strides=sym_strides, transient=transient)
         elif isinstance(symbol_type, ts.ScalarType):
             dtype = dace_fieldview_util.as_dace_type(symbol_type)
-            # scalar arguments passed to the program are represented as symbols in DaCe SDFG
-            sdfg.add_symbol(name, dtype)
+            # Scalar arguments passed to the program are represented as symbols in DaCe SDFG.
+            # The field size is sometimes passed as scalar argument to the program, so we have to
+            # check if the shape symbol was already allocated by `_make_array_shape_and_strides`.
+            # We assume that the scalar argument for field size always follows the field argument.
+            if name in sdfg.symbols:
+                assert sdfg.symbols[name].dtype == dtype
+            else:
+                sdfg.add_symbol(name, dtype)
         else:
             raise RuntimeError(f"Data type '{type(symbol_type)}' not supported.")
 
