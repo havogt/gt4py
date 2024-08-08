@@ -42,6 +42,7 @@ from next_tests.integration_tests.cases import (
     E2V,
     V2E,
     E2VDim,
+    Edge,
     IDim,
     Ioff,
     JDim,
@@ -49,7 +50,6 @@ from next_tests.integration_tests.cases import (
     Koff,
     V2EDim,
     Vertex,
-    Edge,
     cartesian_case,
     unstructured_case,
 )
@@ -165,6 +165,7 @@ def test_fold_shifts(cartesian_case):
     cases.verify(cartesian_case, testee, a, b, out=out, ref=a.ndarray[1:] + b.ndarray[2:])
 
 
+@pytest.mark.uses_tuple_expr
 def test_tuples(cartesian_case):
     @gtx.field_operator
     def testee(a: cases.IJKFloatField, b: cases.IJKFloatField) -> cases.IJKFloatField:
@@ -177,6 +178,7 @@ def test_tuples(cartesian_case):
     )
 
 
+@pytest.mark.gtir_bug
 def test_scalar_arg(unstructured_case):
     """Test scalar argument being turned into 0-dim field."""
 
@@ -192,6 +194,7 @@ def test_scalar_arg(unstructured_case):
     )
 
 
+@pytest.mark.gtir_bug
 def test_nested_scalar_arg(unstructured_case):
     @gtx.field_operator
     def testee_inner(a: int32) -> cases.VField:
@@ -330,6 +333,7 @@ def test_single_value_field(cartesian_case):
     cases.verify(cartesian_case, testee_prog, a, inout=a[1, 3], ref=ref)
 
 
+@pytest.mark.gtir_bug
 def test_astype_int(cartesian_case):
     @gtx.field_operator
     def testee(a: cases.IFloatField) -> gtx.Field[[IDim], int64]:
@@ -404,6 +408,7 @@ def test_astype_on_tuples(cartesian_case):
     )
 
 
+@pytest.mark.gtir_bug
 def test_astype_bool_field(cartesian_case):
     @gtx.field_operator
     def testee(a: cases.IFloatField) -> gtx.Field[[IDim], bool]:
@@ -415,6 +420,7 @@ def test_astype_bool_field(cartesian_case):
     )
 
 
+@pytest.mark.gtir_bug
 @pytest.mark.parametrize("inp", [0.0, 2.0])
 def test_astype_bool_scalar(cartesian_case, inp):
     @gtx.field_operator
@@ -426,6 +432,7 @@ def test_astype_bool_scalar(cartesian_case, inp):
     cases.verify(cartesian_case, testee, inp, out=out, ref=bool(inp))
 
 
+@pytest.mark.gtir_bug
 def test_astype_float(cartesian_case):
     @gtx.field_operator
     def testee(a: cases.IFloatField) -> gtx.Field[[IDim], np.float32]:
@@ -440,6 +447,7 @@ def test_astype_float(cartesian_case):
     )
 
 
+@pytest.mark.gtir_bug
 @pytest.mark.uses_dynamic_offsets
 def test_offset_field(cartesian_case):
     ref = np.full(
@@ -474,6 +482,7 @@ def test_offset_field(cartesian_case):
     assert np.allclose(out.asnumpy(), ref)
 
 
+@pytest.mark.uses_tuple_expr
 def test_nested_tuple_return(cartesian_case):
     @gtx.field_operator
     def pack_tuple(
@@ -489,6 +498,7 @@ def test_nested_tuple_return(cartesian_case):
     cases.verify_with_default_data(cartesian_case, combine, ref=lambda a, b: a + a + b)
 
 
+@pytest.mark.gtir_bug
 @pytest.mark.uses_unstructured_shift
 @pytest.mark.uses_reduction_over_lift_expressions
 def test_nested_reduction(unstructured_case):
@@ -553,6 +563,7 @@ def test_tuple_return_2(unstructured_case):
     )
 
 
+@pytest.mark.uses_tuple_expr
 @pytest.mark.uses_unstructured_shift
 @pytest.mark.uses_constant_fields
 def test_tuple_with_local_field_in_reduction_shifted(unstructured_case):
@@ -648,6 +659,7 @@ def test_solve_triag(cartesian_case):
     cases.verify_with_default_data(cartesian_case, solve_tridiag, ref=expected)
 
 
+@pytest.mark.gtir_bug
 @pytest.mark.parametrize("left, right", [(2, 3), (3, 2)])
 def test_ternary_operator(cartesian_case, left, right):
     @gtx.field_operator
@@ -693,6 +705,7 @@ def test_ternary_operator_tuple(cartesian_case, left, right):
     )
 
 
+@pytest.mark.gtir_bug
 @pytest.mark.uses_constant_fields
 @pytest.mark.uses_unstructured_shift
 @pytest.mark.uses_reduction_over_lift_expressions
@@ -712,6 +725,7 @@ def test_ternary_builtin_neighbor_sum(unstructured_case):
     )
 
 
+@pytest.mark.gtir_bug
 @pytest.mark.uses_scan
 def test_ternary_scan(cartesian_case):
     if cartesian_case.executor in [gtfn.run_gtfn_with_temporaries]:
@@ -970,6 +984,7 @@ def test_domain_input_bounds_1(cartesian_case):
     )
 
 
+@pytest.mark.uses_tuple_expr
 def test_domain_tuple(cartesian_case):
     @gtx.field_operator
     def fieldop_domain_tuple(
@@ -1025,6 +1040,7 @@ def test_zero_dims_fields(cartesian_case):
     cases.verify(cartesian_case, implicit_broadcast_scalar, inp, out=out, ref=np.array(0))
 
 
+@pytest.mark.gtir_bug
 def test_implicit_broadcast_mixed_dim(cartesian_case):
     @gtx.field_operator
     def fieldop_implicit_broadcast(
@@ -1118,6 +1134,7 @@ def test_tuple_unpacking_too_few_values(cartesian_case):
             return a
 
 
+@pytest.mark.gtir_bug
 def test_constant_closure_vars(cartesian_case):
     from gt4py.eve.utils import FrozenNamespace
 

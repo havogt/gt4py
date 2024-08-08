@@ -86,7 +86,7 @@ def infer_as_fieldop(
         if isinstance(in_field, itir.FunCall):
             id_ = tmp_uid_gen.sequential_id()
         else:
-            assert isinstance(in_field, itir.SymRef)
+            assert isinstance(in_field, itir.SymRef), in_field
             id_ = in_field.id
         input_ids.append(id_)
 
@@ -193,6 +193,10 @@ def infer_program(
 
     for set_at in reversed(program.body):
         assert isinstance(set_at, itir.SetAt)
+        if isinstance(set_at.expr, itir.SymRef):
+            transformed_set_ats.insert(0, set_at)
+            continue
+
         assert isinstance(set_at.expr, itir.FunCall)
         assert isinstance(
             set_at.target, itir.SymRef
@@ -210,6 +214,8 @@ def infer_program(
             transformed_call, current_accessed_domains = infer_let(
                 set_at.expr, accessed_domains[set_at.target.id], offset_provider
             )
+        else:
+            raise NotImplementedError(f"{set_at.expr.fun}")
         transformed_set_ats.insert(
             0,
             itir.SetAt(

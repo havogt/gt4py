@@ -448,10 +448,20 @@ class FieldOperator(GTCallable, Generic[OperatorNodeT]):
             self, definition_stage=dataclasses.replace(self.definition_stage, grid_type=grid_type)
         )
 
-    def __gt_itir__(self) -> itir.FunctionDefinition:
-        if self.backend is not None and self.backend.transforms_fop is not None:
-            return self.backend.transforms_fop.foast_to_itir(self.foast_stage)
-        return next_backend.DEFAULT_FIELDOP_TRANSFORMS.foast_to_itir(self.foast_stage)
+    def __gt_itir__(self, to_gtir=False) -> itir.FunctionDefinition:
+        if to_gtir:
+            # TODO remove this hack
+            from gt4py.next.ffront import foast_to_gtir
+            from gt4py.next.otf import workflow
+
+            foast_to_gtir = workflow.CachedStep(
+                step=foast_to_gtir.foast_to_gtir, hash_function=ffront_stages.fingerprint_stage
+            )
+            return foast_to_gtir(self.foast_stage)
+        else:
+            if self.backend is not None and self.backend.transforms_fop is not None:
+                return self.backend.transforms_fop.foast_to_itir(self.foast_stage)
+            return next_backend.DEFAULT_FIELDOP_TRANSFORMS.foast_to_itir(self.foast_stage)
 
     def __gt_closure_vars__(self) -> dict[str, Any]:
         return self.foast_stage.closure_vars

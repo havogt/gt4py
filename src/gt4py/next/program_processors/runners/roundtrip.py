@@ -29,7 +29,13 @@ from gt4py.eve.codegen import FormatTemplate as as_fmt, MakoTemplate as as_mako
 from gt4py.next import allocators as next_allocators, backend as next_backend, common, config
 from gt4py.next.ffront import foast_to_gtir, past_to_itir, stages as ffront_stages
 from gt4py.next.iterator import embedded, ir as itir, transforms as itir_transforms
-from gt4py.next.iterator.transforms import fencil_to_program
+from gt4py.next.iterator.transforms import (
+    collapse_tuple,
+    fencil_to_program,
+    infer_domain,
+    inline_fundefs,
+    inline_lambdas,
+)
 from gt4py.next.otf import stages, workflow
 from gt4py.next.program_processors import modular_executor, processor_interface as ppi
 from gt4py.next.type_system import type_specifications as ts
@@ -121,9 +127,23 @@ def fencil_generator(
             print(f"Using cached fencil for key {cache_key}")
         return _FENCIL_CACHE[cache_key]
 
-    ir = itir_transforms.apply_common_transforms(
-        ir, lift_mode=lift_mode, offset_provider=offset_provider
-    )
+    if isinstance(ir, itir.Program):
+        # TODO should not be here
+        ir = inline_fundefs.InlineFundefs().visit(ir)
+        ir = inline_lambdas.InlineLambdas.apply(ir)
+        try:
+            ir = collapse_tuple.CollapseTuple.apply(
+                ir
+            )  # uses type inference and therefore should only run after domain propagation, but makes some simple cases work for now
+        except:
+            ...
+        print(ir)
+        ir = infer_domain.infer_program(ir, offset_provider=offset_provider)
+    else:
+        ir = itir_transforms.apply_common_transforms(
+            ir, lift_mode=lift_mode, offset_provider=offset_provider
+        )
+        ir = fencil_to_program.FencilToProgram.apply(ir)
 
     ir = fencil_to_program.FencilToProgram.apply(ir)
 

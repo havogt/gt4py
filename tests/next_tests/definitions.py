@@ -122,12 +122,14 @@ USES_REDUCTION_WITH_ONLY_SPARSE_FIELDS = "uses_reduction_with_only_sparse_fields
 USES_STRIDED_NEIGHBOR_OFFSET = "uses_strided_neighbor_offset"
 USES_TUPLE_ARGS = "uses_tuple_args"
 USES_TUPLE_RETURNS = "uses_tuple_returns"
+USES_TUPLE_EXPR = "uses_tuple_expr"
 USES_ZERO_DIMENSIONAL_FIELDS = "uses_zero_dimensional_fields"
 USES_CARTESIAN_SHIFT = "uses_cartesian_shift"
 USES_UNSTRUCTURED_SHIFT = "uses_unstructured_shift"
 USES_MAX_OVER = "uses_max_over"
 USES_MESH_WITH_SKIP_VALUES = "uses_mesh_with_skip_values"
 CHECKS_SPECIFIC_ERROR = "checks_specific_error"
+GTIR_BUG = "gtir_bug"
 
 # Skip messages (available format keys: 'marker', 'backend')
 UNSUPPORTED_MESSAGE = "'{marker}' tests not supported by '{backend}' backend"
@@ -164,6 +166,13 @@ EMBEDDED_SKIP_LIST = [
         UNSUPPORTED_MESSAGE,
     ),  # we can't extract the field type from scan args
 ]
+GTIR_EMBEDDED_SKIP_LIST = [
+    (USES_TUPLE_ARGS, XFAIL, UNSUPPORTED_MESSAGE),
+    (USES_TUPLE_RETURNS, XFAIL, UNSUPPORTED_MESSAGE),
+    (USES_TUPLE_EXPR, XFAIL, UNSUPPORTED_MESSAGE),
+    (GTIR_BUG, XFAIL, UNSUPPORTED_MESSAGE),
+    (USES_SCAN, XFAIL, UNSUPPORTED_MESSAGE),
+]
 GTFN_SKIP_TEST_LIST = COMMON_SKIP_TEST_LIST + [
     # floordiv not yet supported, see https://github.com/GridTools/gt4py/issues/1136
     (USES_FLOORDIV, XFAIL, BINDINGS_UNSUPPORTED_MESSAGE),
@@ -197,4 +206,5 @@ BACKEND_SKIP_TEST_MATRIX = {
         (USES_DYNAMIC_OFFSETS, XFAIL, UNSUPPORTED_MESSAGE),
         (USES_STRIDED_NEIGHBOR_OFFSET, XFAIL, UNSUPPORTED_MESSAGE),
     ],
+    ProgramBackendId.GTIR_EMBEDDED: GTIR_EMBEDDED_SKIP_LIST,
 }
