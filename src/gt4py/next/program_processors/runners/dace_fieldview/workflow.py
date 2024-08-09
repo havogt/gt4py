@@ -81,9 +81,8 @@ class DaCeTranslator(
         except:
             ...
         program = infer_domain.infer_program(program, offset_provider=offset_provider)
-        print(program)
         sdfg = gtir_to_sdfg.build_sdfg_from_gtir(program=program, offset_provider=offset_provider)
-        sdfg.view()
+        # sdfg.view()
         return sdfg
 
     def __call__(
