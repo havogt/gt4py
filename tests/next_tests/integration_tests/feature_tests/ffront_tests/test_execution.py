@@ -331,7 +331,6 @@ def test_single_value_field(cartesian_case):
     cases.verify(cartesian_case, testee_prog, a, inout=a[1, 3], ref=ref)
 
 
-@pytest.mark.gtir_bug
 def test_astype_int(cartesian_case):
     @gtx.field_operator
     def testee(a: cases.IFloatField) -> gtx.Field[[IDim], int64]:
@@ -406,7 +405,6 @@ def test_astype_on_tuples(cartesian_case):
     )
 
 
-@pytest.mark.gtir_bug
 def test_astype_bool_field(cartesian_case):
     @gtx.field_operator
     def testee(a: cases.IFloatField) -> gtx.Field[[IDim], bool]:
@@ -418,7 +416,6 @@ def test_astype_bool_field(cartesian_case):
     )
 
 
-@pytest.mark.gtir_bug
 @pytest.mark.parametrize("inp", [0.0, 2.0])
 def test_astype_bool_scalar(cartesian_case, inp):
     @gtx.field_operator
@@ -430,7 +427,6 @@ def test_astype_bool_scalar(cartesian_case, inp):
     cases.verify(cartesian_case, testee, inp, out=out, ref=bool(inp))
 
 
-@pytest.mark.gtir_bug
 def test_astype_float(cartesian_case):
     @gtx.field_operator
     def testee(a: cases.IFloatField) -> gtx.Field[[IDim], np.float32]:
