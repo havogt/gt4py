@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import abc
 import dataclasses
+import warnings
 from typing import Any, Dict, List, Protocol, Sequence, Set, Tuple, Union
 
 import dace
@@ -287,6 +288,12 @@ class GTIRToSDFG(eve.NodeVisitor, SDFGBuilder):
             head_state._debuginfo = dace_fieldview_util.debug_info(stmt, default=sdfg.debuginfo)
             self.visit(stmt, sdfg=sdfg, state=head_state)
 
+        # Create the call signature for the SDFG.
+        #  Only the arguments required by the GT4Py program, i.e. `node.params`, are added
+        #  as positional arguments. The implicit arguments, such as the offset providers or
+        #  the arguments created by the translation process, must be passed as keywords arguments.
+        sdfg.arg_names = [str(a) for a in node.params]
+
         sdfg.validate()
         return sdfg
 
@@ -311,19 +318,24 @@ class GTIRToSDFG(eve.NodeVisitor, SDFGBuilder):
             assert not target_array.transient
             target_symbol_type = self.global_symbols[target_node.data]
 
-            if isinstance(target_symbol_type, ts.FieldType):
-                subset = ",".join(
-                    f"{domain[dim][0]}:{domain[dim][1]}" for dim in target_symbol_type.dims
-                )
+            if expr_node.data == target_node.data:
+                # handle extreme case encountered in test_execution.py::test_single_value_field
+                # for program IR like 'a @ c⟨ IDimₕ: [1, 2), KDimᵥ: [3, 4) ⟩ ← a'
+                warnings.warn("Inout argument is trying to copy to itself", stacklevel=2)
+                state.remove_nodes_from([expr_node, target_node])
             else:
-                assert len(domain) == 0
-                subset = "0"
+                if isinstance(target_symbol_type, ts.FieldType):
+                    subset = ",".join(
+                        f"{domain[dim][0]}:{domain[dim][1]}" for dim in target_symbol_type.dims
+                    )
+                else:
+                    subset = "0"
 
-            state.add_nedge(
-                expr_node,
-                target_node,
-                dace.Memlet(data=target_node.data, subset=subset),
-            )
+                state.add_nedge(
+                    expr_node,
+                    target_node,
+                    dace.Memlet(data=target_node.data, subset=subset),
+                )
 
     def visit_FunCall(
         self,
