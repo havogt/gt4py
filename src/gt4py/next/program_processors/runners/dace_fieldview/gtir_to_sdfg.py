@@ -335,13 +335,14 @@ class GTIRToSDFG(eve.NodeVisitor, SDFGBuilder):
                 # for program IR like 'a @ c⟨ IDimₕ: [1, 2), KDimᵥ: [3, 4) ⟩ ← a'
                 warnings.warn("Inout argument is trying to copy to itself", stacklevel=2)
                 state.remove_nodes_from([expr_node, target_node])
+                continue
+
+            if isinstance(target_symbol_type, ts.FieldType):
+                subset = ",".join(
+                    f"{domain[dim][0]}:{domain[dim][1]}" for dim in target_symbol_type.dims
+                )
             else:
-                if isinstance(target_symbol_type, ts.FieldType):
-                    subset = ",".join(
-                        f"{domain[dim][0]}:{domain[dim][1]}" for dim in target_symbol_type.dims
-                    )
-                else:
-                    subset = "0"
+                subset = "0"
 
             if target_node.data in expr_input_args:
                 # if inout argument, write the result in separate next state
