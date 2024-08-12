@@ -345,8 +345,8 @@ def test_astype_int(cartesian_case):
     )
 
 
-@pytest.mark.uses_tuple_returns
 @pytest.mark.gtir_bug
+@pytest.mark.uses_tuple_returns
 def test_astype_on_tuples(cartesian_case):
     @gtx.field_operator
     def field_op_returning_a_tuple(
@@ -538,6 +538,7 @@ def test_nested_reduction_shift_first(unstructured_case):
     )
 
 
+@pytest.mark.gtir_bug
 @pytest.mark.uses_unstructured_shift
 @pytest.mark.uses_tuple_returns
 def test_tuple_return_2(unstructured_case):
@@ -558,6 +559,7 @@ def test_tuple_return_2(unstructured_case):
     )
 
 
+@pytest.mark.gtir_bug
 @pytest.mark.uses_tuple_expr
 @pytest.mark.uses_unstructured_shift
 @pytest.mark.uses_constant_fields
@@ -654,7 +656,6 @@ def test_solve_triag(cartesian_case):
     cases.verify_with_default_data(cartesian_case, solve_tridiag, ref=expected)
 
 
-@pytest.mark.gtir_bug
 @pytest.mark.parametrize("left, right", [(2, 3), (3, 2)])
 def test_ternary_operator(cartesian_case, left, right):
     @gtx.field_operator
@@ -720,7 +721,6 @@ def test_ternary_builtin_neighbor_sum(unstructured_case):
     )
 
 
-@pytest.mark.gtir_bug
 @pytest.mark.uses_scan
 def test_ternary_scan(cartesian_case):
     if cartesian_case.executor in [gtfn.run_gtfn_with_temporaries]:
@@ -1035,7 +1035,6 @@ def test_zero_dims_fields(cartesian_case):
     cases.verify(cartesian_case, implicit_broadcast_scalar, inp, out=out, ref=np.array(0))
 
 
-@pytest.mark.gtir_bug
 def test_implicit_broadcast_mixed_dim(cartesian_case):
     @gtx.field_operator
     def fieldop_implicit_broadcast(
