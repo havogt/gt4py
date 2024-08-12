@@ -17,7 +17,7 @@ from typing import Callable, Iterable, Optional, Union
 
 from gt4py._core import definitions as core_defs
 from gt4py.eve.extended_typing import Dict, Tuple
-from gt4py.next import Field, common
+from gt4py.next import common
 from gt4py.next.iterator import ir as itir
 from gt4py.next.type_system import type_specifications as ts, type_translation
 

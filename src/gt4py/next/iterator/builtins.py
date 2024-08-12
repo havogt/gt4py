@@ -99,6 +99,11 @@ def if_(*args):
 
 
 @builtin_dispatch
+def cond(*args):
+    raise BackendNotSelectedError()
+
+
+@builtin_dispatch
 def cast_(*args):
     raise BackendNotSelectedError()
 
@@ -420,6 +425,7 @@ BUILTINS = {
     "make_tuple",
     "tuple_get",
     "if_",
+    "cond",
     "cast_",
     "greater",
     "less",

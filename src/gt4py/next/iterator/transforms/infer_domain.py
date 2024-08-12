@@ -213,22 +213,23 @@ def infer_cond(
     offset_provider: Dict[str, Dimension],
 ) -> Tuple[itir.FunCall, Dict[str, SymbolicDomain]]:
     assert isinstance(applied_cond, itir.FunCall) and cpm.is_call_to(applied_cond, "cond")
-    assert (
-        isinstance(applied_cond.args[0], bool)
-        and isinstance(applied_cond.args[1], itir.FunCall)
-        and isinstance(applied_cond.args[2], itir.FunCall)
+    # assert (
+    #     isinstance(applied_cond.args[0], bool)
+    #     and isinstance(applied_cond.args[1], itir.FunCall)
+    #     and isinstance(applied_cond.args[2], itir.FunCall)
+    # )
+    call_true, domains_true = process_expr(applied_cond.args[1], input_domain, offset_provider)
+    call_false, domains_false = process_expr(applied_cond.args[2], input_domain, offset_provider)
+    call_cond, _ = process_expr(
+        applied_cond.args[0], SymbolicDomain(input_domain.grid_type, {}), offset_provider
     )
-    call_true, domains_true = infer_as_fieldop(applied_cond.args[1], input_domain, offset_provider)
-    call_false, domains_false = infer_as_fieldop(
-        applied_cond.args[2], input_domain, offset_provider
-    )
-    return im.cond(applied_cond.args[0], call_true, call_false), _merge_domains(
-        domains_true, domains_false
-    )
+    return im.cond(call_cond, call_true, call_false), _merge_domains(domains_true, domains_false)
 
 
 def _validate_temporary_usage(body: list[itir.Stmt], temporaries: list[str]):
     assigned_targets = set()
+    if not temporaries:
+        return
     for stmt in body:
         assert isinstance(stmt, itir.SetAt)  # TODO: extend for if-statements when they land
         assert isinstance(
@@ -238,6 +239,17 @@ def _validate_temporary_usage(body: list[itir.Stmt], temporaries: list[str]):
             raise ValueError("Temporaries can only be used once within a program.")
         if stmt.target.id in temporaries:
             assigned_targets.add(stmt.target.id)
+
+
+def _set_at_target_ids(set_at_target):
+    if isinstance(set_at_target, itir.SymRef):
+        yield set_at_target.id
+    elif isinstance(set_at_target, itir.FunCall) and set_at_target.fun == itir.SymRef(
+        id="make_tuple"
+    ):
+        yield from _set_at_target_ids(arg for arg in set_at_target.args)
+    else:
+        raise NotImplementedError("")
 
 
 def infer_program(
@@ -257,16 +269,20 @@ def infer_program(
             transformed_set_ats.insert(0, set_at)
             continue
         assert isinstance(set_at.expr, itir.FunCall)
-        assert isinstance(
-            set_at.target, itir.SymRef
-        )  # TODO: stmt.target can be an expr, e.g. make_tuple
-        if set_at.target.id in temporaries:
+        # assert isinstance(
+        #     set_at.target, itir.SymRef
+        # )  # TODO: stmt.target can be an expr, e.g. make_tuple
+        target_ids = [*_set_at_target_ids(set_at.target)]
+        first_id = target_ids[0]
+        if first_id in temporaries:
             # ignore temporaries as their domain is the `AUTO_DOMAIN` placeholder
             assert set_at.domain == AUTO_DOMAIN
         else:
-            accessed_domains[set_at.target.id] = SymbolicDomain.from_expr(set_at.domain)
+            for target_id in target_ids:
+                accessed_domains[target_id] = SymbolicDomain.from_expr(set_at.domain)
+
         transformed_call, current_accessed_domains = process_expr(
-            set_at.expr, accessed_domains[set_at.target.id], offset_provider
+            set_at.expr, accessed_domains[first_id], offset_provider
         )
         # if cpm.is_call_to(set_at.expr.fun, "as_fieldop"):
         #     transformed_call, current_accessed_domains = infer_as_fieldop(

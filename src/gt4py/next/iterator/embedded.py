@@ -348,6 +348,13 @@ def if_(cond, t, f):
     return t if cond else f
 
 
+@builtins.if_.register(EMBEDDED)
+def cond(cond_, t, f):
+    if hasattr(cond_, "as_scalar"):
+        cond_ = cond_.as_scalar()
+    return t if cond_ else f
+
+
 @builtins.cast_.register(EMBEDDED)
 def cast_(obj, new_dtype):
     if isinstance(obj, Column):
