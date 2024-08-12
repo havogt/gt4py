@@ -75,6 +75,8 @@ def process_expr(
         return expr, {}
     elif isinstance(expr.fun, itir.Lambda):
         return infer_let(expr, domain, offset_provider)
+    elif cpm.is_call_to(expr, "cond"):
+        return infer_cond(expr, domain, offset_provider)
     elif cpm.is_call_to(expr.fun, "as_fieldop"):
         return infer_as_fieldop(expr, domain, offset_provider)
     elif cpm.is_call_to(expr, "make_tuple"):
@@ -203,6 +205,26 @@ def infer_tuple_get(tuple_get_expr, input_domain, offset_provider):
         tuple_get_expr.args[1], input_domain, offset_provider
     )
     return im.tuple_get(tuple_get_expr.args[0], transformed_elem), accessed_domain
+
+
+def infer_cond(
+    applied_cond: itir.FunCall,
+    input_domain: SymbolicDomain | itir.FunCall,
+    offset_provider: Dict[str, Dimension],
+) -> Tuple[itir.FunCall, Dict[str, SymbolicDomain]]:
+    assert isinstance(applied_cond, itir.FunCall) and cpm.is_call_to(applied_cond, "cond")
+    assert (
+        isinstance(applied_cond.args[0], bool)
+        and isinstance(applied_cond.args[1], itir.FunCall)
+        and isinstance(applied_cond.args[2], itir.FunCall)
+    )
+    call_true, domains_true = infer_as_fieldop(applied_cond.args[1], input_domain, offset_provider)
+    call_false, domains_false = infer_as_fieldop(
+        applied_cond.args[2], input_domain, offset_provider
+    )
+    return im.cond(applied_cond.args[0], call_true, call_false), _merge_domains(
+        domains_true, domains_false
+    )
 
 
 def _validate_temporary_usage(body: list[itir.Stmt], temporaries: list[str]):
