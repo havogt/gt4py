@@ -243,11 +243,14 @@ def _validate_temporary_usage(body: list[itir.Stmt], temporaries: list[str]):
 
 def _set_at_target_ids(set_at_target):
     if isinstance(set_at_target, itir.SymRef):
-        yield set_at_target.id
+        return [set_at_target.id]
     elif isinstance(set_at_target, itir.FunCall) and set_at_target.fun == itir.SymRef(
         id="make_tuple"
     ):
-        yield from _set_at_target_ids(arg for arg in set_at_target.args)
+        res = []
+        for arg in set_at_target.args:
+            res.extend(_set_at_target_ids(arg))
+        return res
     else:
         raise NotImplementedError("")
 
@@ -298,7 +301,7 @@ def infer_program(
             0,
             itir.SetAt(
                 expr=transformed_call,
-                domain=SymbolicDomain.as_expr(accessed_domains[set_at.target.id]),
+                domain=SymbolicDomain.as_expr(accessed_domains[first_id]),
                 target=set_at.target,
             ),
         )
