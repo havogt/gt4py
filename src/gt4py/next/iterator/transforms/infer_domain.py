@@ -66,6 +66,25 @@ def extract_shifts_and_translate_domains(
         accessed_domains[in_field_id] = domain_union(new_domains)
 
 
+def process_expr(
+    expr: itir.FunCall, domain: SymbolicDomain | itir.FunCall, offset_provider
+) -> Tuple[itir.FunCall, Dict[str, SymbolicDomain]]:
+    if isinstance(expr, itir.SymRef):
+        return expr, {expr.id: domain}
+    elif isinstance(expr, itir.Literal):
+        return expr, {}
+    elif isinstance(expr.fun, itir.Lambda):
+        return infer_let(expr, domain, offset_provider)
+    elif cpm.is_call_to(expr.fun, "as_fieldop"):
+        return infer_as_fieldop(expr, domain, offset_provider)
+    elif cpm.is_call_to(expr, "make_tuple"):
+        return infer_make_tuple(expr, domain, offset_provider)
+    elif cpm.is_call_to(expr, "tuple_get"):
+        return infer_tuple_get(expr, domain, offset_provider)
+    else:
+        raise ValueError(f"Unsupported function call: {expr.fun}")
+
+
 def infer_as_fieldop(
     applied_fieldop: itir.FunCall,
     input_domain: SymbolicDomain | itir.FunCall,
@@ -102,9 +121,12 @@ def infer_as_fieldop(
     transformed_inputs: list[itir.Expr] = []
     for in_field_id, in_field in zip(input_ids, inputs):
         if isinstance(in_field, itir.FunCall):
-            transformed_input, accessed_domains_tmp = infer_as_fieldop(
+            transformed_input, accessed_domains_tmp = process_expr(
                 in_field, accessed_domains[in_field_id], offset_provider
             )
+            # transformed_input, accessed_domains_tmp = infer_as_fieldop(
+            #     in_field, accessed_domains[in_field_id], offset_provider
+            # )
             transformed_inputs.append(transformed_input)
 
             # Merge accessed_domains and accessed_domains_tmp
@@ -137,24 +159,16 @@ def infer_let(
 
     accessed_domains: Dict[str, SymbolicDomain] = {}
 
-    def process_expr(
-        expr: itir.FunCall, domain: SymbolicDomain | itir.FunCall
-    ) -> Tuple[itir.FunCall, Dict[str, SymbolicDomain]]:
-        if isinstance(expr.fun, itir.Lambda):
-            return infer_let(expr, domain, offset_provider)
-        elif cpm.is_call_to(expr.fun, "as_fieldop"):
-            return infer_as_fieldop(expr, domain, offset_provider)
-        else:
-            raise ValueError(f"Unsupported function call: {expr.fun}")
-
-    transformed_calls_expr, accessed_domains_expr = process_expr(applied_let.fun.expr, input_domain)
+    transformed_calls_expr, accessed_domains_expr = process_expr(
+        applied_let.fun.expr, input_domain, offset_provider
+    )
 
     transformed_calls_args: list[itir.FunCall] = []
     for arg in applied_let.args:
         assert isinstance(arg, itir.FunCall)
         param_id = applied_let.fun.params[0].id
         transformed_calls_arg, accessed_domains_arg = process_expr(
-            arg, accessed_domains_expr[param_id]
+            arg, accessed_domains_expr[param_id], offset_provider
         )
         transformed_calls_args.append(transformed_calls_arg)
         accessed_domains = _merge_domains(accessed_domains, accessed_domains_arg)
@@ -167,6 +181,28 @@ def infer_let(
     )(transformed_calls_expr)
 
     return transformed_call, accessed_domains
+
+
+def infer_make_tuple(make_tuple_expr: itir.FunCall, input_domain, offset_provider):
+    accessed_domain = {}
+
+    transformed_calls_args = []
+    for arg in make_tuple_expr.args:
+        transformed_calls_arg, accessed_domains_arg = process_expr(
+            arg, input_domain, offset_provider
+        )
+        transformed_calls_args.append(transformed_calls_arg)
+        accessed_domain = _merge_domains(accessed_domain, accessed_domains_arg)
+
+    transformed_call = im.make_tuple(*transformed_calls_args)
+    return transformed_call, accessed_domain
+
+
+def infer_tuple_get(tuple_get_expr, input_domain, offset_provider):
+    transformed_elem, accessed_domain = process_expr(
+        tuple_get_expr.args[1], input_domain, offset_provider
+    )
+    return im.tuple_get(tuple_get_expr.args[0], transformed_elem), accessed_domain
 
 
 def _validate_temporary_usage(body: list[itir.Stmt], temporaries: list[str]):
@@ -207,16 +243,19 @@ def infer_program(
             assert set_at.domain == AUTO_DOMAIN
         else:
             accessed_domains[set_at.target.id] = SymbolicDomain.from_expr(set_at.domain)
-        if cpm.is_call_to(set_at.expr.fun, "as_fieldop"):
-            transformed_call, current_accessed_domains = infer_as_fieldop(
-                set_at.expr, accessed_domains[set_at.target.id], offset_provider
-            )
-        elif isinstance(set_at.expr.fun, itir.Lambda):
-            transformed_call, current_accessed_domains = infer_let(
-                set_at.expr, accessed_domains[set_at.target.id], offset_provider
-            )
-        else:
-            raise NotImplementedError(f"{set_at.expr.fun}")
+        transformed_call, current_accessed_domains = process_expr(
+            set_at.expr, accessed_domains[set_at.target.id], offset_provider
+        )
+        # if cpm.is_call_to(set_at.expr.fun, "as_fieldop"):
+        #     transformed_call, current_accessed_domains = infer_as_fieldop(
+        #         set_at.expr, accessed_domains[set_at.target.id], offset_provider
+        #     )
+        # elif isinstance(set_at.expr.fun, itir.Lambda):
+        #     transformed_call, current_accessed_domains = infer_let(
+        #         set_at.expr, accessed_domains[set_at.target.id], offset_provider
+        #     )
+        # else:
+        #     raise NotImplementedError(f"{set_at.expr.fun}")
         transformed_set_ats.insert(
             0,
             itir.SetAt(

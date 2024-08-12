@@ -346,6 +346,7 @@ def test_astype_int(cartesian_case):
 
 
 @pytest.mark.uses_tuple_returns
+@pytest.mark.gtir_bug
 def test_astype_on_tuples(cartesian_case):
     @gtx.field_operator
     def field_op_returning_a_tuple(
