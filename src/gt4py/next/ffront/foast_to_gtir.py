@@ -251,13 +251,11 @@ class FieldOperatorLowering(PreserveLocationVisitor, NodeTranslator):
                 raise NotImplementedError(f"'{node.op}' is only supported on 'bool' arguments.")
             return self._map("not_", node.operand)
 
-        raise NotImplementedError("TODO neg/pos")
-
-    #     return self._map(
-    #         node.op.value,
-    #         foast.Constant(value="0", type=dtype, location=node.location),
-    #         node.operand,
-    #     )
+        return self._map(
+            node.op.value,
+            foast.Constant(value="0", type=dtype, location=node.location),
+            node.operand,
+        )
 
     def visit_BinOp(self, node: foast.BinOp, **kwargs: Any) -> itir.FunCall:
         return self._map(node.op.value, node.left, node.right)
