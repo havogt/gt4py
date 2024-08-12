@@ -19,12 +19,17 @@ Note: this test module covers the fieldview flavour of ITIR.
 
 import copy
 import functools
+
+import numpy as np
+import pytest
+
 from gt4py.next import common as gtx_common
 from gt4py.next.iterator import ir as gtir
 from gt4py.next.iterator.ir_utils import ir_makers as im
 from gt4py.next.iterator.type_system import type_specifications as gtir_ts
 from gt4py.next.program_processors.runners import dace_fieldview as dace_backend
 from gt4py.next.type_system import type_specifications as ts
+
 from next_tests.integration_tests.feature_tests.ffront_tests.ffront_test_utils import (
     Cell,
     Edge,
@@ -35,8 +40,7 @@ from next_tests.integration_tests.feature_tests.ffront_tests.ffront_test_utils i
     simple_mesh,
     skip_value_mesh,
 )
-import numpy as np
-import pytest
+
 
 pytestmark = pytest.mark.requires_dace
 
@@ -133,34 +137,37 @@ def test_gtir_copy():
     assert np.allclose(a, b)
 
 
-def test_gtir_copy_self():
+def test_gtir_tuple_return():
     domain = im.call("cartesian_domain")(
-        im.call("named_range")(gtir.AxisLiteral(value=IDim.value), 1, 2)
+        im.call("named_range")(gtir.AxisLiteral(value=IDim.value), 0, "size")
     )
     testee = gtir.Program(
-        id="gtir_copy_self",
+        id="gtir_tuple_return",
         function_definitions=[],
         params=[
             gtir.Sym(id="x", type=IFTYPE),
+            gtir.Sym(id="y", type=IFTYPE),
             gtir.Sym(id="size", type=SIZE_TYPE),
         ],
         declarations=[],
         body=[
             gtir.SetAt(
-                expr=gtir.SymRef(id="x"),
+                expr=im.make_tuple(im.op_as_fieldop("plus", domain)("x", 1.0), gtir.SymRef(id="x")),
                 domain=domain,
-                target=gtir.SymRef(id="x"),
+                target=im.make_tuple("x", "y"),
             )
         ],
     )
 
     a = np.random.rand(N)
+    b = np.empty_like(a)
     ref = a.copy()
 
     sdfg = dace_backend.build_sdfg_from_gtir(testee, CARTESIAN_OFFSETS)
 
-    sdfg(a, **FSYMBOLS)
-    assert np.allclose(a, ref)
+    sdfg(x=a, y=b, **FSYMBOLS)
+    assert np.allclose(a, ref + 1)
+    assert np.allclose(b, ref)
 
 
 def test_gtir_update():
