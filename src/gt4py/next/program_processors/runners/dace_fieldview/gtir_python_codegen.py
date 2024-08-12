@@ -84,7 +84,13 @@ def builtin_if(*args: Any) -> str:
     return f"{true_val} if {cond} else {false_val}"
 
 
+def builtin_cast(*args: Any) -> str:
+    val, target_type = args
+    return MATH_BUILTINS_MAPPING[target_type].format(val)
+
+
 GENERAL_BUILTIN_MAPPING: dict[str, Callable[[Any], str]] = {
+    "cast_": builtin_cast,
     "if_": builtin_if,
 }
 
