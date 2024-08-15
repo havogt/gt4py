@@ -223,7 +223,10 @@ def is_floating_point(symbol_type: ts.TypeSpec) -> bool:
     >>> is_floating_point(ts.FieldType(dims=[], dtype=ts.ScalarType(kind=ts.ScalarKind.FLOAT32)))
     True
     """
-    return extract_dtype(symbol_type).kind in [ts.ScalarKind.FLOAT32, ts.ScalarKind.FLOAT64]
+    return isinstance(symbol_type, ts.DataType) and extract_dtype(symbol_type).kind in [
+        ts.ScalarKind.FLOAT32,
+        ts.ScalarKind.FLOAT64,
+    ]
 
 
 def is_integer(symbol_type: ts.TypeSpec) -> bool:
@@ -258,7 +261,7 @@ def is_integral(symbol_type: ts.TypeSpec) -> bool:
     >>> is_integral(ts.FieldType(dims=[], dtype=ts.ScalarType(kind=ts.ScalarKind.INT32)))
     True
     """
-    return is_integer(extract_dtype(symbol_type))
+    return isinstance(symbol_type, ts.DataType) and is_integer(extract_dtype(symbol_type))
 
 
 def is_number(symbol_type: ts.TypeSpec) -> bool:
@@ -488,6 +491,8 @@ def promote(
             raise NotImplementedError("Shape promotion not implemented.")
         return types[0]
     elif all(isinstance(type_, (ts.ScalarType, ts.FieldType)) for type_ in types):
+        for type_ in types:
+            print(extract_dims(type_))
         dims = common.promote_dims(*(extract_dims(type_) for type_ in types))
         dtype = cast(ts.ScalarType, promote(*(extract_dtype(type_) for type_ in types)))
 
