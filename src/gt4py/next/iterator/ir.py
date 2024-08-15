@@ -189,6 +189,7 @@ GTIR_BUILTINS = {
     *BUILTINS,
     "as_fieldop",  # `as_fieldop(stencil, domain)` creates field_operator from stencil (domain is optional, but for now required for embedded execution)
     "cond",  # `cond(expr, field_a, field_b)` creates the field on one branch or the other
+    "index",  # `index(dim)` creates a dim-field that has the current index at each point
 }
 
 
