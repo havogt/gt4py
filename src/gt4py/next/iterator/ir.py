@@ -97,12 +97,17 @@ class StencilClosure(Node):
     domain: FunCall
     stencil: Expr
     output: Union[SymRef, FunCall]
-    inputs: List[SymRef]
+    inputs: List[Union[SymRef, FunCall]]
 
     @datamodels.validator("output")
     def _output_validator(self: datamodels.DataModelTP, attribute: datamodels.Attribute, value):
         if isinstance(value, FunCall) and value.fun != SymRef(id="make_tuple"):
             raise ValueError("Only FunCall to 'make_tuple' allowed.")
+
+    @datamodels.validator("inputs")
+    def _input_validator(self: datamodels.DataModelTP, attribute: datamodels.Attribute, value):
+        if any(isinstance(v, FunCall) and v.fun != SymRef(id="index") for v in value):
+            raise ValueError("Only FunCall to 'index' allowed.")
 
 
 UNARY_MATH_NUMBER_BUILTINS = {"abs"}
@@ -179,6 +184,7 @@ BUILTINS = {
     "can_deref",
     "scan",
     "if_",
+    "index",  # `index(dim)` creates a dim-field that has the current index at each point
     *ARITHMETIC_BUILTINS,
     *TYPEBUILTINS,
 }
@@ -189,7 +195,6 @@ GTIR_BUILTINS = {
     *BUILTINS,
     "as_fieldop",  # `as_fieldop(stencil, domain)` creates field_operator from stencil (domain is optional, but for now required for embedded execution)
     "cond",  # `cond(expr, field_a, field_b)` creates the field on one branch or the other
-    "index",  # `index(dim)` creates a dim-field that has the current index at each point
 }
 
 

@@ -63,12 +63,12 @@ def index_program_simple(out, size):
     )
 
 
-@pytest.mark.starts_from_gtir_program
+# @pytest.mark.starts_from_gtir_program
 def test_index_builtin(program_processor):
     program_processor, validate = program_processor
 
     isize = 10
-    out = gtx.as_field([I], np.zeros(shape=(isize,)))
+    out = gtx.as_field([I], np.zeros(shape=(isize,)), dtype=np.int64)
 
     run_processor(index_program_simple, program_processor, out, isize, offset_provider={})
     if validate:

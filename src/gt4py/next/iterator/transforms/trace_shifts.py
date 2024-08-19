@@ -353,7 +353,8 @@ class TraceShifts(PreserveLocationVisitor, NodeTranslator):
             assert isinstance(node, ir.StencilClosure)
             inputs_shifts = {}
             for inp in node.inputs:
-                inputs_shifts[str(inp.id)] = recorded_shifts[id(inp)]
+                if isinstance(inp, ir.SymRef):
+                    inputs_shifts[str(inp.id)] = recorded_shifts[id(inp)]
             return inputs_shifts
 
         return recorded_shifts
