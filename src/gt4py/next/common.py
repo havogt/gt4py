@@ -595,6 +595,12 @@ def domain(domain_like: DomainLike) -> Domain:
     raise ValueError(f"'{domain_like}' is not 'DomainLike'.")
 
 
+def FieldOffsetProtocol(Protocol):
+    from gt4py.next.type_system import type_specifications as ts
+
+    def __gt_type_translation__(self, field_type: ts.FieldType) -> ts.FieldType: ...
+
+
 def _broadcast_ranges(
     broadcast_dims: Sequence[Dimension], dims: Sequence[Dimension], ranges: Sequence[UnitRange]
 ) -> tuple[UnitRange, ...]:

@@ -303,7 +303,19 @@ class FieldOffset(runtime.Offset):
             raise ValueError("Second dimension in offset must be a local dimension.")
 
     def __gt_type__(self) -> ts.OffsetType:
-        return ts.OffsetType(source=self.source, target=self.target)
+        def foo(dims: list[Dimension]):
+            new_dims = []
+            for d in dims:
+                if d == self.source:
+                    new_dims.extend(self.target)
+                else:
+                    new_dims.append(d)
+            return new_dims
+
+        return ts.OffsetType(source=self.source, target=self.target, translator=foo)
+
+    # def __gt_type_translation__(self, field: ts.FieldType) -> ts.FieldType:
+    #     return field
 
     def __getitem__(self, offset: int) -> common.ConnectivityField:
         """Serve as a connectivity factory."""

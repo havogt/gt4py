@@ -7,7 +7,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 from dataclasses import dataclass
-from typing import Iterator, Optional, Sequence, Union
+from typing import Callable, Iterator, Optional, Sequence, Union
 
 from gt4py.eve.type_definitions import IntEnum
 from gt4py.eve.utils import content_hash
@@ -65,6 +65,7 @@ class DimensionType(TypeSpec):
 class OffsetType(TypeSpec):
     source: func_common.Dimension
     target: tuple[func_common.Dimension] | tuple[func_common.Dimension, func_common.Dimension]
+    translator: Optional[Callable]
 
     def __str__(self) -> str:
         return f"Offset[{self.source}, {self.target}]"

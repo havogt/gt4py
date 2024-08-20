@@ -651,8 +651,19 @@ class FieldOperatorTypeDeduction(traits.VisitorWithSymbolTableTrait, NodeTransla
 
     def visit_Call(self, node: foast.Call, **kwargs: Any) -> foast.Call:
         new_func = self.visit(node.func, **kwargs)
+
         new_args = self.visit(node.args, **kwargs)
         new_kwargs = self.visit(node.kwargs, **kwargs)
+        if isinstance(new_func.type, ts.FieldType):
+            new_dims = new_args[0].type.translator(new_func.type.dims)
+            return_type = ts.FieldType(dims=new_dims, dtype=new_func.type.dtype)
+            return foast.Call(
+                func=new_func,
+                args=new_args,
+                kwargs=new_kwargs,
+                location=node.location,
+                type=return_type,
+            )
 
         func_type = new_func.type
         arg_types = [arg.type for arg in new_args]
