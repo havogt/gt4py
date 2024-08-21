@@ -6,8 +6,11 @@
 # Please, refer to the LICENSE file in the root directory.
 # SPDX-License-Identifier: BSD-3-Clause
 
+from __future__ import annotations
+
 import builtins
 import collections.abc
+import dataclasses
 import functools
 import types
 import typing
@@ -166,6 +169,18 @@ def from_type_hint(
     raise ValueError(f"'{type_hint}' type is not supported.")
 
 
+@dataclasses.dataclass(frozen=True)
+class LazyModuleType(ts.TypeSpec):
+    _module: types.ModuleType
+
+    def __getattr__(self, key: str) -> ts.TypeSpec:
+        value = getattr(self._module, key)
+        return from_value(value)
+
+    def __deepcopy__(self, _: dict[int, Any]) -> LazyModuleType:
+        return LazyModuleType(self._module)  # don't deep copy the module
+
+
 def from_value(value: Any) -> ts.TypeSpec:
     # TODO(tehrengruber): use protocol from gt4py.next.common when available
     #  instead of importing from the embedded implementation
@@ -204,6 +219,8 @@ def from_value(value: Any) -> ts.TypeSpec:
         elems = [from_value(el) for el in value]
         assert all(isinstance(elem, ts.DataType) for elem in elems)
         return ts.TupleType(types=elems)  # type: ignore[arg-type] # checked in assert
+    elif isinstance(value, types.ModuleType):
+        return LazyModuleType(_module=value)
     else:
         type_ = xtyping.infer_type(value, annotate_callable_kwargs=True)
         symbol_type = from_type_hint(type_)
