@@ -190,7 +190,9 @@ def test_as_from_dtype(dtype):
 
 
 def test_from_value_module():
-    assert isinstance(type_translation.from_value(dummy_package), type_translation.LazyModuleType)
+    assert isinstance(
+        type_translation.from_value(dummy_package), type_translation.UnknownPythonObject
+    )
     assert type_translation.from_value(dummy_package).dummy_module.dummy_int == ts.ScalarType(
         kind=ts.ScalarKind.INT32
     )

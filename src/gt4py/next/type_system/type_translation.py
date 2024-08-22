@@ -22,6 +22,7 @@ import numpy.typing as npt
 from gt4py._core import definitions as core_defs
 from gt4py.eve import extended_typing as xtyping
 from gt4py.next import common
+from gt4py.next.errors import exceptions
 from gt4py.next.type_system import type_info, type_specifications as ts
 
 
@@ -166,19 +167,19 @@ def from_type_hint(
                 returns=returns,
             )
 
-    raise ValueError(f"'{type_hint}' type is not supported.")
+    raise exceptions.TypeError_(location=None, message=f"'{type_hint}' type is not supported.")
 
 
 @dataclasses.dataclass(frozen=True)
-class LazyModuleType(ts.TypeSpec):
-    _module: types.ModuleType
+class UnknownPythonObject(ts.TypeSpec):
+    _object: Any
 
     def __getattr__(self, key: str) -> ts.TypeSpec:
-        value = getattr(self._module, key)
+        value = getattr(self._object, key)
         return from_value(value)
 
-    def __deepcopy__(self, _: dict[int, Any]) -> LazyModuleType:
-        return LazyModuleType(self._module)  # don't deep copy the module
+    def __deepcopy__(self, _: dict[int, Any]) -> UnknownPythonObject:
+        return UnknownPythonObject(self._object)  # don't deep copy the module
 
 
 def from_value(value: Any) -> ts.TypeSpec:
@@ -219,15 +220,17 @@ def from_value(value: Any) -> ts.TypeSpec:
         elems = [from_value(el) for el in value]
         assert all(isinstance(elem, ts.DataType) for elem in elems)
         return ts.TupleType(types=elems)  # type: ignore[arg-type] # checked in assert
-    elif isinstance(value, types.ModuleType):
-        return LazyModuleType(_module=value)
     else:
         type_ = xtyping.infer_type(value, annotate_callable_kwargs=True)
-        symbol_type = from_type_hint(type_)
+        try:
+            symbol_type = from_type_hint(type_)
+        except exceptions.TypeError_:
+            # valid unknown objects could be ModuleType, classes etc that are used to extract typeable objects
+            symbol_type = UnknownPythonObject(_object=value)
 
-    if isinstance(symbol_type, (ts.DataType, ts.OffsetType, ts.DimensionType)) or (
-        isinstance(symbol_type, ts.CallableType) and isinstance(symbol_type, ts.TypeSpec)
-    ):
+    if isinstance(
+        symbol_type, (ts.DataType, ts.OffsetType, ts.DimensionType, UnknownPythonObject)
+    ) or (isinstance(symbol_type, ts.CallableType) and isinstance(symbol_type, ts.TypeSpec)):
         return symbol_type
     else:
         raise ValueError(f"Impossible to map '{value}' value to a 'Symbol'.")
