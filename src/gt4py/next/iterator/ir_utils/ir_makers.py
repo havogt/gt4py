@@ -10,7 +10,7 @@ import typing
 from typing import Callable, Optional, Union
 
 from gt4py._core import definitions as core_defs
-from gt4py.next import Field, common
+from gt4py.next import common
 from gt4py.next.iterator import ir as itir
 from gt4py.next.type_system import type_specifications as ts, type_translation
 

@@ -474,7 +474,11 @@ class SymbolicDomain:
                     self.ranges[current_dim], val.value
                 )
             elif isinstance(nbt_provider, common.Connectivity):
-                assert isinstance(off.value, str) and (isinstance(val.value, int) or val.value in [trace_shifts.Sentinel.ALL_NEIGHBORS, trace_shifts.Sentinel.VALUE])
+                assert isinstance(off.value, str) and (
+                    isinstance(val.value, int)
+                    or val.value
+                    in [trace_shifts.Sentinel.ALL_NEIGHBORS, trace_shifts.Sentinel.VALUE]
+                )
                 # unstructured shift
                 # note: ugly but cheap re-computation, but should disappear
                 horizontal_sizes = _max_domain_sizes_by_location_type(offset_provider)

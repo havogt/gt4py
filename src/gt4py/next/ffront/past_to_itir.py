@@ -48,7 +48,9 @@ class PastToItir(workflow.ChainableWorkflowMixin):
         gt_callables = transform_utils._filter_closure_vars_by_type(
             all_closure_vars, gtcallable.GTCallable
         ).values()
-        lowered_funcs = [gt_callable.__gt_itir__(to_gtir=self.to_gtir) for gt_callable in gt_callables]
+        lowered_funcs = [
+            gt_callable.__gt_itir__(to_gtir=self.to_gtir) for gt_callable in gt_callables
+        ]
 
         itir_program = ProgramLowering.apply(
             inp.past_node,
