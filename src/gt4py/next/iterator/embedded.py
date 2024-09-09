@@ -333,7 +333,7 @@ def can_deref(it):
     return it.can_deref()
 
 
-@builtins.if_.register(EMBEDDED)
+@builtins.cond.register(EMBEDDED)
 def cond(cond_, t, f):
     if hasattr(cond_, "as_scalar"):
         cond_ = cond_.as_scalar()
