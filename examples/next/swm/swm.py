@@ -146,7 +146,7 @@ def apply_periodic_boundary_z(z: gtx.Field):
 
 
 @gtx.field_operator
-def avg_x(q: gtx.Field[[X, Y], float]) -> gtx.Field[[X + half, X], float]:
+def avg_x(q: gtx.Field[[X, Y], float]) -> gtx.Field[[X + half, Y], float]:
     return 0.5 * (q(X + 0.5) + q(X - 0.5))
 
 
@@ -168,7 +168,7 @@ def delta_y(dy: float, q: gtx.Field[[X, Y], float]) -> gtx.Field[[X, Y + Half], 
 @gtx.field_operator
 def calc_cucvzh(
     u: gtx.Field[î, J], v: gtx.Field[I, Ĵ], p: gtx.Field[I, J], dx: float, dy: float
-) -> gtx.Field[I, J]:
+) -> gtx.Field[î, Ĵ]:
     cu = avg_x(p) * u
     cv = avg_y(p) * v
     h = p + 0.5 * (avg_x(u * u) + avg_y(v * v))
