@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 import abc
-import itertools
+import dataclasses
 from typing import TYPE_CHECKING, Optional, Protocol, TypeAlias
 
 import dace
@@ -32,7 +32,15 @@ if TYPE_CHECKING:
 
 
 IteratorIndexDType: TypeAlias = dace.int32  # type of iterator indexes
-TemporaryData: TypeAlias = tuple[dace.nodes.Node, ts.FieldType | ts.ScalarType]
+
+
+@dataclasses.dataclass(frozen=True)
+class Field:
+    data_node: dace.nodes.AccessNode
+    data_type: ts.FieldType | ts.ScalarType
+
+
+FieldopResult: TypeAlias = Field | tuple["FieldopResult", ...]
 
 
 class PrimitiveTranslator(Protocol):
@@ -44,7 +52,7 @@ class PrimitiveTranslator(Protocol):
         state: dace.SDFGState,
         sdfg_builder: gtir_to_sdfg.SDFGBuilder,
         reduce_identity: Optional[gtir_to_tasklet.SymbolExpr],
-    ) -> list[TemporaryData]:
+    ) -> FieldopResult:
         """Creates the dataflow subgraph representing a GTIR primitive function.
 
         This method is used by derived classes to build a specialized subgraph
@@ -67,7 +75,7 @@ class PrimitiveTranslator(Protocol):
         """
 
 
-def _parse_arg_expr(
+def _parse_fieldop_arg(
     node: gtir.Expr,
     sdfg: dace.SDFG,
     state: dace.SDFGState,
@@ -77,21 +85,20 @@ def _parse_arg_expr(
     ],
     reduce_identity: Optional[gtir_to_tasklet.SymbolExpr],
 ) -> gtir_to_tasklet.IteratorExpr | gtir_to_tasklet.MemletExpr:
-    fields: list[TemporaryData] = sdfg_builder.visit(
+    arg = sdfg_builder.visit(
         node,
         sdfg=sdfg,
         head_state=state,
         reduce_identity=reduce_identity,
     )
 
-    assert len(fields) == 1
-    data_node, arg_type = fields[0]
-    # require all argument nodes to be data access nodes (no symbols)
-    assert isinstance(data_node, dace.nodes.AccessNode)
+    # arguments passed to field opeator should be plain fields, not tuples of fields
+    if not isinstance(arg, Field):
+        raise ValueError(f"Received {node} as argument to field operator, expected a field.")
 
-    if isinstance(arg_type, ts.ScalarType):
-        return gtir_to_tasklet.MemletExpr(data_node, sbs.Indices([0]))
-    elif isinstance(arg_type, ts.FieldType):
+    if isinstance(arg.data_type, ts.ScalarType):
+        return gtir_to_tasklet.MemletExpr(arg.data_node, sbs.Indices([0]))
+    elif isinstance(arg.data_type, ts.FieldType):
         indices: dict[gtx_common.Dimension, gtir_to_tasklet.IteratorIndexExpr] = {
             dim: gtir_to_tasklet.SymbolExpr(
                 dace_fieldview_util.get_map_variable(dim),
@@ -99,14 +106,14 @@ def _parse_arg_expr(
             )
             for dim, _, _ in domain
         }
-        dims = arg_type.dims + (
+        dims = arg.data_type.dims + (
             # we add an extra anonymous dimension in the iterator definition to enable
             # dereferencing elements in `ListType`
-            [gtx_common.Dimension("")] if isinstance(arg_type.dtype, gtir_ts.ListType) else []
+            [gtx_common.Dimension("")] if isinstance(arg.data_type.dtype, gtir_ts.ListType) else []
         )
-        return gtir_to_tasklet.IteratorExpr(data_node, dims, indices)
+        return gtir_to_tasklet.IteratorExpr(arg.data_node, dims, indices)
     else:
-        raise NotImplementedError(f"Node type {type(arg_type)} not supported.")
+        raise NotImplementedError(f"Node type {type(arg.data_type)} not supported.")
 
 
 def _create_temporary_field(
@@ -117,7 +124,7 @@ def _create_temporary_field(
     ],
     node_type: ts.FieldType,
     output_desc: dace.data.Data,
-) -> tuple[dace.nodes.AccessNode, ts.FieldType]:
+) -> Field:
     domain_dims, domain_lbs, domain_ubs = zip(*domain)
     field_dims = list(domain_dims)
     field_shape = [
@@ -132,20 +139,21 @@ def _create_temporary_field(
     if isinstance(output_desc, dace.data.Array):
         assert isinstance(node_type.dtype, gtir_ts.ListType)
         field_dtype = node_type.dtype.element_type
-        # extend the result arrays with the local dimensions added by the field operator (e.g. `neighbors`)
+        # extend the array with the local dimensions added by the field operator (e.g. `neighbors`)
         field_shape.extend(output_desc.shape)
-    else:
-        assert isinstance(output_desc, dace.data.Scalar)
+    elif isinstance(output_desc, dace.data.Scalar):
         field_dtype = node_type.dtype
+    else:
+        raise ValueError(f"Cannot create field for dace type {output_desc}.")
 
-    # allocate local temporary storage for the result field
+    # allocate local temporary storage
     temp_name, _ = sdfg.add_temp_transient(
         field_shape, dace_fieldview_util.as_dace_type(field_dtype), offset=field_offset
     )
     field_node = state.add_access(temp_name)
     field_type = ts.FieldType(field_dims, node_type.dtype)
 
-    return field_node, field_type
+    return Field(field_node, field_type)
 
 
 def translate_as_field_op(
@@ -154,7 +162,7 @@ def translate_as_field_op(
     state: dace.SDFGState,
     sdfg_builder: gtir_to_sdfg.SDFGBuilder,
     reduce_identity: Optional[gtir_to_tasklet.SymbolExpr],
-) -> list[TemporaryData]:
+) -> FieldopResult:
     """Generates the dataflow subgraph for the `as_fieldop` builtin function."""
     assert isinstance(node, gtir.FunCall)
     assert cpm.is_call_to(node.fun, "as_fieldop")
@@ -181,7 +189,7 @@ def translate_as_field_op(
 
     # first visit the list of arguments and build a symbol map
     stencil_args = [
-        _parse_arg_expr(arg, sdfg, state, sdfg_builder, domain, reduce_identity)
+        _parse_fieldop_arg(arg, sdfg, state, sdfg_builder, domain, reduce_identity)
         for arg in node.args
     ]
 
@@ -202,7 +210,7 @@ def translate_as_field_op(
         last_node_connector = None
 
     # allocate local temporary storage for the result field
-    field_node, field_type = _create_temporary_field(sdfg, state, domain, node.type, output_desc)
+    result_field = _create_temporary_field(sdfg, state, domain, node.type, output_desc)
 
     # assume tasklet with single output
     output_subset = [dace_fieldview_util.get_map_variable(dim) for dim, _, _ in domain]
@@ -231,12 +239,12 @@ def translate_as_field_op(
     state.add_memlet_path(
         last_node,
         mx,
-        field_node,
+        result_field.data_node,
         src_conn=last_node_connector,
-        memlet=dace.Memlet(data=field_node.data, subset=",".join(output_subset)),
+        memlet=dace.Memlet(data=result_field.data_node.data, subset=",".join(output_subset)),
     )
 
-    return [(field_node, field_type)]
+    return result_field
 
 
 def translate_cond(
@@ -245,7 +253,7 @@ def translate_cond(
     state: dace.SDFGState,
     sdfg_builder: gtir_to_sdfg.SDFGBuilder,
     reduce_identity: Optional[gtir_to_tasklet.SymbolExpr],
-) -> list[TemporaryData]:
+) -> FieldopResult:
     """Generates the dataflow subgraph for the `cond` builtin function."""
     assert cpm.is_call_to(node, "cond")
     assert len(node.args) == 3
@@ -295,32 +303,41 @@ def translate_cond(
         reduce_identity=reduce_identity,
     )
 
-    output_nodes = []
-    for true_br, false_br in zip(true_br_args, false_br_args, strict=True):
-        true_br_node, true_br_type = true_br
-        assert isinstance(true_br_node, dace.nodes.AccessNode)
-        false_br_node, _ = false_br
-        assert isinstance(false_br_node, dace.nodes.AccessNode)
-        desc = true_br_node.desc(sdfg)
-        assert false_br_node.desc(sdfg) == desc
+    def make_temps(x: Field) -> Field:
+        desc = x.data_node.desc(sdfg)
         data_name, _ = sdfg.add_temp_transient_like(desc)
-        output_nodes.append((state.add_access(data_name), true_br_type))
+        data_node = state.add_access(data_name)
 
-        true_br_output_node = true_state.add_access(data_name)
+        return Field(data_node, x.data_type)
+
+    result = dace_fieldview_util.visit_tuples(true_br_args, make_temps)
+
+    true_br_nodes = dace_fieldview_util.flatten_tuples(true_br_args)
+    false_br_nodes = dace_fieldview_util.flatten_tuples(false_br_args)
+    result_nodes = dace_fieldview_util.flatten_tuples(result)
+
+    for true_br, false_br, temp in zip(true_br_nodes, false_br_nodes, result_nodes, strict=True):
+        assert true_br.data_type == false_br.data_type
+        true_br_node = true_br.data_node
+        false_br_node = false_br.data_node
+
+        temp_name = temp.data_node.data
+        temp_desc = temp.data_node.desc(sdfg)
+        true_br_output_node = true_state.add_access(temp_name)
         true_state.add_nedge(
             true_br_node,
             true_br_output_node,
-            dace.Memlet.from_array(data_name, desc),
+            dace.Memlet.from_array(temp_name, temp_desc),
         )
 
-        false_br_output_node = false_state.add_access(data_name)
+        false_br_output_node = false_state.add_access(temp_name)
         false_state.add_nedge(
             false_br_node,
             false_br_output_node,
-            dace.Memlet.from_array(data_name, desc),
+            dace.Memlet.from_array(temp_name, temp_desc),
         )
 
-    return output_nodes
+    return result
 
 
 def _get_data_nodes(
@@ -329,27 +346,23 @@ def _get_data_nodes(
     sdfg_builder: gtir_to_sdfg.SDFGBuilder,
     sym_name: str,
     sym_type: ts.DataType,
-) -> list[TemporaryData]:
-    data_nodes: list[TemporaryData]
+) -> FieldopResult:
     if isinstance(sym_type, ts.FieldType):
         sym_node = state.add_access(sym_name)
-        data_nodes = [(sym_node, sym_type)]
+        return Field(sym_node, sym_type)
     elif isinstance(sym_type, ts.ScalarType):
         sym_node = _get_symbolic_value(
-            sdfg, state, sdfg_builder, sym_name, sym_type, temp_name=sym_name
+            sdfg, state, sdfg_builder, sym_name, sym_type, temp_name=f"__{sym_name}"
         )
-        data_nodes = [(sym_node, sym_type)]
+        return Field(sym_node, sym_type)
     elif isinstance(sym_type, ts.TupleType):
         tuple_fields = dace_fieldview_util.get_tuple_fields(sym_name, sym_type)
-        data_nodes = [
-            data_node
-            for field_name, field_type in tuple_fields
-            for data_node in _get_data_nodes(sdfg, state, sdfg_builder, field_name, field_type)
-        ]
+        return tuple(
+            _get_data_nodes(sdfg, state, sdfg_builder, fname, ftype)
+            for fname, ftype in tuple_fields
+        )
     else:
         raise NotImplementedError(f"Symbol type {type(sym_type)} not supported.")
-
-    return data_nodes
 
 
 def _get_symbolic_value(
@@ -368,7 +381,7 @@ def _get_symbolic_value(
         f"__out = {symbolic_expr}",
     )
     temp_name, _ = sdfg.add_scalar(
-        f"__{temp_name or 'tmp'}",
+        temp_name or sdfg.temp_data_name(),
         dace_fieldview_util.as_dace_type(scalar_type),
         find_new_name=True,
         transient=True,
@@ -390,14 +403,14 @@ def translate_literal(
     state: dace.SDFGState,
     sdfg_builder: gtir_to_sdfg.SDFGBuilder,
     reduce_identity: Optional[gtir_to_tasklet.SymbolExpr],
-) -> list[TemporaryData]:
+) -> FieldopResult:
     """Generates the dataflow subgraph for a `ir.Literal` node."""
     assert isinstance(node, gtir.Literal)
 
     data_type = node.type
     data_node = _get_symbolic_value(sdfg, state, sdfg_builder, node.value, data_type)
 
-    return [(data_node, data_type)]
+    return Field(data_node, data_type)
 
 
 def translate_symbol_ref(
@@ -406,7 +419,7 @@ def translate_symbol_ref(
     state: dace.SDFGState,
     sdfg_builder: gtir_to_sdfg.SDFGBuilder,
     reduce_identity: Optional[gtir_to_tasklet.SymbolExpr],
-) -> list[TemporaryData]:
+) -> FieldopResult:
     """Generates the dataflow subgraph for a `ir.SymRef` node."""
     assert isinstance(node, gtir.SymRef)
 
@@ -416,19 +429,7 @@ def translate_symbol_ref(
     # Create new access node in current state. It is possible that multiple
     # access nodes are created in one state for the same data container.
     # We rely on the dace simplify pass to remove duplicated access nodes.
-    if isinstance(sym_type, (ts.FieldType, ts.ScalarType)):
-        data_nodes = _get_data_nodes(sdfg, state, sdfg_builder, sym_value, sym_type)
-        assert len(data_nodes) == 1
-    elif isinstance(sym_type, (ts.TupleType)):
-        data_nodes = []
-        for field_name, field_type in dace_fieldview_util.get_tuple_fields(
-            sym_value, sym_type, flatten=True
-        ):
-            data_nodes += _get_data_nodes(sdfg, state, sdfg_builder, field_name, field_type)
-    else:
-        raise NotImplementedError(f"Symbol type {type(sym_type)} not supported.")
-
-    return data_nodes
+    return _get_data_nodes(sdfg, state, sdfg_builder, sym_value, sym_type)
 
 
 def translate_make_tuple(
@@ -437,9 +438,9 @@ def translate_make_tuple(
     state: dace.SDFGState,
     sdfg_builder: gtir_to_sdfg.SDFGBuilder,
     reduce_identity: Optional[gtir_to_tasklet.SymbolExpr],
-) -> list[TemporaryData]:
+) -> FieldopResult:
     assert cpm.is_call_to(node, "make_tuple")
-    tuple_args = [
+    return tuple(
         sdfg_builder.visit(
             arg,
             sdfg=sdfg,
@@ -447,8 +448,7 @@ def translate_make_tuple(
             reduce_identity=reduce_identity,
         )
         for arg in node.args
-    ]
-    return list(itertools.chain(*tuple_args))
+    )
 
 
 def translate_tuple_get(
@@ -457,7 +457,7 @@ def translate_tuple_get(
     state: dace.SDFGState,
     sdfg_builder: gtir_to_sdfg.SDFGBuilder,
     reduce_identity: Optional[gtir_to_tasklet.SymbolExpr],
-) -> list[TemporaryData]:
+) -> FieldopResult:
     assert cpm.is_call_to(node, "tuple_get")
     assert len(node.args) == 2
 
@@ -466,37 +466,20 @@ def translate_tuple_get(
     assert node.args[0].type == dace_fieldview_util.as_scalar_type(gtir.INTEGER_INDEX_BUILTIN)
     index = int(node.args[0].value)
 
-    if cpm.is_call_to(node.args[1], "make_tuple"):
-        # trivial case: visit only the tuple element to be returned
-        data_nodes = sdfg_builder.visit(
-            node.args[1].args[index],
-            sdfg=sdfg,
-            head_state=state,
-            reduce_identity=reduce_identity,
-        )
-    elif isinstance(node.args[1], gtir.SymRef):
-        # call to `tuple_get` can appear on the argument itself, in case of tuple arguments
-        sym_name = str(node.args[1].id)
-        sym_type = sdfg_builder.get_symbol_type(sym_name)
-        assert isinstance(sym_type, ts.TupleType)
-        tuple_args = dace_fieldview_util.get_tuple_fields(sym_name, sym_type)
-        field_name, field_type = tuple_args[index]
-        data_nodes = _get_data_nodes(sdfg, state, sdfg_builder, field_name, field_type)
-    else:
-        tuple_args = sdfg_builder.visit(
-            node.args[1],
-            sdfg=sdfg,
-            head_state=state,
-            reduce_identity=reduce_identity,
-        )
-        data_nodes = tuple_args[index : index + 1]
-        # remove isolated access nodes
-        isolated_nodes = [
-            node for i, (node, _) in enumerate(tuple_args) if i != index and state.degree(node) == 0
-        ]
-        state.remove_nodes_from(isolated_nodes)
-
-    return data_nodes
+    data_nodes = sdfg_builder.visit(
+        node.args[1],
+        sdfg=sdfg,
+        head_state=state,
+        reduce_identity=reduce_identity,
+    )
+    if isinstance(data_nodes, Field):
+        raise ValueError(f"Invalid tuple expression {node}")
+    unused_arg_nodes = tuple(arg for i, arg in enumerate(data_nodes) if i != index)
+    unused_access_nodes = [
+        arg.data_node for arg in dace_fieldview_util.flatten_tuples(unused_arg_nodes)
+    ]
+    state.remove_nodes_from([node for node in unused_access_nodes if state.degree(node) == 0])
+    return data_nodes[index]
 
 
 if TYPE_CHECKING:
