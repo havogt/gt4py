@@ -124,6 +124,7 @@ def fencil_generator(
     if isinstance(ir, itir.Program):
         # TODO should not be here
         ir = inline_fundefs.InlineFundefs().visit(ir)
+        ir = inline_fundefs.PruneUnreferencedFundefs().visit(ir)
         ir = inline_lambdas.InlineLambdas.apply(ir, opcount_preserving=True)
         try:
             ir = collapse_tuple.CollapseTuple.apply(
