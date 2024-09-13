@@ -1666,8 +1666,10 @@ def _get_output_type(
 
 
 @builtins.as_fieldop.register(EMBEDDED)
-def as_fieldop(fun: Callable, domain: runtime.CartesianDomain | runtime.UnstructuredDomain):
+def as_fieldop(fun: Callable, domain: runtime.CartesianDomain | runtime.UnstructuredDomain = None):
     def impl(*args):
+        if domain is None:
+            return _UNDEFINED
         xp = field_utils.get_array_ns(*args)
         type_ = _get_output_type(fun, domain, [promote_scalars(arg) for arg in args])
         out = field_utils.field_from_typespec(type_, common.domain(domain), xp)

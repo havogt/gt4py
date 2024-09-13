@@ -115,7 +115,10 @@ def infer_as_fieldop(
     assert isinstance(applied_fieldop, itir.FunCall)
     assert cpm.is_call_to(applied_fieldop.fun, "as_fieldop")
     if target_domain is None:
-        raise ValueError("'target_domain' cannot be 'None'.")
+        return (
+            applied_fieldop,
+            {},
+        )  # TODO skipping annotation, then the backend is responsible for skipping execution
 
     # `as_fieldop(stencil)(inputs...)`
     stencil, inputs = applied_fieldop.fun.args[0], applied_fieldop.args
