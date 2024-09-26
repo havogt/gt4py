@@ -30,14 +30,16 @@ from gt4py.next.type_system.type_translation import from_value
 
 # TODO(ricoh): Add support for the whole range of arguments that can be passed to a fencil.
 def convert_arg(arg: Any) -> Any:
-    if isinstance(arg, tuple):
-        return tuple(convert_arg(a) for a in arg)
-    if isinstance(arg, common.Field):
-        arr = arg.ndarray
-        origin = getattr(arg, "__gt_origin__", tuple([0] * len(arg.domain)))
-        return arr, origin
-    else:
+    try:
+        # arr = arg.ndarray
+        # origin = getattr(arg, "__gt_origin__", tuple([0] * len(arg.domain)))
+        return arg.ndarray, arg.__gt_origin__
+    except:
+        if isinstance(arg, tuple):
+            return tuple(convert_arg(a) for a in arg)
         return arg
+    # else:
+    #     return arg
 
 
 def convert_args(
@@ -51,7 +53,11 @@ def convert_args(
         if out is not None:
             args = (*args, out)
         converted_args = [convert_arg(arg) for arg in args]
-        conn_args = extract_connectivity_args(offset_provider, device)
+        try:
+            conn_args = inp._conn_args
+        except:
+            conn_args = extract_connectivity_args(offset_provider, device)
+            object.__setattr__(inp, "_conn_args", conn_args)
         # generate implicit domain size arguments only if necessary, using `iter_size_args()`
         return inp(
             *converted_args,
@@ -81,24 +87,28 @@ def extract_connectivity_args(
     offset_provider: dict[str, common.Connectivity | common.Dimension], device: core_defs.DeviceType
 ) -> list[tuple[npt.NDArray, tuple[int, ...]]]:
     # note: the order here needs to agree with the order of the generated bindings
-    args: list[tuple[npt.NDArray, tuple[int, ...]]] = []
-    for name, conn in offset_provider.items():
-        if isinstance(conn, common.Connectivity):
-            if not isinstance(conn, common.NeighborTable):
-                raise NotImplementedError(
-                    "Only 'NeighborTable' connectivities implemented at this point."
+    try:
+        return offset_provider["_cached_args"]
+    except:
+        args: list[tuple[npt.NDArray, tuple[int, ...]]] = []
+        for name, conn in offset_provider.items():
+            if isinstance(conn, common.Connectivity):
+                if not isinstance(conn, common.NeighborTable):
+                    raise NotImplementedError(
+                        "Only 'NeighborTable' connectivities implemented at this point."
+                    )
+                # copying to device here is a fallback for easy testing and might be removed later
+                conn_arg = _ensure_is_on_device(conn.table, device)
+                args.append((conn_arg, tuple([0] * 2)))
+            elif isinstance(conn, common.Dimension):
+                pass
+            else:
+                raise AssertionError(
+                    f"Expected offset provider '{name}' to be a 'Connectivity' or 'Dimension', "
+                    f"but got '{type(conn).__name__}'."
                 )
-            # copying to device here is a fallback for easy testing and might be removed later
-            conn_arg = _ensure_is_on_device(conn.table, device)
-            args.append((conn_arg, tuple([0] * 2)))
-        elif isinstance(conn, common.Dimension):
-            pass
-        else:
-            raise AssertionError(
-                f"Expected offset provider '{name}' to be a 'Connectivity' or 'Dimension', "
-                f"but got '{type(conn).__name__}'."
-            )
-    return args
+        offset_provider["_cached_args"] = args
+        return args
 
 
 def compilation_hash(otf_closure: stages.AOTProgram) -> int:
