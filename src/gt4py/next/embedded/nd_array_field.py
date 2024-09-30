@@ -903,62 +903,36 @@ def _concat(*fields: common.Field, dim: common.Dimension) -> common.Field:
     )
 
 
+def _negate_domain(mask):  # TODO this is very incomplete
+    range_: common.NamedRange = mask[0]
+    return common.Domain(
+        common.NamedRange(
+            range_.dim, common.UnitRange(range_.unit_range.stop, common.Infinity.POSITIVE)
+        )
+    )
+
+
 def _concat_where(
-    mask_field: common.Field, true_field: common.Field, false_field: common.Field
+    mask: common.Domain, true_field: common.Field, false_field: common.Field
 ) -> common.Field:
-    cls_ = _get_nd_array_class(mask_field, true_field, false_field)
-    xp = cls_.array_ns
-    if mask_field.domain.ndim != 1:
+    if mask.ndim != 1:  # TODO remove this restriction
         raise NotImplementedError(
             "'concat_where': Can only concatenate fields with a 1-dimensional mask."
         )
-    mask_dim = mask_field.domain.dims[0]
+    mask_dim = mask.dims[0]
+
+    negated_mask = _negate_domain(mask)
 
     # intersect the field in dimensions orthogonal to the mask, then all slices in the mask field have same domain
     t_broadcasted, f_broadcasted = _intersect_fields(true_field, false_field, ignore_dims=mask_dim)
 
-    # TODO(havogt): for clarity, most of it could be implemented on named_range in the masked dimension, but we currently lack the utils
-    # compute the consecutive ranges (first relative, then domain) of true and false values
-    mask_values_to_slices_mapping: Iterable[tuple[bool, slice]] = _compute_mask_slices(
-        mask_field.ndarray
-    )
-    mask_values_to_domain_mapping: Iterable[tuple[bool, common.Domain]] = (
-        (mask, mask_field.domain.slice_at[domain_slice])
-        for mask, domain_slice in mask_values_to_slices_mapping
-    )
-    # mask domains intersected with the respective fields
-    mask_values_to_intersected_domains_mapping: Iterable[tuple[bool, common.Domain]] = (
-        (
-            mask_value,
-            embedded_common.domain_intersection(
-                t_broadcasted.domain if mask_value else f_broadcasted.domain, mask_domain
-            ),
-        )
-        for mask_value, mask_domain in mask_values_to_domain_mapping
-    )
+    true_domain = embedded_common.domain_intersection(mask, t_broadcasted.domain)
+    false_domain = embedded_common.domain_intersection(negated_mask, f_broadcasted.domain)
 
-    # remove the empty domains from the beginning and end
-    mask_values_to_intersected_domains_mapping = _trim_empty_domains(
-        mask_values_to_intersected_domains_mapping
-    )
-    if any(d.is_empty() for _, d in mask_values_to_intersected_domains_mapping):
-        raise embedded_exceptions.NonContiguousDomain(
-            f"In 'concat_where', cannot concatenate the following 'Domain's: {[d for _, d in mask_values_to_intersected_domains_mapping]}."
-        )
-
-    # slice the fields with the domain ranges
-    transformed = [
-        t_broadcasted[d] if v else f_broadcasted[d]
-        for v, d in mask_values_to_intersected_domains_mapping
-    ]
-
-    # stack the fields together
-    if transformed:
-        return _concat(*transformed, dim=mask_dim)
-    else:
-        result_domain = common.Domain(common.NamedRange(mask_dim, common.UnitRange(0, 0)))
-        result_array = xp.empty(result_domain.shape)
-    return cls_.from_array(result_array, domain=result_domain)
+    transformed = [t_broadcasted[true_domain], f_broadcasted[false_domain]]
+    print(true_domain)
+    print(false_domain)
+    return _concat(*transformed, dim=mask_dim)
 
 
 NdArrayField.register_builtin_func(experimental.concat_where, _concat_where)  # type: ignore[has-type]

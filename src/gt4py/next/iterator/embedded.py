@@ -1662,6 +1662,11 @@ def as_fieldop(fun: Callable, domain: runtime.CartesianDomain | runtime.Unstruct
     return impl
 
 
+@builtins.index.register(EMBEDDED)
+def index(axis: common.Dimension) -> common.Field:
+    return IndexField(axis)
+
+
 @runtime.closure.register(EMBEDDED)
 def closure(
     domain_: Domain,

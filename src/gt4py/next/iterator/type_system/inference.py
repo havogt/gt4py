@@ -621,6 +621,12 @@ class ITIRTypeInference(eve.NodeTranslator):
             assert isinstance(tuple_.type, ts.TupleType)
             return tuple_.type.types[index]
 
+        if is_call_to(node, "index"):
+            return ts.FieldType(
+                dims=[common.Dimension(value=node.args[0].value, kind=node.args[0].kind)],
+                dtype=ts.ScalarType(kind=ts.ScalarKind.INT64),
+            )
+
         fun = self.visit(node.fun, ctx=ctx)
         args = self.visit(node.args, ctx=ctx)
 

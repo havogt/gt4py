@@ -30,7 +30,7 @@ from gt4py.next import (
 )
 from gt4py.next.ffront import type_specifications as ts_ffront
 from gt4py.next.ffront.ast_passes import single_static_assign as ssa
-from gt4py.next.ffront.experimental import as_offset
+from gt4py.next.ffront.experimental import as_offset, concat_where
 from gt4py.next.ffront.fbuiltins import exp, minimum
 from gt4py.next.ffront.foast_to_gtir import FieldOperatorLowering
 from gt4py.next.ffront.func_to_foast import FieldOperatorParser
@@ -258,6 +258,20 @@ def test_if_conditional_return():
     reference = im.cond("a", "b", im.cond("a", "c", "b"))
 
     assert lowered_inlined.expr == reference
+
+
+def test_concat_where():
+    def foo(b: gtx.Field[[TDim], float64], c: gtx.Field[[TDim], float64]):
+        return concat_where(TDim < 5, b, c)
+
+    parsed = FieldOperatorParser.apply_to_function(foo)
+    lowered = FieldOperatorLowering.apply(parsed)
+
+    reference = im.op_as_fieldop("if_")(
+        im.op_as_fieldop("less")(im.call("index")("TDim"), 5), "b", "c"
+    )
+
+    assert lowered.expr == reference
 
 
 def test_astype():

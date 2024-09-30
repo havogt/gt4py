@@ -104,7 +104,7 @@ class StencilExecution(Node):
     backend: Backend
     stencil: SymRef
     output: Union[SymRef, SidComposite]
-    inputs: list[SymRef]
+    inputs: list[Union[SymRef, FunCall]]
 
 
 class Scan(Node):
@@ -137,6 +137,7 @@ GTFN_BUILTINS = [
     "unstructured_domain",
     "named_range",
     "reduce",
+    "index",
 ]
 ARITHMETIC_BUILTINS = itir.ARITHMETIC_BUILTINS
 TYPEBUILTINS = itir.TYPEBUILTINS

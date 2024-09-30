@@ -81,6 +81,20 @@ class Dimension:
     def __call__(self, val: int) -> NamedIndex:
         return NamedIndex(self, val)
 
+    @overload
+    def __eq__(self, other: Dimension) -> bool: ...
+
+    @overload
+    def __eq__(self, other: int) -> Domain: ...
+
+    def __eq__(self, other: Dimension | int) -> bool | Domain:
+        if isinstance(other, Dimension):
+            return self.value == other.value and self.kind == other.kind
+        elif isinstance(other, int):
+            return Domain(NamedRange(self, UnitRange(other, other + 1)))
+        else:
+            raise TypeError(f"Cannot compare {other} of type {type(other)} to '{type(self)}'.")
+
 
 class Infinity(enum.Enum):
     """Describes an unbounded `UnitRange`."""

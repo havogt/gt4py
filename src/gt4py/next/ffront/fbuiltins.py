@@ -19,6 +19,7 @@ import gt4py.next as gtx
 from gt4py._core import definitions as core_defs
 from gt4py.next import common, embedded
 from gt4py.next.common import Dimension, Field  # noqa: F401 [unused-import] for TYPE_BUILTINS
+from gt4py.next.ffront import type_specifications as ffront_ts
 from gt4py.next.iterator import runtime
 from gt4py.next.type_system import type_specifications as ts
 
@@ -50,6 +51,8 @@ _R = TypeVar("_R")
 def _type_conversion_helper(t: type) -> type[ts.TypeSpec] | tuple[type[ts.TypeSpec], ...]:
     if t is common.Field:
         return ts.FieldType
+    elif t is common.Domain:
+        return ffront_ts.DomainType
     elif t is common.Dimension:
         return ts.DimensionType
     elif t is FieldOffset:

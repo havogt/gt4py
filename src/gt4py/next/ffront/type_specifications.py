@@ -26,3 +26,8 @@ class FieldOperatorType(ts.TypeSpec, ts.CallableType):
 class ScanOperatorType(ts.TypeSpec, ts.CallableType):
     axis: func_common.Dimension
     definition: ts.FunctionType
+
+
+@dataclass(frozen=True)
+class DomainType(ts.TypeSpec):
+    dims: list[func_common.Dimension]

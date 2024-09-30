@@ -551,16 +551,27 @@ class FieldOperatorTypeDeduction(traits.VisitorWithSymbolTableTrait, NodeTransla
             op=node.op, left=new_left, right=new_right, location=node.location, type=new_type
         )
 
-    def _deduce_compare_type(
+    def _deduce_compare_dimension_type(
+        self, node: foast.Compare, *, left: foast.Expr, right: foast.Expr, **kwargs: Any
+    ) -> ts.TypeSpec:
+        if isinstance(left.type, ts.DimensionType):
+            if isinstance(right.type, ts.DimensionType):
+                raise errors.DSLError(
+                    node.location,
+                    f"Cannot compare two Dimensions: '{left.type}' and '{right.type}'.",
+                )
+            if not type_info.is_integral(right.type):
+                raise errors.DSLError(
+                    node.location,
+                    f"Cannot compare Dimensions to '{right}', expected '{right}' to be an integral, but got '{right.type}'.",
+                )
+            return ts_ffront.DomainType(dims=[left.type.dim])  # TODO type?
+        else:
+            raise NotImplementedError("TODO")
+
+    def _deduce_compare_arithmetic_type(
         self, node: foast.Compare, *, left: foast.Expr, right: foast.Expr, **kwargs: Any
     ) -> Optional[ts.TypeSpec]:
-        # check both types compatible
-        for arg in (left, right):
-            if not type_info.is_arithmetic(arg.type):
-                raise errors.DSLError(
-                    arg.location, f"Type '{arg.type}' can not be used in operator '{node.op}'."
-                )
-
         self._check_operand_dtypes_match(node, left=left, right=right)
 
         try:
@@ -576,6 +587,22 @@ class FieldOperatorTypeDeduction(traits.VisitorWithSymbolTableTrait, NodeTransla
                 f"Could not promote '{left.type}' and '{right.type}' to common type"
                 f" in call to '{node.op}'.",
             ) from ex
+
+    def _deduce_compare_type(
+        self, node: foast.Compare, *, left: foast.Expr, right: foast.Expr, **kwargs: Any
+    ) -> Optional[ts.TypeSpec]:
+        if type_info.is_arithmetic(left.type) and type_info.is_arithmetic(right.type):
+            return self._deduce_compare_arithmetic_type(node, left=left, right=right)
+        elif isinstance(left.type, ts.DimensionType) or isinstance(right.type, ts.DimensionType):
+            return self._deduce_compare_dimension_type(node, left=left, right=right)
+        else:
+            for arg in (left, right):
+                if not type_info.is_arithmetic(arg.type) and not isinstance(
+                    arg.type, ts.DimensionType
+                ):
+                    raise errors.DSLError(
+                        arg.location, f"Type '{arg.type}' can not be used in operator '{node.op}'."
+                    )
 
     def _deduce_binop_type(
         self, node: foast.BinOp, *, left: foast.Expr, right: foast.Expr, **kwargs: Any
@@ -869,16 +896,19 @@ class FieldOperatorTypeDeduction(traits.VisitorWithSymbolTableTrait, NodeTransla
         )
 
     def _visit_where(self, node: foast.Call, **kwargs: Any) -> foast.Call:
-        mask_type = cast(ts.FieldType, node.args[0].type)
+        if kwargs.get("as_concat_where", False):
+            mask_type = node.args[0].type
+        else:
+            mask_type = cast(ts.FieldType, node.args[0].type)
+            if not type_info.is_logical(mask_type):
+                raise errors.DSLError(
+                    node.location,
+                    f"Incompatible argument in call to '{node.func!s}': expected "
+                    f"a field with dtype 'bool', got '{mask_type}'.",
+                )
         true_branch_type = node.args[1].type
         false_branch_type = node.args[2].type
         return_type: ts.TupleType | ts.FieldType
-        if not type_info.is_logical(mask_type):
-            raise errors.DSLError(
-                node.location,
-                f"Incompatible argument in call to '{node.func!s}': expected "
-                f"a field with dtype 'bool', got '{mask_type}'.",
-            )
 
         try:
             if isinstance(true_branch_type, ts.TupleType) and isinstance(
@@ -900,7 +930,11 @@ class FieldOperatorTypeDeduction(traits.VisitorWithSymbolTableTrait, NodeTransla
             else:
                 true_branch_fieldtype = cast(ts.FieldType, true_branch_type)
                 false_branch_fieldtype = cast(ts.FieldType, false_branch_type)
+                print(true_branch_fieldtype)
+                print(false_branch_fieldtype)
                 promoted_type = type_info.promote(true_branch_fieldtype, false_branch_fieldtype)
+                print(promoted_type)
+                print(type(promoted_type.dims[0]))
                 return_type = promote_to_mask_type(mask_type, promoted_type)
 
         except ValueError as ex:
@@ -916,7 +950,8 @@ class FieldOperatorTypeDeduction(traits.VisitorWithSymbolTableTrait, NodeTransla
             location=node.location,
         )
 
-    _visit_concat_where = _visit_where
+    def _visit_concat_where(self, node: foast.Call, **kwargs: Any) -> foast.Call:
+        return self._visit_where(node, as_concat_where=True)
 
     def _visit_broadcast(self, node: foast.Call, **kwargs: Any) -> foast.Call:
         arg_type = cast(ts.FieldType | ts.ScalarType, node.args[0].type)

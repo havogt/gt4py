@@ -181,6 +181,8 @@ class FieldOperatorLowering(eve.PreserveLocationVisitor, eve.NodeTranslator):
         return im.sym(node.id)
 
     def visit_Name(self, node: foast.Name, **kwargs: Any) -> itir.SymRef:
+        if isinstance(node.type, ts.DimensionType):
+            return im.call("index")(node.type.dim.value)
         return im.ref(node.id)
 
     def visit_Subscript(self, node: foast.Subscript, **kwargs: Any) -> itir.Expr:
@@ -309,7 +311,7 @@ class FieldOperatorLowering(eve.PreserveLocationVisitor, eve.NodeTranslator):
 
         return im.let(cond_symref_name, cond_)(result)
 
-    _visit_concat_where = _visit_where  # TODO(havogt): upgrade concat_where
+    _visit_concat_where = _visit_where
 
     def _visit_broadcast(self, node: foast.Call, **kwargs: Any) -> itir.FunCall:
         return self.visit(node.args[0], **kwargs)
@@ -369,6 +371,7 @@ class FieldOperatorLowering(eve.PreserveLocationVisitor, eve.NodeTranslator):
 
     def _map(self, op: itir.Expr | str, *args: Any, **kwargs: Any) -> itir.FunCall:
         lowered_args = [self.visit(arg, **kwargs) for arg in args]
+
         if all(
             isinstance(t, ts.ScalarType)
             for arg in args
