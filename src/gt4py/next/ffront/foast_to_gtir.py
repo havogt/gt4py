@@ -53,9 +53,17 @@ def adapted_foast_to_gtir_factory(**kwargs: Any) -> workflow.Workflow[AOT_FOP, i
     return toolchain.StripArgsAdapter(foast_to_gtir_factory(**kwargs))
 
 
-def promote_to_list(node: foast.Symbol | foast.Expr) -> Callable[[itir.Expr], itir.Expr]:
+def promote_to_list(
+    node: foast.Symbol | foast.Expr, local_dim: common.Dimension
+) -> Callable[[itir.Expr], itir.Expr]:
     if not type_info.contains_local_field(node.type):
-        return lambda x: im.op_as_fieldop("make_const_list")(x)
+        return lambda x: im.as_fieldop(
+            im.lambda_("it")(
+                im.call("make_const_list")(
+                    im.deref("it"), itir.AxisLiteral(value=local_dim.value, kind=local_dim.kind)
+                )
+            )
+        )(x)
     return lambda x: x
 
 
@@ -465,10 +473,23 @@ class FieldOperatorLowering(eve.PreserveLocationVisitor, eve.NodeTranslator):
         ):
             return im.call(op)(*lowered_args)  # scalar operation
         if any(type_info.contains_local_field(arg.type) for arg in args):
-            lowered_args = [promote_to_list(arg)(larg) for arg, larg in zip(args, lowered_args)]
+            local_dim = get_local_dim(*args)
+            lowered_args = [
+                promote_to_list(arg, local_dim)(larg) for arg, larg in zip(args, lowered_args)
+            ]
             op = im.call("map_")(op)
 
         return im.op_as_fieldop(im.call(op))(*lowered_args)
+
+
+def get_local_dim(*args: Any) -> common.Dimension:
+    for arg in args:
+        for t in type_info.primitive_constituents(arg.type):
+            if isinstance(t, ts.FieldType):
+                for dim in t.dims:
+                    if dim.kind == common.DimensionKind.LOCAL:
+                        return dim
+    raise AssertionError("No local dimension found in the arguments.")
 
 
 class FieldOperatorLoweringError(Exception): ...

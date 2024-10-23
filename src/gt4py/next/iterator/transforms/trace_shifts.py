@@ -120,7 +120,8 @@ class CombinedTracer(Tracer):
 def _combine(*values):
     # `OffsetLiteral`s may occur in `list_get` calls
     if not all(
-        val in [Sentinel.VALUE, Sentinel.TYPE] or isinstance(val, ir.OffsetLiteral)
+        val in [Sentinel.VALUE, Sentinel.TYPE]
+        or isinstance(val, (ir.OffsetLiteral, ir.AxisLiteral))
         for val in values
     ):
         raise AssertionError("All arguments must be values or types.")

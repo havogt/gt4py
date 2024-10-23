@@ -221,6 +221,7 @@ def apply_common_transforms(
 def apply_fieldview_transforms(
     ir: itir.Program, *, offset_provider: common.OffsetProvider
 ) -> itir.Program:
+    print(ir)
     ir = inline_fundefs.InlineFundefs().visit(ir)
     ir = inline_fundefs.prune_unreferenced_fundefs(ir)
     ir = InlineLambdas.apply(ir, opcount_preserving=True)

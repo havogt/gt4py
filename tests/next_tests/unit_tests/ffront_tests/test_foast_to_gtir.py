@@ -823,6 +823,8 @@ def test_reduction_lowering_expr():
         im.op_as_fieldop(im.map_("plus"))(ssa.unique_name("e1_nbh", 0), "e2"),
     )
 
+    print(mapped)
+
     reference = im.let(
         ssa.unique_name("e1_nbh", 0),
         im.as_fieldop_neighbors("V2E", "e1"),

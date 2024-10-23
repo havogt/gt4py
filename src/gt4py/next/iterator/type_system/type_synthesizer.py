@@ -155,9 +155,9 @@ def if_(pred: ts.ScalarType, true_branch: ts.DataType, false_branch: ts.DataType
 
 
 @_register_builtin_type_synthesizer
-def make_const_list(scalar: ts.ScalarType) -> it_ts.ListType:
+def make_const_list(scalar: ts.ScalarType, offset_type: common.Dimension = None) -> it_ts.ListType:
     assert isinstance(scalar, ts.ScalarType)
-    return it_ts.ListType(element_type=scalar)
+    return it_ts.ListType(element_type=scalar, offset_type=offset_type)
 
 
 @_register_builtin_type_synthesizer
@@ -197,7 +197,7 @@ def neighbors(offset_literal: it_ts.OffsetLiteralType, it: it_ts.IteratorType) -
         and offset_literal.value.kind == common.DimensionKind.LOCAL
     )
     assert isinstance(it, it_ts.IteratorType)
-    return it_ts.ListType(element_type=it.element_type)
+    return it_ts.ListType(element_type=it.element_type, offset_type=offset_literal.value)
 
 
 @_register_builtin_type_synthesizer
