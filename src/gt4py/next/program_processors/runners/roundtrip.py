@@ -43,7 +43,7 @@ class EmbeddedDSL(codegen.TemplatedGenerator):
     Literal = as_fmt("{value}")
     NoneLiteral = as_fmt("None")
     OffsetLiteral = as_fmt("{value}")
-    AxisLiteral = as_fmt("{value}")
+    AxisLiteral = as_fmt("{value}_dim")
     FunCall = as_fmt("{fun}({','.join(args)})")
     Lambda = as_mako("(lambda ${','.join(params)}: ${expr})")
     StencilClosure = as_mako("closure(${domain}, ${stencil}, ${output}, [${','.join(inputs)}])")
@@ -156,7 +156,7 @@ def fencil_generator(
             print(source_file_name)
         offset_literals = [f'{o} = offset("{o}")' for o in offset_literals]
         axis_literals = [
-            f'{o.value} = gtx.Dimension("{o.value}", kind=gtx.DimensionKind("{o.kind}"))'
+            f'{o.value}_dim = gtx.Dimension("{o.value}", kind=gtx.DimensionKind("{o.kind}"))'
             for o in axis_literals_set
         ]
         source_file.write(header)

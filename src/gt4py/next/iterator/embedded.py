@@ -187,9 +187,6 @@ MaybePosition: TypeAlias = Optional[Position]
 NamedFieldIndices: TypeAlias = Mapping[Tag, FieldIndex | SparsePositionEntry]
 
 
-_CONST_DIM = common.Dimension(value="_CONST_DIM", kind=common.DimensionKind.LOCAL)
-
-
 @runtime_checkable
 class ItIterator(Protocol):
     """
@@ -590,20 +587,17 @@ def execute_shift(
         for i, p in reversed(list(enumerate(new_entry))):
             # first shift applies to the last sparse dimensions of that axis type
             if p is None:
-                if tag == _CONST_DIM.value:
-                    new_entry[i] = 0
-                else:
-                    offset_implementation = offset_provider[tag]
-                    assert isinstance(offset_implementation, common.Connectivity)
-                    cur_index = pos[offset_implementation.origin_axis.value]
-                    assert common.is_int_index(cur_index)
-                    if offset_implementation.mapped_index(cur_index, index) in [
-                        None,
-                        common._DEFAULT_SKIP_VALUE,
-                    ]:
-                        return None
+                offset_implementation = offset_provider[tag]
+                assert isinstance(offset_implementation, common.Connectivity)
+                cur_index = pos[offset_implementation.origin_axis.value]
+                assert common.is_int_index(cur_index)
+                if offset_implementation.mapped_index(cur_index, index) in [
+                    None,
+                    common._DEFAULT_SKIP_VALUE,
+                ]:
+                    return None
 
-                    new_entry[i] = index
+                new_entry[i] = index
                 break
         # the assertions above confirm pos is incomplete casting here to avoid duplicating work in a type guard
         return cast(IncompletePosition, pos) | {tag: new_entry}
@@ -1028,7 +1022,7 @@ class NDArrayLocatedFieldWrapper(MutableLocatedField):
                     ] = v
             elif isinstance(value, _ConstList):
                 self._ndarrayfield[
-                    self._translate_named_indices({**named_indices, _CONST_DIM.value: 0})
+                    self._translate_named_indices({**named_indices, value.offset.value: 0})
                 ] = value.value
             else:
                 self._ndarrayfield[self._translate_named_indices(named_indices)] = value
@@ -1432,16 +1426,19 @@ class _List(Generic[DT]):
 @dataclasses.dataclass(frozen=True)
 class _ConstList(Generic[DT]):
     value: DT
+    offset: runtime.Offset
 
     def __getitem__(self, _):
         return self.value
 
     def __gt_type__(self) -> itir_ts.ListType:
+        offset_tag = self.offset.value
+        assert isinstance(offset_tag, str)
         element_type = type_translation.from_value(self.value)
         assert isinstance(element_type, ts.DataType)
         return itir_ts.ListType(
             element_type=element_type,
-            offset_type=_CONST_DIM,
+            offset_type=common.Dimension(value=offset_tag, kind=common.DimensionKind.LOCAL),
         )
 
 
@@ -1477,8 +1474,8 @@ def map_(op):
 
 
 @builtins.make_const_list.register(EMBEDDED)
-def make_const_list(value):
-    return _ConstList(value)
+def make_const_list(value, offset_type):
+    return _ConstList(value, runtime.Offset(value=offset_type.value))  # TODO: here it breaks
 
 
 @builtins.reduce.register(EMBEDDED)
@@ -1508,10 +1505,6 @@ class SparseListIterator:
     offsets: Sequence[OffsetPart] = dataclasses.field(default_factory=list, kw_only=True)
 
     def deref(self) -> Any:
-        if self.list_offset == _CONST_DIM.value:
-            return _ConstList(
-                value=self.it.shift(*self.offsets, SparseTag(self.list_offset), 0).deref()
-            )
         offset_provider = embedded_context.offset_provider.get()
         assert offset_provider is not None
         connectivity = offset_provider[self.list_offset]
@@ -1743,20 +1736,15 @@ def _fieldspec_list_to_value(
 ) -> tuple[common.Domain, ts.TypeSpec]:
     """Translate the list element type into the domain."""
     if isinstance(type_, itir_ts.ListType):
-        if type_.offset_type == _CONST_DIM:
-            return domain.insert(
-                len(domain), common.named_range((_CONST_DIM, 1))
-            ), type_.element_type
-        else:
-            offset_provider = embedded_context.offset_provider.get()
-            offset_type = type_.offset_type
-            assert isinstance(offset_type, common.Dimension)
-            connectivity = offset_provider[offset_type.value]
-            assert isinstance(connectivity, common.Connectivity)
-            return domain.insert(
-                len(domain),
-                common.named_range((offset_type, connectivity.max_neighbors)),
-            ), type_.element_type
+        offset_provider = embedded_context.offset_provider.get()
+        offset_type = type_.offset_type
+        assert isinstance(offset_type, common.Dimension)
+        connectivity = offset_provider[offset_type.value]
+        assert isinstance(connectivity, common.Connectivity)
+        return domain.insert(
+            len(domain),
+            common.named_range((offset_type, connectivity.max_neighbors)),
+        ), type_.element_type
     return domain, type_
 
 
