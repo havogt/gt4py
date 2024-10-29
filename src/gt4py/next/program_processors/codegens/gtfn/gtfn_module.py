@@ -131,7 +131,7 @@ class GTFNTranslationStep(
                     interface.Parameter(
                         name=GENERATED_CONNECTIVITY_PARAM_PREFIX + name.lower(),
                         type_=ts.FieldType(
-                            dims=[connectivity.origin_axis, Dimension(name)],
+                            dims=[connectivity.origin_axis, Dimension(name, kind=common.DimensionKind.LOCAL)],
                             dtype=ts.ScalarType(
                                 type_translation.get_scalar_kind(connectivity.index_type)
                             ),
