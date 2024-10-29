@@ -247,11 +247,6 @@ def if_(cond, true_val, false_val):
     return call("if_")(cond, true_val, false_val)
 
 
-def cond(cond, true_val, false_val):
-    """Create a cond FunCall, shorthand for ``call("cond")(expr)``."""
-    return call("cond")(cond, true_val, false_val)
-
-
 def lift(expr):
     """Create a lift FunCall, shorthand for ``call(call("lift")(expr))``."""
     return call(call("lift")(expr))
@@ -451,7 +446,7 @@ def domain(
     )
 
 
-def as_fieldop(expr: itir.Expr, domain: Optional[itir.FunCall] = None) -> call:
+def as_fieldop(expr: itir.Expr, domain: Optional[itir.Expr] = None) -> call:
     """
     Create an `as_fieldop` call.
 

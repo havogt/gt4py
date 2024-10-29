@@ -33,7 +33,9 @@ from gt4py.next.type_system import type_info, type_specifications as ts
 
 
 # FIXME[#1582](havogt): remove `to_gtir` arg after refactoring to GTIR
-def past_to_itir(inp: AOT_PRG, to_gtir: bool = False) -> stages.AOTProgram:
+# FIXME[#1582](tehrengruber): This should only depend on the program not the arguments. Remove
+#  dependency as soon as column axis can be deduced from ITIR in consumers of the CompilableProgram.
+def past_to_itir(inp: AOT_PRG, to_gtir: bool = False) -> stages.CompilableProgram:
     """
     Lower a PAST program definition to Iterator IR.
 
@@ -50,13 +52,12 @@ def past_to_itir(inp: AOT_PRG, to_gtir: bool = False) -> stages.AOTProgram:
         ... def copy_program(a: gtx.Field[[IDim], gtx.float32], out: gtx.Field[[IDim], gtx.float32]):
         ...     copy(a, out=out)
 
-        >>> compile_time_args = arguments.CompileTimeArgs.from_concrete(
-        ...     *(
-        ...         arguments.CompileTimeArg(param.type)
-        ...         for param in copy_program.past_stage.past_node.params
-        ...     ),
-        ...     offset_provider={"I", IDim},
-        ... )  # this will include field dim size arguments automatically.
+        >>> compile_time_args = arguments.CompileTimeArgs(
+        ...     args=tuple(param.type for param in copy_program.past_stage.past_node.params),
+        ...     kwargs={},
+        ...     offset_provider={"I": IDim},
+        ...     column_axis=None,
+        ... )
 
         >>> itir_copy = past_to_itir(
         ...     toolchain.CompilableProgram(copy_program.past_stage, compile_time_args)
@@ -79,11 +80,18 @@ def past_to_itir(inp: AOT_PRG, to_gtir: bool = False) -> stages.AOTProgram:
     gt_callables = transform_utils._filter_closure_vars_by_type(
         all_closure_vars, gtcallable.GTCallable
     ).values()
+
+    # FIXME[#1582](tehrengruber): remove after refactoring to GTIR
     # TODO(ricoh): The following calls to .__gt_itir__, which will use whatever
-    # backend is set for each of these field operators (GTCallables). Instead
-    # we should use the current toolchain to lower these to ITIR. This will require
-    # making this step aware of the toolchain it is called by (it can be part of multiple).
-    lowered_funcs = [gt_callable.__gt_itir__() for gt_callable in gt_callables]
+    #  backend is set for each of these field operators (GTCallables). Instead
+    #  we should use the current toolchain to lower these to ITIR. This will require
+    #  making this step aware of the toolchain it is called by (it can be part of multiple).
+    lowered_funcs = []
+    for gt_callable in gt_callables:
+        if to_gtir:
+            lowered_funcs.append(gt_callable.__gt_gtir__())
+        else:
+            lowered_funcs.append(gt_callable.__gt_itir__())
 
     itir_program = ProgramLowering.apply(
         inp.data.past_node, function_definitions=lowered_funcs, grid_type=grid_type, to_gtir=to_gtir
@@ -92,7 +100,7 @@ def past_to_itir(inp: AOT_PRG, to_gtir: bool = False) -> stages.AOTProgram:
     if config.DEBUG or inp.data.debug:
         devtools.debug(itir_program)
 
-    return stages.AOTProgram(
+    return stages.CompilableProgram(
         data=itir_program,
         args=dataclasses.replace(inp.args, column_axis=_column_axis(all_closure_vars)),
     )
@@ -101,7 +109,7 @@ def past_to_itir(inp: AOT_PRG, to_gtir: bool = False) -> stages.AOTProgram:
 # FIXME[#1582](havogt): remove `to_gtir` arg after refactoring to GTIR
 def past_to_itir_factory(
     cached: bool = True, to_gtir: bool = False
-) -> workflow.Workflow[AOT_PRG, stages.AOTProgram]:
+) -> workflow.Workflow[AOT_PRG, stages.CompilableProgram]:
     wf = workflow.make_step(functools.partial(past_to_itir, to_gtir=to_gtir))
     if cached:
         wf = workflow.CachedStep(wf, hash_function=ffront_stages.fingerprint_stage)

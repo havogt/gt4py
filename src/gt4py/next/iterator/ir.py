@@ -37,10 +37,14 @@ class Node(eve.Node):
         return pformat(self)
 
     def __hash__(self) -> int:
-        return hash(type(self)) ^ hash(
-            tuple(
-                hash(tuple(v)) if isinstance(v, list) else hash(v)
-                for v in self.iter_children_values()
+        return hash(
+            (
+                type(self),
+                *(
+                    tuple(v) if isinstance(v, list) else v
+                    for (k, v) in self.iter_children_items()
+                    if k not in ["location", "type"]
+                ),
             )
         )
 
@@ -188,7 +192,6 @@ BUILTINS = {
 GTIR_BUILTINS = {
     *BUILTINS,
     "as_fieldop",  # `as_fieldop(stencil, domain)` creates field_operator from stencil (domain is optional, but for now required for embedded execution)
-    "cond",  # `cond(expr, field_a, field_b)` creates the field on one branch or the other
 }
 
 
@@ -209,6 +212,12 @@ class SetAt(Stmt):  # from JAX array.at[...].set()
     expr: Expr  # only `as_fieldop(stencil)(inp0, ...)` in first refactoring
     domain: Expr
     target: Expr  # `make_tuple` or SymRef
+
+
+class IfStmt(Stmt):
+    cond: Expr
+    true_branch: list[Stmt]
+    false_branch: list[Stmt]
 
 
 class Temporary(Node):
@@ -243,3 +252,4 @@ StencilClosure.__hash__ = Node.__hash__  # type: ignore[method-assign]
 FencilDefinition.__hash__ = Node.__hash__  # type: ignore[method-assign]
 Program.__hash__ = Node.__hash__  # type: ignore[method-assign]
 SetAt.__hash__ = Node.__hash__  # type: ignore[method-assign]
+IfStmt.__hash__ = Node.__hash__  # type: ignore[method-assign]

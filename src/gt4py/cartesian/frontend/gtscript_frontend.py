@@ -398,6 +398,10 @@ class CallInliner(ast.NodeTransformer):
         # Assertions are removed in the AssertionChecker later.
         return node
 
+    def visit_While(self, node: ast.While):
+        node.body = self._process_stmts(node.body)
+        return node
+
     def visit_Assign(self, node: ast.Assign):
         if (
             isinstance(node.value, ast.Call)
@@ -455,7 +459,8 @@ class CallInliner(ast.NodeTransformer):
                     call_args[name] = ast.Constant(value=arg_infos[name])
         except Exception as ex:
             raise GTScriptSyntaxError(
-                message="Invalid call signature", loc=nodes.Location.from_ast_node(node)
+                message=f"Invalid call signature when calling {call_name}",
+                loc=nodes.Location.from_ast_node(node),
             ) from ex
 
         # Rename local names in subroutine to avoid conflicts with caller context names
