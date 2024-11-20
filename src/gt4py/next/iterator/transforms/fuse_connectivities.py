@@ -16,6 +16,7 @@ from gt4py import eve
 from gt4py.next import NeighborTableOffsetProvider, common
 from gt4py.next.iterator import ir as itir
 from gt4py.next.iterator.ir_utils import common_pattern_matcher as cpm
+from gt4py.next.iterator.transforms import normalize_shifts
 
 
 class HashableArray:
@@ -40,8 +41,37 @@ def analyze(first, other):  # TODO extend to more
     print(f"Compressed from {len(stack)} to {len(s)} elements.")
 
 
+class StranglyHashableArray:
+    def __init__(self, arr: np.ndarray):
+        self.arr = arr
+
+    def __hash__(self):
+        return 0
+
+    def __eq__(self, other: StranglyHashableArray):
+        # ignore -1 (skip) values
+        mask_self = np.equal(self.arr, -1)
+        mask_other = np.equal(other.arr, -1)
+        mask = np.logical_or(mask_self, mask_other)
+        clean_self = np.where(mask, 0, self.arr)
+        clean_other = np.where(mask, 0, other.arr)
+        return np.array_equal(clean_self, clean_other)
+
+
+def analyze_skip_value(first, other):  # TODO extend to more
+    stack = []
+    for i in range(first.shape[1]):
+        for j in range(other.shape[1]):
+            tmp = other[:, j][first[:, i]]
+            tmp[first[:, i] == -1] = -1  # fixes places where we did wrap-around indexing with -1
+            # print(f"{i}/{j}: {tmp}")
+            stack.append(tmp)
+    s = set(StranglyHashableArray(s) for s in stack)
+    print(f"Compressed from {len(stack)} to {len(s)} elements.")
+
+
 def apply(ir: itir.Program, offset_provider: common.OffsetProvider):
-    ir = FuseConnectivities().visit(ir)
+    ir = InlineShifts().visit(ir)
     print(ir)
     ir = ReplaceShifts(offset_provider=offset_provider).visit(ir)
     print(ir)
@@ -85,6 +115,7 @@ class ReplaceShifts(eve.NodeTranslator):
                 decompressor = self._combined_connectivity_cache[new_tag]
             else:
                 analyze(*[c.table for c in connectivities])
+                analyze_skip_value(*[c.table for c in connectivities])
                 compressed, decompressor = compress(*[c.table for c in connectivities])
                 self.offset_provider[new_tag] = NeighborTableOffsetProvider(
                     compressed,
@@ -112,13 +143,14 @@ class ReplaceShifts(eve.NodeTranslator):
         return node
 
 
-class FuseConnectivities(eve.NodeTranslator):
+class InlineShifts(eve.NodeTranslator):
     def visit_FunCall(self, node: itir.FunCall, **kwargs):
         if cpm.is_let(node):
             if node.fun.params[0].id.startswith("_step"):
                 # TODO generalize the shift inlining
                 from gt4py.next.iterator.transforms import inline_lambdas
 
+                print(node)
                 res = inline_lambdas.InlineLambdas(
                     opcount_preserving=False,
                     force_inline_lambda_args=True,
@@ -133,6 +165,7 @@ class FuseConnectivities(eve.NodeTranslator):
                     force_inline_trivial_lift_args=True,
                 ).visit(res)
                 print(res)
+                res = normalize_shifts.NormalizeShifts().visit(res)
                 return res
 
         node = self.generic_visit(node)
