@@ -12,8 +12,6 @@ import dataclasses
 import functools
 from typing import Any, Optional, cast
 
-import devtools
-
 from gt4py.eve import NodeTranslator, concepts, traits
 from gt4py.next import common, config, errors
 from gt4py.next.ffront import (
@@ -98,7 +96,7 @@ def past_to_itir(inp: AOT_PRG, to_gtir: bool = False) -> stages.CompilableProgra
     )
 
     if config.DEBUG or inp.data.debug:
-        devtools.debug(itir_program)
+        print(itir_program)
 
     return stages.CompilableProgram(
         data=itir_program,

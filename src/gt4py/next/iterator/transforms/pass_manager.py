@@ -9,11 +9,12 @@
 from typing import Callable, Optional, Protocol
 
 from gt4py.eve import utils as eve_utils
-from gt4py.next import common
+from gt4py.next import common, config
 from gt4py.next.iterator import ir as itir
 from gt4py.next.iterator.transforms import (
     fencil_to_program,
     fuse_as_fieldop,
+    fuse_connectivities,
     global_tmps,
     infer_domain,
     inline_fundefs,
@@ -142,11 +143,15 @@ def apply_common_transforms(
         else:
             raise RuntimeError("Reduction unrolling failed.")
 
+    ir = fuse_connectivities.apply(ir, offset_provider=offset_provider)
+
     ir = InlineLambdas.apply(
         ir, opcount_preserving=True, force_inline_lambda_args=force_inline_lambda_args
     )
 
     assert isinstance(ir, itir.Program)
+    if config.DEBUG:
+        print(ir)
     return ir
 
 

@@ -14,7 +14,7 @@ import pytest
 
 import gt4py.next as gtx
 from gt4py._core import definitions as core_defs
-from gt4py.next import backend as next_backend, common, allocators as next_allocators
+from gt4py.next import allocators as next_allocators, backend as next_backend, common
 from gt4py.next.ffront import decorator
 
 import next_tests
@@ -202,19 +202,34 @@ def simple_mesh() -> MeshDescriptor:
         dtype=gtx.IndexType,
     )
 
-    # create e2v connectivity by inverting v2e
-    num_edges = np.max(v2e_arr) + 1
-    e2v_arr = [[] for _ in range(0, num_edges)]
-    for v in range(0, v2e_arr.shape[0]):
-        for e in v2e_arr[v]:
-            e2v_arr[e].append(v)
-    assert all(len(row) == 2 for row in e2v_arr)
-    e2v_arr = np.asarray(e2v_arr, dtype=gtx.IndexType)
+    e2v_arr = np.array(
+        [
+            [0, 1],
+            [1, 2],
+            [2, 0],
+            [3, 4],
+            [4, 5],
+            [5, 3],
+            [6, 7],
+            [7, 8],
+            [8, 6],
+            [0, 3],
+            [1, 4],
+            [2, 5],
+            [3, 6],
+            [4, 7],
+            [5, 8],
+            [6, 0],
+            [7, 1],
+            [8, 2],
+        ],
+        dtype=gtx.IndexType,
+    )
 
     return types.SimpleNamespace(
         name="simple_mesh",
         num_vertices=num_vertices,
-        num_edges=np.int32(num_edges),
+        num_edges=np.int32(e2v_arr.shape[0]),
         num_cells=num_cells,
         offset_provider={
             V2E.value: gtx.NeighborTableOffsetProvider(

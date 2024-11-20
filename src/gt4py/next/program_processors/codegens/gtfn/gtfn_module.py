@@ -227,6 +227,11 @@ class GTFNTranslationStep(
             program, inp.args.args, inp.args.offset_provider
         )
 
+        stencil_src = self.generate_stencil_source(
+            program,
+            inp.args.offset_provider,
+            inp.args.column_axis,
+        )
         # handle connectivity parameters and arguments (i.e. what the user provided in the offset
         #  provider)
         connectivity_parameters, connectivity_args_expr = self._process_connectivity_args(
@@ -244,11 +249,6 @@ class GTFNTranslationStep(
             f"{', '.join(connectivity_args_expr)})({', '.join(args_expr)});"
         )
         decl_src = cpp_interface.render_function_declaration(function, body=decl_body)
-        stencil_src = self.generate_stencil_source(
-            program,
-            inp.args.offset_provider,
-            inp.args.column_axis,
-        )
         source_code = interface.format_source(
             self._language_settings(),
             f"""
