@@ -83,14 +83,16 @@ def apply_common_transforms(
         symbolic_domain_sizes=symbolic_domain_sizes,
     )
 
-    for _ in range(10):
+    for _ in range(50):
         inlined = ir
 
         inlined = InlineLambdas.apply(inlined, opcount_preserving=True)
         inlined = ConstantFolding.apply(inlined)  # type: ignore[assignment]  # always an itir.Program
         # This pass is required to be in the loop such that when an `if_` call with tuple arguments
         # is constant-folded the surrounding tuple_get calls can be removed.
-        inlined = CollapseTuple.apply(inlined, offset_provider_type=offset_provider_type)  # type: ignore[assignment]  # always an itir.Program
+        inlined = CollapseTuple.apply(
+            inlined, offset_provider_type=offset_provider_type
+        )  # type: ignore[assignment]  # always an itir.Program
         inlined = InlineScalar.apply(inlined, offset_provider_type=offset_provider_type)
 
         # This pass is required to run after CollapseTuple as otherwise we can not inline
@@ -109,13 +111,17 @@ def apply_common_transforms(
 
     # breaks in test_zero_dim_tuple_arg as trivial tuple_get is not inlined
     if common_subexpression_elimination:
-        ir = CommonSubexpressionElimination.apply(ir, offset_provider_type=offset_provider_type)
+        ir = CommonSubexpressionElimination.apply(
+            ir, offset_provider_type=offset_provider_type
+        )
         ir = MergeLet().visit(ir)
         ir = InlineLambdas.apply(ir, opcount_preserving=True)
 
     if extract_temporaries:
         ir = infer(ir, inplace=True, offset_provider_type=offset_provider_type)
-        ir = global_tmps.create_global_tmps(ir, offset_provider=offset_provider, uids=tmp_uids)
+        ir = global_tmps.create_global_tmps(
+            ir, offset_provider=offset_provider, uids=tmp_uids
+        )
 
     # Since `CollapseTuple` relies on the type inference which does not support returning tuples
     # larger than the number of closure outputs as given by the unconditional collapse, we can
