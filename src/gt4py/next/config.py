@@ -85,3 +85,5 @@ BUILD_CACHE_LIFETIME: BuildCacheLifetime = BuildCacheLifetime[
 CMAKE_BUILD_TYPE: CMakeBuildType = CMakeBuildType[
     os.environ.get(f"{_PREFIX}_CMAKE_BUILD_TYPE", "debug" if DEBUG else "release").upper()
 ]
+
+COLLECT_METRICS: bool = env_flag_to_bool("GT4PY_COLLECT_METRICS", default=False)

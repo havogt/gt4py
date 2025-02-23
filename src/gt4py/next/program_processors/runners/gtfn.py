@@ -14,14 +14,14 @@ from typing import Any, Optional
 
 import diskcache
 import factory
-import numpy.typing as npt
 import filelock
+import numpy.typing as npt
 
 import gt4py._core.definitions as core_defs
 import gt4py.next.allocators as next_allocators
 from gt4py.eve import utils
 from gt4py.eve.utils import content_hash
-from gt4py.next import backend, common, config
+from gt4py.next import backend, common, config, metrics
 from gt4py.next.common import Connectivity, Dimension
 from gt4py.next.iterator import ir as itir, transforms
 from gt4py.next.otf import arguments, recipes, stages, workflow
@@ -62,11 +62,21 @@ def convert_args(
             conn_args = extract_connectivity_args(offset_provider, device)
             object.__setattr__(inp, "_conn_args", conn_args)
         # generate implicit domain size arguments only if necessary, using `iter_size_args()`
-        return inp(
+        local_exec_info = {} if "exec_info" in offset_provider else None
+        res = inp(
             *converted_args,
             *(arguments.iter_size_args(args) if inp.implicit_domain else ()),
             *conn_args,
+            local_exec_info,
         )
+        if local_exec_info is not None:
+            exec_info: metrics.RuntimeMetric = (
+                offset_provider["exec_info"] if "exec_info" in offset_provider else None
+            )
+            start = local_exec_info["run_cpp_start_time"]
+            end = local_exec_info["run_cpp_end_time"]
+            exec_info.cpp_time.append(end - start)
+        return res
 
     return decorated_program
 
@@ -95,6 +105,8 @@ def extract_connectivity_args(
     except:
         args: list[tuple[npt.NDArray, tuple[int, ...]]] = []
         for name, conn in offset_provider.items():
+            if name == "exec_info":
+                continue
             if isinstance(conn, common.Connectivity):
                 if not isinstance(conn, common.NeighborTable):
                     raise NotImplementedError(

@@ -119,6 +119,8 @@ class GTFNTranslationStep(
         arg_exprs: list[str] = []
 
         for name, connectivity in offset_provider.items():
+            if name == "exec_info":
+                continue
             if isinstance(connectivity, common.Connectivity):
                 if connectivity.index_type not in [np.int32, np.int64]:
                     raise ValueError(
