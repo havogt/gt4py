@@ -18,7 +18,7 @@ import filelock
 
 import gt4py._core.definitions as core_defs
 import gt4py.next.allocators as next_allocators
-from gt4py.next import backend, common, config
+from gt4py.next import backend, common, config, metrics
 from gt4py.next.otf import arguments, recipes, stages, workflow
 from gt4py.next.otf.binding import nanobind
 from gt4py.next.otf.compilation import compiler
@@ -51,11 +51,21 @@ def convert_args(
         converted_args = [convert_arg(arg) for arg in args]
         conn_args = extract_connectivity_args(offset_provider, device)
         # generate implicit domain size arguments only if necessary, using `iter_size_args()`
-        return inp(
+        local_exec_info = {} if "exec_info" in offset_provider else None
+        res = inp(
             *converted_args,
             *(arguments.iter_size_args(args) if inp.implicit_domain else ()),
             *conn_args,
+            local_exec_info,
         )
+        if local_exec_info is not None:
+            exec_info: metrics.RuntimeMetric = (
+                offset_provider["exec_info"] if "exec_info" in offset_provider else None
+            )
+            start = local_exec_info["run_cpp_start_time"]
+            end = local_exec_info["run_cpp_end_time"]
+            exec_info.cpp_time.append(end - start)
+        return res
 
     return decorated_program
 
@@ -81,6 +91,8 @@ def extract_connectivity_args(
     # note: the order here needs to agree with the order of the generated bindings
     args: list[tuple[core_defs.NDArrayObject, tuple[int, ...]]] = []
     for name, conn in offset_provider.items():
+        if name == "exec_info":
+            continue
         if isinstance(conn, common.Connectivity):
             if not common.is_neighbor_table(conn):
                 raise NotImplementedError(

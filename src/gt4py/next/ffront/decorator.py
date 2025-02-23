@@ -27,8 +27,10 @@ from gt4py.next import (
     allocators as next_allocators,
     backend as next_backend,
     common,
+    config,
     embedded as next_embedded,
     errors,
+    metrics,
 )
 from gt4py.next.embedded import operators as embedded_operators
 from gt4py.next.ffront import (
@@ -226,7 +228,16 @@ class Program:
                         )
         return implicit_offset_provider
 
-    def __call__(self, *args: Any, offset_provider: common.OffsetProvider, **kwargs: Any) -> None:
+    def __call__(
+        self,
+        *args: Any,
+        offset_provider: common.OffsetProvider,
+        **kwargs: Any,
+    ) -> None:
+        if config.COLLECT_METRICS:
+            import time
+
+            start = time.time()
         offset_provider = offset_provider | self._implicit_offset_provider
         if self.backend is None:
             warnings.warn(
@@ -245,11 +256,19 @@ class Program:
                 ctx.run(self.definition_stage.definition, *args, **kwargs)
             return
 
+        if config.COLLECT_METRICS:
+            offset_provider["exec_info"] = metrics.global_metric_container[self.__name__]
+
         self.backend(
             self.definition_stage,
             *args,
             **(kwargs | {"offset_provider": offset_provider}),
         )
+        offset_provider.pop("exec_info", None)
+
+        if config.COLLECT_METRICS:
+            end = time.time()
+            metrics.global_metric_container[self.__name__].total_time.append(end - start)
 
     def freeze(self) -> FrozenProgram:
         if self.backend is None:
