@@ -6,7 +6,7 @@
 # Please, refer to the LICENSE file in the root directory.
 # SPDX-License-Identifier: BSD-3-Clause
 
-from typing import Any, Collection, Final, Union
+from typing import Any, Collection, Final, Optional, Union
 
 from gt4py.eve import codegen
 from gt4py.eve.codegen import FormatTemplate as as_fmt, MakoTemplate as as_mako
@@ -248,7 +248,7 @@ class GTFNCodegen(codegen.TemplatedGenerator):
         return self.generic_visit(
             node,
             grid_type_str=self._grid_type_str[node.grid_type],
-            block_sizes=self._block_sizes(node.offset_definitions),
+            block_sizes=self._block_sizes(node.offset_definitions, node.block_sizes),
             **kwargs,
         )
 
@@ -285,7 +285,11 @@ class GTFNCodegen(codegen.TemplatedGenerator):
     """
     )
 
-    def _block_sizes(self, offset_definitions: list[gtfn_ir.TagDefinition]) -> str:
+    def _block_sizes(
+        self, offset_definitions: list[gtfn_ir.TagDefinition], block_sizes: Optional[str]
+    ) -> str:
+        if block_sizes is not None:
+            return f"using block_sizes_t = {block_sizes};"
         if self.is_cartesian:
             block_dims = []
             block_sizes = [32, 8] + [1] * (len(offset_definitions) - 2)

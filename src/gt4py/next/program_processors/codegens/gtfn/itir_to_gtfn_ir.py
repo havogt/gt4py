@@ -151,7 +151,7 @@ def _collect_offset_definitions(
     offset_definitions = {}
 
     for offset_name, dim_or_connectivity in offset_provider.items():
-        if offset_name == "exec_info":
+        if offset_name in ["exec_info", "build_info"]:
             continue
         if isinstance(dim_or_connectivity, common.Dimension):
             dim: common.Dimension = dim_or_connectivity
@@ -325,13 +325,20 @@ class GTFN_lowering(eve.NodeTranslator, eve.VisitorWithSymbolTableTrait):
         if not isinstance(node, itir.Program):
             raise TypeError(f"Expected a 'Program', got '{type(node).__name__}'.")
 
+        block_sizes = None
+        if "build_info" in offset_provider:
+            if "block_sizes" in offset_provider["build_info"]:
+                block_sizes = offset_provider["build_info"]["block_sizes"]
+
         node = itir_type_inference.infer(node, offset_provider=offset_provider)
         grid_type = _get_gridtype(node.body)
         if grid_type == common.GridType.UNSTRUCTURED:
             node = _CannonicalizeUnstructuredDomain.apply(node)
         return cls(
-            offset_provider=offset_provider, column_axis=column_axis, grid_type=grid_type
-        ).visit(node)
+            offset_provider=offset_provider,
+            column_axis=column_axis,
+            grid_type=grid_type,
+        ).visit(node, block_sizes=block_sizes)
 
     def visit_Sym(self, node: itir.Sym, **kwargs: Any) -> Sym:
         return Sym(id=node.id)
@@ -667,6 +674,7 @@ class GTFN_lowering(eve.NodeTranslator, eve.VisitorWithSymbolTableTrait):
             offset_definitions=list(offset_definitions.values()),
             function_definitions=function_definitions,
             temporaries=self.visit(node.declarations, params=[p.id for p in node.params]),
+            block_sizes=kwargs.get("block_sizes", None),
         )
 
     def visit_Temporary(

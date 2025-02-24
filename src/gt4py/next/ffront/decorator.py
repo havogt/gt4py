@@ -258,6 +258,9 @@ class Program:
 
         if config.COLLECT_METRICS:
             offset_provider["exec_info"] = metrics.global_metric_container[self.__name__]
+        if config.GLOBAL_BUILD_INFO:
+            if self.__name__ in config.GLOBAL_BUILD_INFO:
+                offset_provider["build_info"] = config.GLOBAL_BUILD_INFO[self.__name__]
 
         self.backend(
             self.definition_stage,
@@ -265,6 +268,7 @@ class Program:
             **(kwargs | {"offset_provider": offset_provider}),
         )
         offset_provider.pop("exec_info", None)
+        offset_provider.pop("build_info", None)
 
         if config.COLLECT_METRICS:
             end = time.time()

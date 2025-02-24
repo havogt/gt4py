@@ -119,7 +119,7 @@ class GTFNTranslationStep(
         arg_exprs: list[str] = []
 
         for name, connectivity in offset_provider.items():
-            if name == "exec_info":
+            if name in ["exec_info", "build_info"]:
                 continue
             if isinstance(connectivity, common.Connectivity):
                 if connectivity.index_type not in [np.int32, np.int64]:
