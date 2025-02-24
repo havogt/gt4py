@@ -286,7 +286,7 @@ class GTFNTranslationStep(
     def _backend_type(self) -> str:
         match self.device_type:
             case core_defs.DeviceType.CUDA | core_defs.DeviceType.ROCM:
-                return "gridtools::fn::backend::gpu<generated::block_sizes_t>{}"
+                return "gridtools::fn::backend::gpu<gridtools::meta::at_c<generated::block_sizes_t,0>, gridtools::meta::at_c<generated::block_sizes_t,1>>{}"
             case core_defs.DeviceType.CPU:
                 return "gridtools::fn::backend::naive{}"
             case _:
