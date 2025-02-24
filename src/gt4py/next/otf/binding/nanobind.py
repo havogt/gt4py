@@ -132,10 +132,10 @@ class BindingCodeGenerator(TemplatedGenerator):
                             std::chrono::high_resolution_clock::now().time_since_epoch()).count())/1e9;
             }
             {{body}}
-            {% if sync %}
-            cudaDeviceSynchronize();
-            {% endif %}
             if (exec_info.has_value()) {
+                {% if _this_node.sync %}
+                cudaDeviceSynchronize();
+                {% endif %}
                 exec_info->operator[]("run_cpp_end_time") = static_cast<double>(
                         std::chrono::duration_cast<std::chrono::nanoseconds>(
                             std::chrono::high_resolution_clock::now().time_since_epoch()).count())/1e9;
@@ -219,6 +219,8 @@ def create_bindings(
         )
     wrapper_name = program_source.entry_point.name + "_wrapper"
 
+    requires_sync = program_source.language == languages.CUDA
+
     file_binding = BindingFile(
         callee_header_file=f"{program_source.entry_point.name}.{program_source.language_settings.header_extension}",
         header_files=[
@@ -253,7 +255,7 @@ def create_bindings(
                     ],
                 )
             ),
-            sync=program_source.language == languages.CUDA,
+            sync=requires_sync,
         ),
         binding_module=BindingModule(
             name=program_source.entry_point.name,
