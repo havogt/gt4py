@@ -48,8 +48,8 @@ class CMakeListsGenerator(eve.codegen.TemplatedGenerator):
         if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
             set(CMAKE_CUDA_ARCHITECTURES 60)
         endif()
-        if(NOT DEFINED CMAKE_HIP_ARCHITECTURES)
-            set(CMAKE_HIP_ARCHITECTURES gfx90a)
+        if((NOT DEFINED CMAKE_HIP_ARCHITECTURES) AND (NOT DEFINED GPU_TARGETS))
+            set(CMAKE_HIP_ARCHITECTURES gfx942)
         endif()
         {{"\\n".join(languages)}}
 

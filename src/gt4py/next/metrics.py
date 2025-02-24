@@ -49,6 +49,10 @@ global_metric_container: dict[str, RuntimeMetric] = defaultdict(RuntimeMetric)
 
 
 def summary():
+    if len(global_metric_container) == 0:
+        print("No metrics collected")
+        return
+
     max_len = max(len(k) for k in global_metric_container.keys())
     print()
     print(f"{'program':{max_len + 1}} {'cpp':<9} {'std':<9} {'total':<9} {'std':<9}")

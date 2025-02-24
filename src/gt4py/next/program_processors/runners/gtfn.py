@@ -105,7 +105,7 @@ def extract_connectivity_args(
     except:
         args: list[tuple[npt.NDArray, tuple[int, ...]]] = []
         for name, conn in offset_provider.items():
-            if name == "exec_info":
+            if name in ["exec_info", "build_info"]:
                 continue
             if isinstance(conn, common.Connectivity):
                 if not isinstance(conn, common.NeighborTable):
