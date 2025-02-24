@@ -250,6 +250,7 @@ class Program(Node, ValidatedSymbolTableTrait):
     executions: list[Stmt]
     offset_definitions: list[TagDefinition]
     grid_type: common.GridType
+    block_sizes: Optional[str]
     temporaries: list[TemporaryAllocation]
 
     _NODE_SYMBOLS_: ClassVar[list[Sym]] = [Sym(id=name) for name in BUILTINS]

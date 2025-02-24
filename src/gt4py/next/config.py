@@ -11,7 +11,8 @@ from __future__ import annotations
 import enum
 import os
 import pathlib
-from typing import Final
+import tempfile
+from typing import Any, Final
 
 
 class BuildCacheLifetime(enum.Enum):
@@ -83,3 +84,5 @@ CMAKE_BUILD_TYPE: CMakeBuildType = CMakeBuildType[
 ]
 
 COLLECT_METRICS: bool = env_flag_to_bool("GT4PY_COLLECT_METRICS", default=False)
+
+GLOBAL_BUILD_INFO: dict[str, Any] = {}
