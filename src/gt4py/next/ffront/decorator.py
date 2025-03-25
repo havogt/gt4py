@@ -281,6 +281,7 @@ class FrozenProgram:
     )
 
     def __post_init__(self) -> None:
+        print(f"Freezing program {self.program.definition.__name__}")
         if self.backend is None:
             raise ValueError("Can not JIT-compile programs without backend (embedded execution).")
         if self.connectivities is None:
