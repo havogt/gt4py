@@ -281,7 +281,7 @@ class FrozenProgram:
     )
 
     def __post_init__(self) -> None:
-        print(f"Freezing program {self.program.definition.__name__}")
+        print(f"Freezing program {self.program.definition.__name__}", flush=True)
         if self.backend is None:
             raise ValueError("Can not JIT-compile programs without backend (embedded execution).")
         if self.connectivities is None:
@@ -300,7 +300,7 @@ class FrozenProgram:
             compile_time_args = CompileTimeArgs(
                 offset_provider=self.connectivities, column_axis=None, args=args, kwargs={}
             )
-            print(f"Compiling program {self.program.definition.__name__}")
+            print(f"Compiling program {self.program.definition.__name__}", flush=True)
             super().__setattr__(
                 "_compiled_program",
                 executor.submit(lambda: self.backend.compile(self.program, compile_time_args)),
