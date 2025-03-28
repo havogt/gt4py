@@ -1,4 +1,5 @@
 version = 1
+revision = 1
 requires-python = ">=3.10, <3.12"
 resolution-markers = [
     "python_full_version >= '3.11'",
@@ -142,6 +143,15 @@ wheels = [
     { url = "https://test-files.pythonhosted.org/packages/22/fe/32d912deb54d7e9eaecc652b813b86925616be358222e069ded6e3bea8c6/atlas4py-0.35.1.dev15-cp311-cp311-macosx_13_0_x86_64.whl", hash = "sha256:0cacea024adb384aacb5da5a5a233e23cf8563e4f357e9687eeac0d9c4c9a4d8", size = 6041915 },
     { url = "https://test-files.pythonhosted.org/packages/ef/94/e85cc3588d836e58974f7be1b362ce321f5989ae8c355a75faee5b09f131/atlas4py-0.35.1.dev15-cp311-cp311-macosx_14_0_arm64.whl", hash = "sha256:d5f3147e8ad52b890ffc4d92b51d6fd2b34bb39b89e09d6d4d5d7fec9f48aa0f", size = 5753565 },
     { url = "https://test-files.pythonhosted.org/packages/36/5e/71c7c054ae756f7cd5a984a44edad85ca20f4a0364ccc10052363314a9f2/atlas4py-0.35.1.dev15-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:c13f4a4a88dbe0eb056920d57eafa3e0f1e9fc117bd3c8773cfebca945ed8d76", size = 5253094 },
+]
+
+[[package]]
+name = "atpublic"
+version = "5.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/fa/af/d5113daf3947044e43d74305cbd31502915c784e158c0c098db03ceeff17/atpublic-5.1.tar.gz", hash = "sha256:abc1f4b3dbdd841cc3539e4b5e4f3ad41d658359de704e30cb36da4d4e9d3022", size = 14670 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/35/c1/6408177d6078e159fd3a2a53206e8d1d51ba30ef75ad016b19dada6952b4/atpublic-5.1-py3-none-any.whl", hash = "sha256:135783dbd887fbddb6ef032d104da70c124f2b44b9e2d79df07b9da5334825e3", size = 5209 },
 ]
 
 [[package]]
@@ -561,7 +571,7 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastrlock" },
     { name = "numpy", version = "1.26.4", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-5-gt4py-all' and extra == 'extra-5-gt4py-cuda11') or (extra == 'extra-5-gt4py-all' and extra == 'extra-5-gt4py-dace-next') or (extra == 'extra-5-gt4py-cuda11' and extra == 'extra-5-gt4py-dace') or (extra == 'extra-5-gt4py-cuda11' and extra == 'extra-5-gt4py-jax-cuda12') or (extra == 'extra-5-gt4py-cuda11' and extra == 'extra-5-gt4py-rocm4-3') or (extra == 'extra-5-gt4py-cuda11' and extra == 'extra-5-gt4py-rocm5-0') or (extra == 'extra-5-gt4py-dace' and extra == 'extra-5-gt4py-dace-next') or (extra == 'extra-5-gt4py-jax-cuda12' and extra == 'extra-5-gt4py-rocm4-3') or (extra == 'extra-5-gt4py-jax-cuda12' and extra == 'extra-5-gt4py-rocm5-0') or (extra == 'extra-5-gt4py-rocm4-3' and extra == 'extra-5-gt4py-rocm5-0')" },
-    { name = "numpy", version = "2.2.2", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-5-gt4py-all' and extra == 'extra-5-gt4py-dace-next') or (extra == 'extra-5-gt4py-dace' and extra == 'extra-5-gt4py-dace-next') or (extra != 'extra-5-gt4py-all' and extra != 'extra-5-gt4py-dace')" },
+    { name = "numpy", version = "2.2.2", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-5-gt4py-all' and extra == 'extra-5-gt4py-dace-next') or (extra == 'extra-5-gt4py-dace' and extra == 'extra-5-gt4py-dace-next') or (extra == 'extra-5-gt4py-all' and extra == 'extra-5-gt4py-cuda11' and extra == 'extra-5-gt4py-jax-cuda12') or (extra == 'extra-5-gt4py-all' and extra == 'extra-5-gt4py-cuda11' and extra == 'extra-5-gt4py-rocm4-3') or (extra == 'extra-5-gt4py-all' and extra == 'extra-5-gt4py-cuda11' and extra == 'extra-5-gt4py-rocm5-0') or (extra == 'extra-5-gt4py-all' and extra == 'extra-5-gt4py-jax-cuda12' and extra == 'extra-5-gt4py-rocm4-3') or (extra == 'extra-5-gt4py-all' and extra == 'extra-5-gt4py-jax-cuda12' and extra == 'extra-5-gt4py-rocm5-0') or (extra == 'extra-5-gt4py-all' and extra == 'extra-5-gt4py-rocm4-3' and extra == 'extra-5-gt4py-rocm5-0') or (extra == 'extra-5-gt4py-cuda11' and extra == 'extra-5-gt4py-dace' and extra == 'extra-5-gt4py-jax-cuda12') or (extra == 'extra-5-gt4py-cuda11' and extra == 'extra-5-gt4py-dace' and extra == 'extra-5-gt4py-rocm4-3') or (extra == 'extra-5-gt4py-cuda11' and extra == 'extra-5-gt4py-dace' and extra == 'extra-5-gt4py-rocm5-0') or (extra != 'extra-5-gt4py-all' and extra == 'extra-5-gt4py-cuda11' and extra != 'extra-5-gt4py-dace') or (extra == 'extra-5-gt4py-dace' and extra == 'extra-5-gt4py-jax-cuda12' and extra == 'extra-5-gt4py-rocm4-3') or (extra == 'extra-5-gt4py-dace' and extra == 'extra-5-gt4py-jax-cuda12' and extra == 'extra-5-gt4py-rocm5-0') or (extra == 'extra-5-gt4py-dace' and extra == 'extra-5-gt4py-rocm4-3' and extra == 'extra-5-gt4py-rocm5-0') or (extra != 'extra-5-gt4py-cuda11' and extra == 'extra-5-gt4py-jax-cuda12' and extra == 'extra-5-gt4py-rocm4-3') or (extra != 'extra-5-gt4py-cuda11' and extra == 'extra-5-gt4py-jax-cuda12' and extra == 'extra-5-gt4py-rocm5-0') or (extra != 'extra-5-gt4py-cuda11' and extra == 'extra-5-gt4py-rocm4-3' and extra == 'extra-5-gt4py-rocm5-0')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2a/1b/3afbaea2b78114c82b33ecc9affc79b7d9f4899945940b9b50790c93fd33/cupy_cuda11x-13.3.0-cp310-cp310-manylinux2014_aarch64.whl", hash = "sha256:ef854f0c63525d8163ab7af19f503d964de9dde0dd1cf9ea806a6ecb302cdce3", size = 109578634 },
@@ -579,7 +589,7 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastrlock" },
     { name = "numpy", version = "1.26.4", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-5-gt4py-all' or extra == 'extra-5-gt4py-dace' or (extra == 'extra-5-gt4py-cuda11' and extra == 'extra-5-gt4py-jax-cuda12') or (extra == 'extra-5-gt4py-cuda11' and extra == 'extra-5-gt4py-rocm4-3') or (extra == 'extra-5-gt4py-cuda11' and extra == 'extra-5-gt4py-rocm5-0') or (extra == 'extra-5-gt4py-jax-cuda12' and extra == 'extra-5-gt4py-rocm4-3') or (extra == 'extra-5-gt4py-jax-cuda12' and extra == 'extra-5-gt4py-rocm5-0') or (extra == 'extra-5-gt4py-rocm4-3' and extra == 'extra-5-gt4py-rocm5-0')" },
-    { name = "numpy", version = "2.2.2", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-5-gt4py-all' and extra == 'extra-5-gt4py-dace-next') or (extra == 'extra-5-gt4py-dace' and extra == 'extra-5-gt4py-dace-next') or (extra != 'extra-5-gt4py-all' and extra != 'extra-5-gt4py-dace')" },
+    { name = "numpy", version = "2.2.2", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-5-gt4py-all' and extra == 'extra-5-gt4py-dace-next') or (extra == 'extra-5-gt4py-dace' and extra == 'extra-5-gt4py-dace-next') or (extra != 'extra-5-gt4py-all' and extra != 'extra-5-gt4py-dace') or (extra == 'extra-5-gt4py-all' and extra == 'extra-5-gt4py-cuda11' and extra == 'extra-5-gt4py-jax-cuda12') or (extra == 'extra-5-gt4py-all' and extra == 'extra-5-gt4py-cuda11' and extra == 'extra-5-gt4py-rocm4-3') or (extra == 'extra-5-gt4py-all' and extra == 'extra-5-gt4py-cuda11' and extra == 'extra-5-gt4py-rocm5-0') or (extra == 'extra-5-gt4py-all' and extra == 'extra-5-gt4py-jax-cuda12' and extra == 'extra-5-gt4py-rocm4-3') or (extra == 'extra-5-gt4py-all' and extra == 'extra-5-gt4py-jax-cuda12' and extra == 'extra-5-gt4py-rocm5-0') or (extra == 'extra-5-gt4py-all' and extra == 'extra-5-gt4py-rocm4-3' and extra == 'extra-5-gt4py-rocm5-0') or (extra == 'extra-5-gt4py-cuda11' and extra == 'extra-5-gt4py-dace' and extra == 'extra-5-gt4py-jax-cuda12') or (extra == 'extra-5-gt4py-cuda11' and extra == 'extra-5-gt4py-dace' and extra == 'extra-5-gt4py-rocm4-3') or (extra == 'extra-5-gt4py-cuda11' and extra == 'extra-5-gt4py-dace' and extra == 'extra-5-gt4py-rocm5-0') or (extra == 'extra-5-gt4py-dace' and extra == 'extra-5-gt4py-jax-cuda12' and extra == 'extra-5-gt4py-rocm4-3') or (extra == 'extra-5-gt4py-dace' and extra == 'extra-5-gt4py-jax-cuda12' and extra == 'extra-5-gt4py-rocm5-0') or (extra == 'extra-5-gt4py-dace' and extra == 'extra-5-gt4py-rocm4-3' and extra == 'extra-5-gt4py-rocm5-0')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/34/60/dc268d1d9c5fdde4673a463feff5e9c70c59f477e647b54b501f65deef60/cupy_cuda12x-13.3.0-cp310-cp310-manylinux2014_aarch64.whl", hash = "sha256:674488e990998042cc54d2486d3c37cae80a12ba3787636be5a10b9446dd6914", size = 103601326 },
@@ -597,7 +607,7 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastrlock" },
     { name = "numpy", version = "1.26.4", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-5-gt4py-all' and extra == 'extra-5-gt4py-dace-next') or (extra == 'extra-5-gt4py-all' and extra == 'extra-5-gt4py-rocm4-3') or (extra == 'extra-5-gt4py-cuda11' and extra == 'extra-5-gt4py-jax-cuda12') or (extra == 'extra-5-gt4py-cuda11' and extra == 'extra-5-gt4py-rocm4-3') or (extra == 'extra-5-gt4py-cuda11' and extra == 'extra-5-gt4py-rocm5-0') or (extra == 'extra-5-gt4py-dace' and extra == 'extra-5-gt4py-dace-next') or (extra == 'extra-5-gt4py-dace' and extra == 'extra-5-gt4py-rocm4-3') or (extra == 'extra-5-gt4py-jax-cuda12' and extra == 'extra-5-gt4py-rocm4-3') or (extra == 'extra-5-gt4py-jax-cuda12' and extra == 'extra-5-gt4py-rocm5-0') or (extra == 'extra-5-gt4py-rocm4-3' and extra == 'extra-5-gt4py-rocm5-0')" },
-    { name = "numpy", version = "2.2.2", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-5-gt4py-all' and extra == 'extra-5-gt4py-dace-next') or (extra == 'extra-5-gt4py-dace' and extra == 'extra-5-gt4py-dace-next') or (extra != 'extra-5-gt4py-all' and extra != 'extra-5-gt4py-dace')" },
+    { name = "numpy", version = "2.2.2", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-5-gt4py-all' and extra == 'extra-5-gt4py-dace-next') or (extra == 'extra-5-gt4py-cuda11' and extra == 'extra-5-gt4py-jax-cuda12') or (extra == 'extra-5-gt4py-cuda11' and extra == 'extra-5-gt4py-rocm4-3') or (extra == 'extra-5-gt4py-cuda11' and extra == 'extra-5-gt4py-rocm5-0') or (extra == 'extra-5-gt4py-dace' and extra == 'extra-5-gt4py-dace-next') or (extra == 'extra-5-gt4py-jax-cuda12' and extra == 'extra-5-gt4py-rocm4-3') or (extra == 'extra-5-gt4py-jax-cuda12' and extra == 'extra-5-gt4py-rocm5-0') or (extra == 'extra-5-gt4py-all' and extra == 'extra-5-gt4py-rocm4-3' and extra == 'extra-5-gt4py-rocm5-0') or (extra == 'extra-5-gt4py-dace' and extra == 'extra-5-gt4py-rocm4-3' and extra == 'extra-5-gt4py-rocm5-0') or (extra != 'extra-5-gt4py-all' and extra != 'extra-5-gt4py-dace' and extra == 'extra-5-gt4py-rocm4-3')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f8/16/7fd4bc8a8f1a4697f76e52c13f348f284fcc5c37195efd7e4c5d0eb2b15c/cupy_rocm_4_3-13.3.0-cp310-cp310-manylinux2014_x86_64.whl", hash = "sha256:fc6b93be093bcea8b820baed856b61efc5c8cb09b02ebdc890431655714366ad", size = 41259087 },
@@ -611,7 +621,7 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastrlock" },
     { name = "numpy", version = "1.26.4", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-5-gt4py-all' and extra == 'extra-5-gt4py-dace-next') or (extra == 'extra-5-gt4py-cuda11' and extra == 'extra-5-gt4py-jax-cuda12') or (extra == 'extra-5-gt4py-cuda11' and extra == 'extra-5-gt4py-rocm4-3') or (extra == 'extra-5-gt4py-cuda11' and extra == 'extra-5-gt4py-rocm5-0') or (extra == 'extra-5-gt4py-dace' and extra == 'extra-5-gt4py-dace-next') or (extra == 'extra-5-gt4py-dace' and extra == 'extra-5-gt4py-rocm5-0') or (extra == 'extra-5-gt4py-jax-cuda12' and extra == 'extra-5-gt4py-rocm4-3') or (extra == 'extra-5-gt4py-jax-cuda12' and extra == 'extra-5-gt4py-rocm5-0') or (extra == 'extra-5-gt4py-rocm4-3' and extra == 'extra-5-gt4py-rocm5-0') or (extra == 'extra-5-gt4py-all' and extra != 'extra-5-gt4py-rocm4-3' and extra == 'extra-5-gt4py-rocm5-0') or (extra == 'extra-5-gt4py-all' and extra != 'extra-5-gt4py-cuda11' and extra != 'extra-5-gt4py-jax-cuda12' and extra == 'extra-5-gt4py-rocm5-0')" },
-    { name = "numpy", version = "2.2.2", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-5-gt4py-all' and extra == 'extra-5-gt4py-dace-next') or (extra == 'extra-5-gt4py-dace' and extra == 'extra-5-gt4py-dace-next') or (extra != 'extra-5-gt4py-all' and extra != 'extra-5-gt4py-dace')" },
+    { name = "numpy", version = "2.2.2", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-5-gt4py-all' and extra == 'extra-5-gt4py-dace-next') or (extra == 'extra-5-gt4py-cuda11' and extra == 'extra-5-gt4py-jax-cuda12') or (extra == 'extra-5-gt4py-cuda11' and extra == 'extra-5-gt4py-rocm4-3') or (extra == 'extra-5-gt4py-cuda11' and extra == 'extra-5-gt4py-rocm5-0') or (extra == 'extra-5-gt4py-dace' and extra == 'extra-5-gt4py-dace-next') or (extra == 'extra-5-gt4py-jax-cuda12' and extra == 'extra-5-gt4py-rocm4-3') or (extra == 'extra-5-gt4py-jax-cuda12' and extra == 'extra-5-gt4py-rocm5-0') or (extra == 'extra-5-gt4py-all' and extra == 'extra-5-gt4py-rocm4-3' and extra == 'extra-5-gt4py-rocm5-0') or (extra == 'extra-5-gt4py-dace' and extra == 'extra-5-gt4py-rocm4-3' and extra == 'extra-5-gt4py-rocm5-0') or (extra != 'extra-5-gt4py-all' and extra != 'extra-5-gt4py-dace' and extra == 'extra-5-gt4py-rocm5-0')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/8d/2e/6e4ecd65f5158808a54ef75d90fc7a884afb55bd405c4a7dbc34bb4a8f96/cupy_rocm_5_0-13.3.0-cp310-cp310-manylinux2014_x86_64.whl", hash = "sha256:d4c370441f7778b00f3ab80d6f0d669ea0215b6e96bbed9663ecce7ffce83fa9", size = 60056031 },
@@ -965,6 +975,19 @@ wheels = [
 ]
 
 [[package]]
+name = "flufl-lock"
+version = "8.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "atpublic" },
+    { name = "psutil" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a9/fa/885c58f9716063e2ac099f773d0420f20bb834b19538066a2e0d5b848ba4/flufl_lock-8.1.0.tar.gz", hash = "sha256:d88302005692a63d98b60080158faf089be5ecae6969f706409da8276fdce7cb", size = 32884 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/20/36/e6b26dc9ace9f4fa30f46b3f69182b6f25c07746e0b71caf3cc3c4d78ed2/flufl_lock-8.1.0-py3-none-any.whl", hash = "sha256:a01b2153d1b0cc170a26b1413037debbe94af6a1cd23164b3b2b229f766b164f", size = 11143 },
+]
+
+[[package]]
 name = "fonttools"
 version = "4.55.8"
 source = { registry = "https://pypi.org/simple" }
@@ -1066,6 +1089,7 @@ dependencies = [
     { name = "diskcache" },
     { name = "factory-boy" },
     { name = "filelock" },
+    { name = "flufl-lock" },
     { name = "frozendict" },
     { name = "gridtools-cpp" },
     { name = "jinja2" },
@@ -1113,7 +1137,7 @@ jax = [
 ]
 jax-cuda12 = [
     { name = "cupy-cuda12x" },
-    { name = "jax", extra = ["cuda12-local"] },
+    { name = "jax", extra = ["cuda12-local"], marker = "extra == 'extra-5-gt4py-jax-cuda12' or (extra == 'extra-5-gt4py-all' and extra == 'extra-5-gt4py-dace-next') or (extra == 'extra-5-gt4py-cuda11' and extra == 'extra-5-gt4py-rocm4-3') or (extra == 'extra-5-gt4py-cuda11' and extra == 'extra-5-gt4py-rocm5-0') or (extra == 'extra-5-gt4py-dace' and extra == 'extra-5-gt4py-dace-next') or (extra == 'extra-5-gt4py-rocm4-3' and extra == 'extra-5-gt4py-rocm5-0')" },
 ]
 performance = [
     { name = "scipy" },
@@ -1234,6 +1258,7 @@ requires-dist = [
     { name = "diskcache", specifier = ">=5.6.3" },
     { name = "factory-boy", specifier = ">=3.3.0" },
     { name = "filelock", specifier = ">=3.16.1" },
+    { name = "flufl-lock", specifier = ">=8.1.0" },
     { name = "frozendict", specifier = ">=2.3" },
     { name = "gridtools-cpp", specifier = "==2.*,>=2.3.8" },
     { name = "gt4py", extras = ["cuda12"], marker = "extra == 'jax-cuda12'" },
@@ -1257,6 +1282,7 @@ requires-dist = [
     { name = "typing-extensions", specifier = ">=4.11.0" },
     { name = "xxhash", specifier = ">=1.4.4,<3.1.0" },
 ]
+provides-extras = ["all", "cuda11", "cuda12", "dace", "dace-next", "formatting", "jax", "jax-cuda12", "performance", "rocm4-3", "rocm5-0", "testing"]
 
 [package.metadata.requires-dev]
 build = [
