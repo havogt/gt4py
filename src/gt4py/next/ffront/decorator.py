@@ -334,7 +334,7 @@ class FrozenProgram:
 
         compiled_program = self._compiled_program.result()
         print(f"Executing program {self.program.definition.__name__}")
-        compiled_program(*args, offset_provider=offset_provider, **kwargs)
+        compiled_program(*args, offset_provider=self.connectivities, **kwargs)
 
 
 try:
