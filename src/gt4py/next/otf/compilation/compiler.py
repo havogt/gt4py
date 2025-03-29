@@ -68,7 +68,9 @@ class Compiler(
     ) -> stages.ExtendedCompiledProgram:
         src_dir = cache.get_cache_folder(inp, self.cache_lifetime)
 
-        with lock.Lock(str(src_dir / "file.lock"), default_timeout=300):
+        print(f"Acquiring lock for {inp.program_source.entry_point.name}.", flush=True)
+        with lock.Lock(str(src_dir / "file.lock"), lifetime=300):
+            print(f"Got lock for {inp.program_source.entry_point.name}.", flush=True)
             data = build_data.read_data(src_dir)
 
             if not data or not is_compiled(data) or self.force_recompile:
@@ -80,6 +82,7 @@ class Compiler(
                 raise CompilationError(
                     f"On-the-fly compilation unsuccessful for '{inp.program_source.entry_point.name}'."
                 )
+        print(f"Released lock for {inp.program_source.entry_point.name}.", flush=True)
 
         compiled_prog = getattr(
             importer.import_from_path(src_dir / new_data.module), new_data.entry_point_name
