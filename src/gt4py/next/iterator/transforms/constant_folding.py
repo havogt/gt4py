@@ -18,9 +18,12 @@ from gt4py import eve
 from gt4py.next.iterator import builtins, embedded, ir
 from gt4py.next.iterator.ir_utils import common_pattern_matcher as cpm, ir_makers as im
 from gt4py.next.iterator.transforms import fixed_point_transformation
+from gt4py.next.type_system import type_specifications as ts
 
 
 def _value_from_literal(literal: ir.Literal):
+    if literal.type.kind is ts.ScalarKind.BOOL:
+        return literal.value == "True"
     return getattr(embedded, str(literal.type))(literal.value)
 
 
@@ -211,6 +214,9 @@ class ConstantFolding(
                         _value_from_literal(arg)  # type: ignore[arg-type] # arg type already established in if condition
                         for arg in node.args
                     ]
+                    if node.fun.id == "not_":
+                        print("not_", node.args, " which is ", arg_values)
+                        print(f"replaced by {fun(*arg_values)}")
                     return im.literal_from_value(fun(*arg_values))
             except ValueError:
                 pass  # happens for inf and neginf
@@ -229,6 +235,7 @@ class ConstantFolding(
             if node.args[0].value == "True":
                 return node.args[1]
             else:
+                assert node.args[0].value == "False"
                 return node.args[2]
         return None
 
