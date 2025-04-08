@@ -214,9 +214,6 @@ class ConstantFolding(
                         _value_from_literal(arg)  # type: ignore[arg-type] # arg type already established in if condition
                         for arg in node.args
                     ]
-                    if node.fun.id == "not_":
-                        print("not_", node.args, " which is ", arg_values)
-                        print(f"replaced by {fun(*arg_values)}")
                     return im.literal_from_value(fun(*arg_values))
             except ValueError:
                 pass  # happens for inf and neginf
