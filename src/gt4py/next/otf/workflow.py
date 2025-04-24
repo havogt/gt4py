@@ -17,6 +17,8 @@ from typing import Any, Callable, Generic, Protocol, TypeVar
 
 from typing_extensions import Self
 
+from gt4py.next import metrics
+
 
 StartT = TypeVar("StartT")
 StartT_contra = TypeVar("StartT_contra", contravariant=True)
@@ -279,3 +281,18 @@ class SkippableStep(
 
     def skip_condition(self, inp: StartT) -> bool:
         raise NotImplementedError()
+
+
+@dataclasses.dataclass(frozen=True)
+class TimedStep(ChainableWorkflowMixin[StartT, EndT]):  # TODO make ReplaceEnabledWorkflowMixin
+    metric: metrics.MetricAccumulator
+    step: Workflow[StartT, EndT]
+
+    def __call__(self, inp: StartT) -> EndT:
+        import time
+
+        start = time.thread_time()
+        result = self.step(inp)
+        end = time.thread_time()
+        self.metric.append(end - start)
+        return result
