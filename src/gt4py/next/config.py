@@ -97,3 +97,7 @@ BUILD_JOBS: int = int(os.environ.get("GT4PY_BUILD_JOBS", min(os.cpu_count() or 1
 #: The default for whether to allow jit-compilation for a compiled program.
 #: This default can be overriden per program.
 ENABLE_JIT_DEFAULT: bool = env_flag_to_bool("GT4PY_ENABLE_JIT_DEFAULT", default=True)
+
+#: Whether GT4Py should collect metrics. Enabling metrics collection will do extra synchronization
+#: and will have impact on runtime performance.
+COLLECT_METRICS: bool = env_flag_to_bool("GT4PY_COLLECT_METRICS", default=False)

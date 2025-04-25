@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import dataclasses
 import functools
+import time
 import types
 import typing
 import warnings
@@ -30,6 +31,7 @@ from gt4py.next import (
     config,
     embedded as next_embedded,
     errors,
+    metrics,
 )
 from gt4py.next.embedded import operators as embedded_operators
 from gt4py.next.ffront import (
@@ -281,6 +283,8 @@ class Program:
         )
 
     def __call__(self, *args: Any, offset_provider: common.OffsetProvider, **kwargs: Any) -> None:
+        if config.COLLECT_METRICS:
+            start = time.time()
         if __debug__:
             # TODO: remove or make dependency on self.past_stage optional
             past_process_args._validate_args(
@@ -293,7 +297,7 @@ class Program:
                 **offset_provider,
                 **self._implicit_offset_provider,
             }
-            return self._compiled_programs(
+            self._compiled_programs(
                 *args, **kwargs, offset_provider=offset_provider, enable_jit=self.enable_jit
             )
         elif self.backend is not None:
@@ -306,19 +310,21 @@ class Program:
             # Try again, make sure we are not calling the __call__ of a subclass.
             # This would be cleaner if we would extract the call into a separate method at the cost
             # of an additional indirection in the fast path.
-            return Program.__call__(self, *args, offset_provider=offset_provider, **kwargs)
-
-        # embedded
-        warnings.warn(
-            UserWarning(
-                f"Field View Program '{self.definition_stage.definition.__name__}': Using Python execution, consider selecting a performance backend."
-            ),
-            stacklevel=2,
-        )
-        offset_provider = {**offset_provider, **self._implicit_offset_provider}
-        with next_embedded.context.new_context(offset_provider=offset_provider) as ctx:
-            ctx.run(self.definition_stage.definition, *args, **kwargs)
-        return
+            Program.__call__(self, *args, offset_provider=offset_provider, **kwargs)
+        else:
+            # embedded
+            warnings.warn(
+                UserWarning(
+                    f"Field View Program '{self.definition_stage.definition.__name__}': Using Python execution, consider selecting a performance backend."
+                ),
+                stacklevel=2,
+            )
+            offset_provider = {**offset_provider, **self._implicit_offset_provider}
+            with next_embedded.context.new_context(offset_provider=offset_provider) as ctx:
+                ctx.run(self.definition_stage.definition, *args, **kwargs)
+        if config.COLLECT_METRICS:
+            end = time.time()
+            metrics.global_metric_container[self.__name__][metrics.TOTAL].append(end - start)
 
     def compile(
         self,
