@@ -12,14 +12,12 @@
 
 from __future__ import annotations
 
-import concurrent
-import concurrent.futures
 import dataclasses
 import functools
 import types
 import typing
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any, Generic, Optional, TypeVar
 
 from gt4py import eve
@@ -45,14 +43,11 @@ from gt4py.next.ffront import (
 )
 from gt4py.next.ffront.gtcallable import GTCallable
 from gt4py.next.iterator import ir as itir
-from gt4py.next.otf import arguments, stages, toolchain
+from gt4py.next.otf import arguments, compiled_program, stages, toolchain
 from gt4py.next.type_system import type_info, type_specifications as ts, type_translation
 
 
 DEFAULT_BACKEND: next_backend.Backend | None = None
-
-# TODO(havogt): We would like this to be a ProcessPoolExecutor, which requires (to decide what) to pickle.
-_async_compilation_pool = concurrent.futures.ThreadPoolExecutor(max_workers=config.BUILD_JOBS)
 
 
 # TODO(tehrengruber): Decide if and how programs can call other programs. As a
@@ -83,11 +78,13 @@ class Program:
     connectivities: Optional[
         common.OffsetProvider
     ]  # TODO(ricoh): replace with common.OffsetProviderType once the temporary pass doesn't require the runtime information
-
-    # TODO(havogt): pattern will be changed in the compile with variants PR, this pattern is used because a subclass is adding a new field without default
-    _compiled_program: (
-        concurrent.futures.Future[stages.CompiledProgram] | stages.CompiledProgram | None
-    ) = dataclasses.field(init=False, default=None, hash=False, repr=False)
+    enable_jit: bool
+    _static_params: (
+        Sequence[str] | None
+    )  # if the user requests static params, they will be used later to initialize CompiledPrograms
+    _compiled_programs: compiled_program.CompiledProgramsPool | None = dataclasses.field(
+        default=None, init=False, hash=False, repr=False
+    )
 
     @classmethod
     def from_function(
@@ -95,12 +92,26 @@ class Program:
         definition: types.FunctionType,
         backend: next_backend.Backend | None,
         grid_type: common.GridType | None = None,
+        enable_jit: bool = config.ENABLE_JIT_DEFAULT,
+        static_params: Sequence[str] | None = None,
         connectivities: Optional[
             common.OffsetProvider
         ] = None,  # TODO(ricoh): replace with common.OffsetProviderType once the temporary pass doesn't require the runtime information
     ) -> Program:
         program_def = ffront_stages.ProgramDefinition(definition=definition, grid_type=grid_type)
-        return cls(definition_stage=program_def, backend=backend, connectivities=connectivities)
+        return cls(
+            definition_stage=program_def,
+            backend=backend,
+            connectivities=connectivities,
+            enable_jit=enable_jit,
+            _static_params=static_params,
+        )
+
+    @property
+    def static_params(self) -> Sequence[str] | None:
+        if self._compiled_programs is not None:
+            return self._compiled_programs.static_params
+        return self._static_params
 
     # needed in testing
     @property
@@ -156,6 +167,17 @@ class Program:
     def with_grid_type(self, grid_type: common.GridType) -> Program:
         return dataclasses.replace(
             self, definition_stage=dataclasses.replace(self.definition_stage, grid_type=grid_type)
+        )
+
+    def with_static_params(self, *static_params: str | None) -> Program:
+        if len(static_params) == 0 or (len(static_params) == 1 and static_params[0] is None):
+            _static_params = None
+        else:
+            assert all(p is not None for p in static_params)
+            _static_params = typing.cast(tuple[str], static_params)
+        return dataclasses.replace(
+            self,
+            _static_params=_static_params,
         )
 
     def with_bound_args(self, **kwargs: Any) -> ProgramWithBoundArgs:
@@ -240,86 +262,89 @@ class Program:
                         )
         return implicit_offset_provider
 
-    def __call__(self, *args: Any, offset_provider: common.OffsetProvider, **kwargs: Any) -> None:
-        offset_provider = {**offset_provider, **self._implicit_offset_provider}
-        if self.backend is None:
-            warnings.warn(
-                UserWarning(
-                    f"Field View Program '{self.definition_stage.definition.__name__}': Using Python execution, consider selecting a performance backend."
-                ),
-                stacklevel=2,
-            )
-            with next_embedded.context.new_context(offset_provider=offset_provider) as ctx:
-                # TODO: remove or make dependency on self.past_stage optional
-                past_process_args._validate_args(
-                    self.past_stage.past_node,
-                    arg_types=[type_translation.from_value(arg) for arg in args],
-                    kwarg_types={k: type_translation.from_value(v) for k, v in kwargs.items()},
-                )
-                ctx.run(self.definition_stage.definition, *args, **kwargs)
-            return
-
-        if self._compiled_program is not None:
-            # TODO(havogt): make offset_provider_type part of the compiled program hash once we have variants
-            # TODO(havogt): measure overhead of canonicalize_arguments
-            program_type = self.past_stage.past_node.type
-            assert isinstance(program_type, ts_ffront.ProgramType)
-            args, kwargs = type_info.canonicalize_arguments(program_type, args, kwargs)
-            try:
-                # if this call works, the future was already resolved
-                self._compiled_program(*args, **kwargs, offset_provider=offset_provider)  # type: ignore[operator] # `Future` not callable, but that's why we are in `try`
-            except TypeError:  # 'Future' object is not callable
-                # otherwise we resolve the future and call again
-                assert isinstance(self._compiled_program, concurrent.futures.Future)
-                object.__setattr__(self, "_compiled_program", self._compiled_program.result())
-                self._compiled_program(*args, **kwargs, offset_provider=offset_provider)  # type: ignore[operator] # here it is a `CompiledProgram`
-        else:
-            self.backend(
-                self.definition_stage,
-                *args,
-                **(kwargs | {"offset_provider": offset_provider}),
-            )
-
-    def compile(
-        self, offset_provider_type: common.OffsetProviderType | common.OffsetProvider | None = None
-    ) -> Program:
-        if self._compiled_program is not None:
-            raise RuntimeError("Program is already compiled.")
+    def _init_compiled_programs(self) -> None:
+        assert self._compiled_programs is None
         if self.backend is None or self.backend == eve.NOTHING:
             raise ValueError("Cannot compile a program without backend.")
+
+        program_type = self.past_stage.past_node.type
+        assert isinstance(program_type, ts_ffront.ProgramType)
+        object.__setattr__(
+            self,
+            "_compiled_programs",
+            compiled_program.CompiledProgramsPool(
+                backend=self.backend,
+                definition_stage=self.definition_stage,
+                program_type=program_type,
+                static_params=self.static_params,
+            ),
+        )
+
+    def __call__(self, *args: Any, offset_provider: common.OffsetProvider, **kwargs: Any) -> None:
+        if __debug__:
+            # TODO: remove or make dependency on self.past_stage optional
+            past_process_args._validate_args(
+                self.past_stage.past_node,
+                arg_types=[type_translation.from_value(arg) for arg in args],
+                kwarg_types={k: type_translation.from_value(v) for k, v in kwargs.items()},
+            )
+        if self._compiled_programs is not None:  # fast path, implict `self.backend is not None`
+            offset_provider = {  # TODO(havogt) cleanup implicit_offset_provider
+                **offset_provider,
+                **self._implicit_offset_provider,
+            }
+            return self._compiled_programs(
+                *args, **kwargs, offset_provider=offset_provider, enable_jit=self.enable_jit
+            )
+        elif self.backend is not None:
+            if self.static_params is None:
+                # Here we set that the only program we will use is the generic one,
+                # if the user wants to compile for different static parameters,
+                # they should call `.with_static_params()`.
+                object.__setattr__(self, "_static_params", ())
+            self._init_compiled_programs()
+            # Try again, make sure we are not calling the __call__ of a subclass.
+            # This would be cleaner if we would extract the call into a separate method at the cost
+            # of an additional indirection in the fast path.
+            return Program.__call__(self, *args, offset_provider=offset_provider, **kwargs)
+
+        # embedded
+        warnings.warn(
+            UserWarning(
+                f"Field View Program '{self.definition_stage.definition.__name__}': Using Python execution, consider selecting a performance backend."
+            ),
+            stacklevel=2,
+        )
+        offset_provider = {**offset_provider, **self._implicit_offset_provider}
+        with next_embedded.context.new_context(offset_provider=offset_provider) as ctx:
+            ctx.run(self.definition_stage.definition, *args, **kwargs)
+        return
+
+    def compile(
+        self,
+        offset_provider_type: common.OffsetProviderType | common.OffsetProvider | None = None,
+        **static_args: list[core_defs.Scalar | tuple[core_defs.Scalar | tuple, ...]],
+    ) -> Program:
+        if self._compiled_programs is None:
+            self._init_compiled_programs()
         if self.connectivities is None and offset_provider_type is None:
             raise ValueError(
                 "Cannot compile a program without connectivities / OffsetProviderType."
             )
+        if not all(isinstance(v, list) for v in static_args.values()):
+            raise TypeError(
+                "Please provide the static arguments as lists."
+            )  # To avoid confusion with tuple args
+
         offset_provider_type = (
             self.connectivities if offset_provider_type is None else offset_provider_type
         )
         assert common.is_offset_provider(offset_provider_type) or common.is_offset_provider_type(
             offset_provider_type
         )
-        past_node_type = self.past_stage.past_node.type
-        assert isinstance(past_node_type, ts_ffront.ProgramType)
-        arg_types_dict = past_node_type.definition.pos_or_kw_args
+        offset_provider_type = {**offset_provider_type, **self._implicit_offset_provider}  # type: ignore[assignment] # TODO(havogt): cleanup usage of offset_provider vs offset_provider_type
 
-        # TODO(havogt): we currently don't support pos_only or kw_only args at the program level
-        assert not past_node_type.definition.kw_only_args
-        assert not past_node_type.definition.pos_only_args
-
-        args = tuple(arg_types_dict.values())
-
-        compile_time_args = arguments.CompileTimeArgs(
-            offset_provider=offset_provider_type,  # type:ignore[arg-type] # TODO(havogt): resolve OffsetProviderType vs OffsetProvider
-            column_axis=None,  # TODO(havogt): column_axis seems to a unused, even for programs with scans
-            args=args,
-            kwargs={},
-        )
-        object.__setattr__(
-            self,
-            "_compiled_program",
-            _async_compilation_pool.submit(
-                self.backend.compile, self.definition_stage, compile_time_args=compile_time_args
-            ),
-        )
+        self._compiled_programs.compile(offset_provider_type=offset_provider_type, **static_args)  # type: ignore[union-attr] # self._compiled_programs is not None
         return self
 
     def freeze(self) -> FrozenProgram:
@@ -476,7 +501,9 @@ class ProgramWithBoundArgs(Program):
 
     @xtyping.override
     def compile(
-        self, offset_provider_type: common.OffsetProviderType | common.OffsetProvider | None = None
+        self,
+        offset_provider_type: common.OffsetProviderType | common.OffsetProvider | None = None,
+        **static_args: list[core_defs.Scalar | tuple[core_defs.Scalar | tuple, ...]],
     ) -> Program:
         raise NotImplementedError("Compilation of programs with bound arguments is not implemented")
 
@@ -490,6 +517,8 @@ def program(
     *,
     backend: next_backend.Backend | eve.NothingType | None,
     grid_type: common.GridType | None,
+    enable_jit: bool,
+    static_params: Sequence[str] | None,
     frozen: bool,
 ) -> Callable[[types.FunctionType], Program]: ...
 
@@ -500,6 +529,8 @@ def program(
     # `NOTHING` -> default backend, `None` -> no backend (embedded execution)
     backend: next_backend.Backend | eve.NothingType | None = eve.NOTHING,
     grid_type: common.GridType | None = None,
+    enable_jit: bool = config.ENABLE_JIT_DEFAULT,  # only relevant if static_params are set
+    static_params: Sequence[str] | None = None,
     frozen: bool = False,
 ) -> Program | FrozenProgram | Callable[[types.FunctionType], Program | FrozenProgram]:
     """
@@ -523,10 +554,12 @@ def program(
     def program_inner(definition: types.FunctionType) -> Program:
         program = Program.from_function(
             definition,
-            typing.cast(
+            backend=typing.cast(
                 next_backend.Backend | None, DEFAULT_BACKEND if backend is eve.NOTHING else backend
             ),
-            grid_type,
+            grid_type=grid_type,
+            enable_jit=enable_jit,
+            static_params=static_params,
         )
         if frozen:
             return program.freeze()  # type: ignore[return-value] # TODO(havogt): Should `FrozenProgram` be a `Program`?
@@ -658,6 +691,8 @@ class FieldOperator(GTCallable, Generic[OperatorNodeT]):
             past_stage=past_stage,
             backend=self.backend,
             connectivities=None,
+            enable_jit=False,  # TODO(havogt): revisit ProgramFromPast
+            _static_params=None,  # TODO(havogt): revisit ProgramFromPast
         )
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
