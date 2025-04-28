@@ -173,6 +173,7 @@ class CollapseTuple(
 
     uids: eve_utils.UIDGenerator
     ignore_tuple_size: bool
+    offset_provider_type: common.OffsetProviderType
     enabled_transformations: Transformation = Transformation.all()  # noqa: RUF009 [function-call-in-dataclass-default-argument]
 
     PRESERVED_ANNEX_ATTRS = ("type", "domain")
@@ -227,6 +228,7 @@ class CollapseTuple(
             ignore_tuple_size=ignore_tuple_size,
             enabled_transformations=enabled_transformations,
             uids=uids,
+            offset_provider_type=offset_provider_type,
         ).visit(node, within_stencil=within_stencil)
 
         # inline to remove left-overs from LETIFY_MAKE_TUPLE_ELEMENTS. this is important
@@ -264,7 +266,9 @@ class CollapseTuple(
                     # tuple argument differs, just continue with the rest of the tree
                     return None
 
-            itir_type_inference.reinfer(first_expr)  # type is needed so reinfer on-demand
+            itir_type_inference.reinfer(
+                first_expr, offset_provider_type=self.offset_provider_type
+            )  # type is needed so reinfer on-demand
             assert self.ignore_tuple_size or isinstance(
                 first_expr.type, (ts.TupleType, ts.DeferredType)
             )
@@ -403,7 +407,7 @@ class CollapseTuple(
         # part of the continuation which is recursively transformed).
         for i, arg in enumerate(node.args):
             if cpm.is_call_to(arg, "if_"):
-                itir_type_inference.reinfer(arg)
+                itir_type_inference.reinfer(arg, offset_provider_type=self.offset_provider_type)
 
                 cond, true_branch, false_branch = arg.args  # e.g. `True`, `{1, 2}`, `{3, 4}`
                 if not any(
@@ -527,7 +531,7 @@ class CollapseTuple(
             return None
 
         for arg in node.args:
-            itir_type_inference.reinfer(arg)
+            itir_type_inference.reinfer(arg, offset_provider_type=self.offset_provider_type)
 
         if not any(isinstance(arg.type, ts.TupleType) for arg in node.args):
             return None

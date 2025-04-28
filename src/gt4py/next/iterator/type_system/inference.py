@@ -382,7 +382,9 @@ class ITIRTypeInference(eve.NodeTranslator):
         return node
 
     @classmethod
-    def apply_reinfer(cls, node: T) -> T:
+    def apply_reinfer(
+        cls, node: T, offset_provider_type: common.OffsetProviderType | None = None
+    ) -> T:
         """
         Given a partially typed node infer the type of ``node`` and its sub-nodes.
 
@@ -398,7 +400,9 @@ class ITIRTypeInference(eve.NodeTranslator):
         if node.type:  # already inferred
             return node
 
-        instance = cls(offset_provider_type=None, allow_undeclared_symbols=True, reinfer=True)
+        instance = cls(
+            offset_provider_type=offset_provider_type, allow_undeclared_symbols=True, reinfer=True
+        )
         instance.visit(node, ctx=_INITIAL_CONTEXT)
         return node
 
@@ -582,7 +586,7 @@ class ITIRTypeInference(eve.NodeTranslator):
         return result
 
     def visit_Node(self, node: itir.Node, **kwargs):
-        raise NotImplementedError(f"No type rule for nodes of type " f"'{type(node).__name__}'.")
+        raise NotImplementedError(f"No type rule for nodes of type '{type(node).__name__}'.")
 
 
 infer = ITIRTypeInference.apply
