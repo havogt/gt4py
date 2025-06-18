@@ -78,13 +78,19 @@ def _absolute_sub_domain(
                     )
 
                 named_ranges.append(common.NamedRange(dim, idx))
-            else:
+            elif common.is_int_index(idx):
                 # not in new domain
                 assert common.is_int_index(idx)
                 if idx < rng.start or idx >= rng.stop:
                     raise embedded_exceptions.IndexOutOfBounds(
                         domain=domain, indices=index, index=named_idx, dim=dim
                     )
+            else:
+                assert isinstance(idx, common.Field)
+                for dim, nr in idx.domain:
+                    named_ranges.append(common.NamedRange(dim, nr))
+                # TODO assert is index field
+                
         else:
             # dimension not mentioned in slice
             named_ranges.append(common.NamedRange(dim, domain.ranges[i]))

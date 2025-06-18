@@ -328,9 +328,15 @@ class NdArrayField(
 
     def restrict(self, index: common.AnyIndexSpec) -> NdArrayField:
         new_domain, buffer_slice = self._slice(index)
+
+        dims = common._ordered_dims(new_domain.dims)
+        reordering = tuple(new_domain.dims.index(d) for d in dims)
+        ordered_domain = common.Domain(dims=dims, ranges=tuple(new_domain[d].unit_range for d in dims))
+
         new_buffer = self.ndarray[buffer_slice]
+        new_buffer = self.__class__.array_ns.transpose(new_buffer, reordering)
         new_buffer = self.__class__.array_ns.asarray(new_buffer)
-        return self.__class__.from_array(new_buffer, domain=new_domain)
+        return self.__class__.from_array(new_buffer, domain=ordered_domain)
 
     __getitem__ = restrict
 
@@ -425,7 +431,7 @@ class NdArrayField(
             if common.is_absolute_index_sequence(index_sequence)
             else index_sequence
         )
-        assert common.is_relative_index_sequence(slice_)
+        # assert common.is_relative_index_sequence(slice_)
         return new_domain, slice_
 
     if dace:
@@ -1181,5 +1187,8 @@ def _compute_slice(
     elif common.is_int_index(rng):
         assert common.Domain.is_finite(domain)
         return rng - domain.ranges[pos].start
+    
     else:
-        raise ValueError(f"Can only use integer or UnitRange ranges, provided type: '{type(rng)}'.")
+        # TODO is index array
+        return rng.ndarray - domain.ranges[pos].start
+    #     raise ValueError(f"Can only use integer or UnitRange ranges, provided type: '{type(rng)}'.")
