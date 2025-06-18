@@ -1,4 +1,4 @@
-from gt4py.next.ffront.fbuiltins import maximum, minimum, astype
+from gt4py.next.ffront.fbuiltins import maximum, minimum, astype, where
 from gt4py.next.ffront.experimental import as_offset
 from gt4py import next as gtx
 
@@ -19,6 +19,47 @@ def _ordered_dims(dims: list[gtx.Dimension]) -> list[gtx.Dimension]:
 
 gtx.common._ordered_dims = _ordered_dims
 
+def add_optical_properties_for_scattering(
+    effective_radius: dtype,
+    effective_radius_0: dtype,
+    d_effective_radius: dtype,
+    N_EFFECTIVE_RADII: int,
+    water_path: ColumnK,
+    od: ColumnKGPoint,
+    scat_od: ColumnKGPoint,
+    scat_asymmetry: ColumnKGPoint,
+    mass_ext: GPointRE,
+    ssa: GPointRE,
+    asymmetry: GPointRE,
+):
+    ire, weight1, weight2 = re_index(
+        effective_radius, effective_radius_0, d_effective_radius, N_EFFECTIVE_RADII
+    )
+
+    od_local = water_path * (
+            weight1 * mass_ext[ER(ire-1)]+ weight2 * mass_ext[ER(ire)]
+        )
+    od += od_local
+    od_local *= weight1 * ssa[ER(ire - 1)] + weight2 * ssa[ER(ire)]
+    scat_od += od_local
+    scat_asymmetry += od_local * (
+        weight1 * asymmetry[ER(ire - 1)] + weight2 * asymmetry[ER(ire)]
+    )
+    return od, scat_od, scat_asymmetry
+
+def re_index(effective_radius: dtype, effective_radius_0: dtype, d_effective_radius: dtype, N_EFFECTIVE_RADII: int):
+    re_index = maximum(
+        1.0,
+        minimum(
+            1.0 + (effective_radius - effective_radius_0) / d_effective_radius,
+            N_EFFECTIVE_RADII - 0.0001,
+        ),
+    )
+    ire = astype(re_index, int)
+    weight2 = re_index - ire
+    weight1 = 1.0 - weight2
+    return ire, weight1, weight2
+
 def f_add_optical_properties(
     asymmetry: GPointRE,
     cloud_fraction: ColumnK,
@@ -35,29 +76,39 @@ def f_add_optical_properties(
     N_EFFECTIVE_RADII: int,
 ):
     if DO_SCATTERING:
+        return where(
+            cloud_fraction > 0.0,
+            add_optical_properties_for_scattering(
+                effective_radius=effective_radius,
+                effective_radius_0=effective_radius_0,
+                d_effective_radius=d_effective_radius,
+                N_EFFECTIVE_RADII=N_EFFECTIVE_RADII,
+                water_path=water_path,
+                od=od,
+                scat_od=scat_od,
+                scat_asymmetry=scat_asymmetry,
+                mass_ext=mass_ext,
+                ssa=ssa,
+                asymmetry=asymmetry
+            ),
+            (od, scat_od, scat_asymmetry)
+        )
         # compute absorption and scattering properties
-        if cloud_fraction > 0.0:
-            re_index = maximum(
-                1.0,
-                minimum(
-                    1.0 + (effective_radius - effective_radius_0) / d_effective_radius,
-                    N_EFFECTIVE_RADII - 0.0001,
-                ),
-            )
-            ire = astype(re_index, int)
-            weight2 = re_index - ire
-            weight1 = 1.0 - weight2
+        # if cloud_fraction > 0.0: # where
+        #     ire, weight1, weight2 = re_index(
+        #         effective_radius, effective_radius_0, d_effective_radius, N_EFFECTIVE_RADII
+        #     )
 
-            od_local = water_path * (
-                    weight1 * mass_ext[ER(ire-1)]+ weight2 * mass_ext[ER(ire)]
-                )
-            od += od_local
-            od_local *= weight1 * ssa[ER(ire - 1)] + weight2 * ssa[ER(ire)]
-            scat_od += od_local
-            scat_asymmetry += od_local * (
-                weight1 * asymmetry[ER(ire - 1)] + weight2 * asymmetry[ER(ire)]
-            )
-            return od, scat_od, scat_asymmetry
+        #     od_local = water_path * (
+        #             weight1 * mass_ext[ER(ire-1)]+ weight2 * mass_ext[ER(ire)]
+        #         )
+        #     od += od_local
+        #     od_local *= weight1 * ssa[ER(ire - 1)] + weight2 * ssa[ER(ire)]
+        #     scat_od += od_local
+        #     scat_asymmetry += od_local * (
+        #         weight1 * asymmetry[ER(ire - 1)] + weight2 * asymmetry[ER(ire)]
+        #     )
+        #     return od, scat_od, scat_asymmetry
             
                 
     # else:
@@ -104,7 +155,7 @@ od = gtx.zeros(column_k_gpoint_domain, dtype=dtype)
 scat_asymmetry = gtx.zeros(column_k_gpoint_domain, dtype=dtype)
 scat_od = gtx.zeros(column_k_gpoint_domain, dtype=dtype)
 
-od = f_add_optical_properties(
+od, scat_od,scat_asymmetry = f_add_optical_properties(
     asymmetry=asymmetry,
     cloud_fraction=cloud_fraction,
     effective_radius=effective_radius,
@@ -118,3 +169,5 @@ od = f_add_optical_properties(
     effective_radius_0=10.0,
     DO_SCATTERING=True,
     N_EFFECTIVE_RADII=n_er)
+
+print(od)
