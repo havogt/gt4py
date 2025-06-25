@@ -261,7 +261,9 @@ class CachedStep(
         hash_ = self.hash_function(inp)
         try:
             result = self.cache[hash_]
+            print(f"cache hit for {type(self.step)}")
         except KeyError:
+            print(f"cache miss for {type(self.step)}")
             result = self.cache[hash_] = self.step(inp)
         return result
 

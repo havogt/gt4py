@@ -135,6 +135,18 @@ class FileCache(diskcache.Cache):
             self.close()
 
 
+from gt4py.next.program_processors.codegens.gtfn.gtfn_module import GTFNTranslationStep
+
+
+def translation_hash(translation: GTFNTranslationStep):
+    def impl(compilable_program):
+        return hash(
+            (translation.device_type, stages.fingerprint_compilable_program(compilable_program))
+        )
+
+    return impl
+
+
 class GTFNCompileWorkflowFactory(factory.Factory):
     class Meta:
         model = recipes.OTFCompileWorkflow
@@ -152,7 +164,7 @@ class GTFNCompileWorkflowFactory(factory.Factory):
             translation=factory.LazyAttribute(
                 lambda o: workflow.CachedStep(
                     o.bare_translation,
-                    hash_function=stages.fingerprint_compilable_program,
+                    hash_function=translation_hash(o.bare_translation),
                     cache=FileCache(str(config.BUILD_CACHE_DIR / "gtfn_cache")),
                 )
             ),
