@@ -80,10 +80,12 @@ _builtins_mapping: Final = {
 }
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass
 class GTFNCodegen(codegen.TemplatedGenerator):
     thread_block_sizes: tuple[int, ...]
     loop_block_sizes: tuple[int, ...]
+    is_cartesian: bool | None = None
+    user_defined_function_ids: list[str] = dataclasses.field(default_factory=list)
 
     Sym = as_fmt("{id}")
 
