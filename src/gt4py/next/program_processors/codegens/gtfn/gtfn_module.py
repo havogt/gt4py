@@ -53,6 +53,8 @@ class GTFNTranslationStep(
     use_imperative_backend: bool = False
     device_type: core_defs.DeviceType = core_defs.DeviceType.CPU
     symbolic_domain_sizes: Optional[dict[str, str]] = None
+    thread_block_sizes: tuple[int, ...] = (32, 8)
+    loop_block_sizes: tuple[int, ...] = (1, 1)
 
     def _default_language_settings(self) -> languages.LanguageWithHeaderFilesSettings:
         match self.device_type:
@@ -204,7 +206,11 @@ class GTFNTranslationStep(
             gtfn_im_ir = GTFN_IM_lowering().visit(node=gtfn_ir)
             generated_code = GTFNIMCodegen.apply(gtfn_im_ir)
         else:
-            generated_code = GTFNCodegen.apply(gtfn_ir)
+            generated_code = GTFNCodegen.apply(
+                gtfn_ir,
+                thread_block_sizes=self.thread_block_sizes,
+                loop_block_sizes=self.loop_block_sizes,
+            )
 
         return codegen.format_source("cpp", generated_code, style="LLVM")
 
@@ -279,7 +285,7 @@ class GTFNTranslationStep(
     def _backend_type(self) -> str:
         match self.device_type:
             case core_defs.DeviceType.CUDA | core_defs.DeviceType.ROCM:
-                return "gridtools::fn::backend::gpu<generated::block_sizes_t>{}"
+                return "gridtools::fn::backend::gpu<generated::thread_block_sizes_t, generated::loop_block_sizes_t>{}"
             case core_defs.DeviceType.CPU:
                 return "gridtools::fn::backend::naive{}"
             case _:

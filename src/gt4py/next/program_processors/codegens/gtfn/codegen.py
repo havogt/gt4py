@@ -6,6 +6,7 @@
 # Please, refer to the LICENSE file in the root directory.
 # SPDX-License-Identifier: BSD-3-Clause
 
+import dataclasses
 from typing import Any, Collection, Final, Union
 
 from gt4py.eve import codegen
@@ -15,77 +16,82 @@ from gt4py.next.otf import cpp_utils
 from gt4py.next.program_processors.codegens.gtfn import gtfn_im_ir, gtfn_ir, gtfn_ir_common
 
 
-class GTFNCodegen(codegen.TemplatedGenerator):
-    _grid_type_str: Final = {
-        common.GridType.CARTESIAN: "cartesian",
-        common.GridType.UNSTRUCTURED: "unstructured",
-    }
+_grid_type_str: Final = {
+    common.GridType.CARTESIAN: "cartesian",
+    common.GridType.UNSTRUCTURED: "unstructured",
+}
 
-    _builtins_mapping: Final = {
-        "abs": "std::abs",
-        "neg": "std::negate<>{}",
-        "sin": "std::sin",
-        "cos": "std::cos",
-        "tan": "std::tan",
-        "arcsin": "std::asin",
-        "arccos": "std::acos",
-        "arctan": "std::atan",
-        "sinh": "std::sinh",
-        "cosh": "std::cosh",
-        "tanh": "std::tanh",
-        "arcsinh": "std::asinh",
-        "arccosh": "std::acosh",
-        "arctanh": "std::atanh",
-        "sqrt": "std::sqrt",
-        "exp": "std::exp",
-        "log": "std::log",
-        "gamma": "std::tgamma",
-        "cbrt": "std::cbrt",
-        "isfinite": "std::isfinite",
-        "isinf": "std::isinf",
-        "isnan": "std::isnan",
-        "floor": "std::floor",
-        "ceil": "std::ceil",
-        "trunc": "std::trunc",
-        "minimum": "std::min",
-        "maximum": "std::max",
-        "fmod": "std::fmod",
-        "power": "std::pow",
-        "float32": "float",
-        "float64": "double",
-        "int8": "std::int8_t",
-        "uint8": "std::uint8_t",
-        "int16": "std::int16_t",
-        "uint16": "std::uint16_t",
-        "int32": "std::int32_t",
-        "uint32": "std::uint32_t",
-        "int64": "std::int64_t",
-        "uint64": "std::uint64_t",
-        "bool": "bool",
-        "plus": "std::plus<>{}",
-        "minus": "std::minus<>{}",
-        "multiplies": "std::multiplies<>{}",
-        "divides": "std::divides<>{}",
-        "eq": "std::equal_to<>{}",
-        "not_eq": "std::not_equal_to<>{}",
-        "less": "std::less<>{}",
-        "less_equal": "std::less_equal<>{}",
-        "greater": "std::greater<>{}",
-        "greater_equal": "std::greater_equal<>{}",
-        "and_": "std::logical_and<>{}",
-        "or_": "std::logical_or<>{}",
-        "xor_": "std::bit_xor<>{}",
-        "mod": "std::modulus<>{}",
-        "not_": "std::logical_not<>{}",
-    }
+_builtins_mapping: Final = {
+    "abs": "std::abs",
+    "neg": "std::negate<>{}",
+    "sin": "std::sin",
+    "cos": "std::cos",
+    "tan": "std::tan",
+    "arcsin": "std::asin",
+    "arccos": "std::acos",
+    "arctan": "std::atan",
+    "sinh": "std::sinh",
+    "cosh": "std::cosh",
+    "tanh": "std::tanh",
+    "arcsinh": "std::asinh",
+    "arccosh": "std::acosh",
+    "arctanh": "std::atanh",
+    "sqrt": "std::sqrt",
+    "exp": "std::exp",
+    "log": "std::log",
+    "gamma": "std::tgamma",
+    "cbrt": "std::cbrt",
+    "isfinite": "std::isfinite",
+    "isinf": "std::isinf",
+    "isnan": "std::isnan",
+    "floor": "std::floor",
+    "ceil": "std::ceil",
+    "trunc": "std::trunc",
+    "minimum": "std::min",
+    "maximum": "std::max",
+    "fmod": "std::fmod",
+    "power": "std::pow",
+    "float32": "float",
+    "float64": "double",
+    "int8": "std::int8_t",
+    "uint8": "std::uint8_t",
+    "int16": "std::int16_t",
+    "uint16": "std::uint16_t",
+    "int32": "std::int32_t",
+    "uint32": "std::uint32_t",
+    "int64": "std::int64_t",
+    "uint64": "std::uint64_t",
+    "bool": "bool",
+    "plus": "std::plus<>{}",
+    "minus": "std::minus<>{}",
+    "multiplies": "std::multiplies<>{}",
+    "divides": "std::divides<>{}",
+    "eq": "std::equal_to<>{}",
+    "not_eq": "std::not_equal_to<>{}",
+    "less": "std::less<>{}",
+    "less_equal": "std::less_equal<>{}",
+    "greater": "std::greater<>{}",
+    "greater_equal": "std::greater_equal<>{}",
+    "and_": "std::logical_and<>{}",
+    "or_": "std::logical_or<>{}",
+    "xor_": "std::bit_xor<>{}",
+    "mod": "std::modulus<>{}",
+    "not_": "std::logical_not<>{}",
+}
+
+
+@dataclasses.dataclass(frozen=True)
+class GTFNCodegen(codegen.TemplatedGenerator):
+    thread_block_sizes: tuple[int, ...]
+    loop_block_sizes: tuple[int, ...]
 
     Sym = as_fmt("{id}")
 
     def visit_SymRef(self, node: gtfn_ir_common.SymRef, **kwargs: Any) -> str:
         if node.id == "get":
             return "::gridtools::tuple_util::get"
-        if node.id in self._builtins_mapping:
-            return self._builtins_mapping[node.id]
+        if node.id in _builtins_mapping:
+            return _builtins_mapping[node.id]
         if node.id in gtfn_ir.GTFN_BUILTINS:
             qualified_fun_name = f"gtfn::{node.id}"
             return qualified_fun_name
@@ -257,7 +263,7 @@ class GTFNCodegen(codegen.TemplatedGenerator):
         )
         return self.generic_visit(
             node,
-            grid_type_str=self._grid_type_str[node.grid_type],
+            grid_type_str=_grid_type_str[node.grid_type],
             block_sizes=self._block_sizes(node.offset_definitions),
             **kwargs,
         )
@@ -297,22 +303,51 @@ class GTFNCodegen(codegen.TemplatedGenerator):
 
     def _block_sizes(self, offset_definitions: list[gtfn_ir.TagDefinition]) -> str:
         if self.is_cartesian:
-            block_dims = []
-            block_sizes = [32, 8] + [1] * (len(offset_definitions) - 2)
+            thread_block_dims = []
+            loop_block_dims = []
+            assert len(self.thread_block_sizes) <= len(offset_definitions)
+            assert len(self.loop_block_sizes) <= len(offset_definitions)
+            thread_block_sizes = list(self.thread_block_sizes) + [1] * (
+                len(offset_definitions) - len(self.thread_block_sizes)
+            )
+            loop_block_sizes = list(self.loop_block_sizes) + [1] * (
+                len(offset_definitions) - len(self.loop_block_sizes)
+            )
             for i, tag in enumerate(offset_definitions):
                 if tag.alias is None:
-                    block_dims.append(
+                    thread_block_dims.append(
                         f"gridtools::meta::list<{tag.name.id}_t, "
-                        f"gridtools::integral_constant<int, {block_sizes[i]}>>"
+                        f"gridtools::integral_constant<int, {thread_block_sizes[i]}>>"
                     )
-            sizes_str = ",\n".join(block_dims)
-            return f"using block_sizes_t = gridtools::meta::list<{sizes_str}>;"
+                    loop_block_dims.append(
+                        f"gridtools::meta::list<{tag.name.id}_t, "
+                        f"gridtools::integral_constant<int, {loop_block_sizes[i]}>>"
+                    )
+            thread_block_sizes_str = ",\n".join(thread_block_dims)
+            loop_block_sizes_str = ",\n".join(loop_block_dims)
+            return f"""
+                using thread_block_sizes_t = gridtools::meta::list<{thread_block_sizes_str}>;
+                using loop_block_sizes_t = gridtools::meta::list<{loop_block_sizes_str}>;
+            """
         else:
-            return "using block_sizes_t = gridtools::meta::list<gridtools::meta::list<gtfn::unstructured::dim::horizontal, gridtools::integral_constant<int, 32>>, gridtools::meta::list<gtfn::unstructured::dim::vertical, gridtools::integral_constant<int, 8>>>;"
+            assert len(self.thread_block_sizes) == 2
+            assert len(self.loop_block_sizes) == 2
+            return f"""
+                using thread_block_sizes_t = gridtools::meta::list<gridtools::meta::list<gtfn::unstructured::dim::horizontal, gridtools::integral_constant<int, {self.thread_block_sizes[0]}>, gridtools::meta::list<gtfn::unstructured::dim::vertical, gridtools::integral_constant<int, {self.thread_block_sizes[1]}>>>;
+                using loop_block_sizes_t = gridtools::meta::list<gridtools::meta::list<gtfn::unstructured::dim::horizontal, gridtools::integral_constant<int, {self.loop_block_sizes[0]}>, gridtools::meta::list<gtfn::unstructured::dim::vertical, gridtools::integral_constant<int, {self.loop_block_sizes[1]}>>>;
+            """
 
     @classmethod
-    def apply(cls, root: Any, **kwargs: Any) -> str:
-        generated_code = super().apply(root, **kwargs)
+    def apply(
+        cls,
+        root: Any,
+        thread_block_sizes: tuple[int, ...] = (32, 8),
+        loop_block_sizes: tuple[int, ...] = (1, 1),
+        **kwargs: Any,
+    ) -> str:
+        generated_code = cls(
+            thread_block_sizes=thread_block_sizes, loop_block_sizes=loop_block_sizes
+        ).visit(root, **kwargs)
         return generated_code
 
 
@@ -361,6 +396,6 @@ class GTFNIMCodegen(GTFNCodegen):
         return self.generic_visit(node, expr_=expr_)
 
     @classmethod
-    def apply(cls, root: Any, **kwargs: Any) -> str:
+    def apply(cls, root: Any, **kwargs: Any) -> str:  # type: ignore[override]
         generated_code = super().apply(root, **kwargs)
         return generated_code
