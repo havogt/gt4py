@@ -335,8 +335,8 @@ class GTFNCodegen(codegen.TemplatedGenerator):
             assert len(self.thread_block_sizes) == 2
             assert len(self.loop_block_sizes) == 2
             return f"""
-                using thread_block_sizes_t = gridtools::meta::list<gridtools::meta::list<gtfn::unstructured::dim::horizontal, gridtools::integral_constant<int, {self.thread_block_sizes[0]}>, gridtools::meta::list<gtfn::unstructured::dim::vertical, gridtools::integral_constant<int, {self.thread_block_sizes[1]}>>>;
-                using loop_block_sizes_t = gridtools::meta::list<gridtools::meta::list<gtfn::unstructured::dim::horizontal, gridtools::integral_constant<int, {self.loop_block_sizes[0]}>, gridtools::meta::list<gtfn::unstructured::dim::vertical, gridtools::integral_constant<int, {self.loop_block_sizes[1]}>>>;
+                using thread_block_sizes_t = gridtools::meta::list<gridtools::meta::list<gtfn::unstructured::dim::horizontal, gridtools::integral_constant<int, {self.thread_block_sizes[0]}>>, gridtools::meta::list<gtfn::unstructured::dim::vertical, gridtools::integral_constant<int, {self.thread_block_sizes[1]}>>>;
+                using loop_block_sizes_t = gridtools::meta::list<gridtools::meta::list<gtfn::unstructured::dim::horizontal, gridtools::integral_constant<int, {self.loop_block_sizes[0]}>>, gridtools::meta::list<gtfn::unstructured::dim::vertical, gridtools::integral_constant<int, {self.loop_block_sizes[1]}>>>;
             """
 
     @classmethod
