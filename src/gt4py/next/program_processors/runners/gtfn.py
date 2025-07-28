@@ -227,6 +227,15 @@ run_gtfn_gpu_cached = GTFNBackendFactory(
     gpu=True, cached=True, otf_workflow__cached_translation=True
 )
 
+# TODO this is how to construct
+run_gtfn_gpu_cached_custom_blocksizes = GTFNBackendFactory(
+    gpu=True,
+    cached=True,
+    otf_workflow__cached_translation=True,
+    otf_workflow__bare_translation__thread_block_sizes=(32, 8),
+    otf_workflow__bare_translation__loop_block_sizes=(1, 1),
+)
+
 run_gtfn_no_transforms = GTFNBackendFactory(
     otf_workflow__bare_translation__enable_itir_transforms=False
 )
