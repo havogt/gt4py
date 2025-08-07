@@ -59,3 +59,33 @@ def test_foo(cartesian_case):
         inout=(out_b, out_a),
         ref=(b, a),
     )
+
+
+def test_direct_foo(cartesian_case):
+    a = cases.allocate(cartesian_case, foo_program, "a")()
+    b = cases.allocate(cartesian_case, foo_program, "b")()
+    out_a = cases.allocate(cartesian_case, foo_program, "out_a")()
+    out_b = cases.allocate(cartesian_case, foo_program, "out_b")()
+
+    # foo(
+    #     a,
+    #     b,
+    #     out=(out_b, out_a),
+    # domain=(
+    #     {JDim: (0, cartesian_case.default_sizes[JDim])},
+    #     {IDim: (0, cartesian_case.default_sizes[IDim])},
+    # ),
+    # )
+
+    cases.verify(
+        cartesian_case,
+        foo,
+        a,
+        b,
+        out=(out_b, out_a),
+        ref=(b, a),
+        domain=(
+            {JDim: (0, cartesian_case.default_sizes[JDim])},
+            {IDim: (0, cartesian_case.default_sizes[IDim])},
+        ),
+    )
