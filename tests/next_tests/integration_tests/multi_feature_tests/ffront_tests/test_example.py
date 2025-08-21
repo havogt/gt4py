@@ -27,8 +27,27 @@ pytestmark = pytest.mark.uses_cartesian_shift
 # JDim = gtx.Dimension("j")
 
 
+class VectorTrait:
+    def __mul__(self, other):
+        print("Custom multiplication")
+        if isinstance(other, self.__class__):
+            constructor = {
+                f.name: getattr(self, f.name) * getattr(other, f.name)
+                for f in dataclasses.fields(self)
+                if not f.name.startswith("_")
+            }
+            return self.__class__(**constructor)
+        else:  # other is scalar check
+            constructor = {
+                f.name: getattr(self, f.name) * other
+                for f in dataclasses.fields(self)
+                if not f.name.startswith("_")
+            }
+            return self.__class__(**constructor)
+
+
 @dataclasses.dataclass
-class Velocity:
+class Velocity(VectorTrait):
     u: gtx.Field[[IDim, JDim], gtx.float32]
     v: gtx.Field[[IDim, JDim], gtx.float32]
     __gt_is_vector__: bool = True
@@ -65,6 +84,8 @@ class Velocity:
 #             ],
 #             keys=["u", "v"],
 #         )
+
+assert hasattr(Velocity, "__mul__")
 
 
 @gtx.field_operator
@@ -110,7 +131,9 @@ def bar(
 
 def test_named_tuple_like_constructed_inside(cartesian_case):
     vel = cases.allocate(cartesian_case, bar, "vel")()
+    vel = Velocity(u=vel[0], v=vel[1])  # TODO make cases construct this directly
     out = cases.allocate(cartesian_case, bar, cases.RETURN)()
+    out = Velocity(u=out[0], v=out[1])  # TODO make cases construct this directly
 
     cases.verify(
         cartesian_case,
@@ -122,23 +145,16 @@ def test_named_tuple_like_constructed_inside(cartesian_case):
 
 
 @gtx.field_operator
-def unroll(
-    vel: Velocity,
-) -> tuple[gtx.Field[[IDim, JDim], gtx.float32], gtx.Field[[IDim, JDim], gtx.float32]]:
-    # ) -> Velocity:
-    tmp = Velocity(v=vel.u - vel.v, u=vel.u + vel.v)
-    return tmp.u, tmp.v
-
-
-@gtx.field_operator
 def unroll(vel: Velocity, factor: gtx.Field[[IDim, JDim], gtx.float32]) -> Velocity:
     return vel * factor
 
 
 def test_unroll(cartesian_case):
     vel = cases.allocate(cartesian_case, unroll, "vel")()
+    vel = Velocity(u=vel[0], v=vel[1])  # TODO make cases construct this directly
     factor = cases.allocate(cartesian_case, unroll, "factor")()
     out = cases.allocate(cartesian_case, unroll, cases.RETURN)()
+    out = Velocity(u=out[0], v=out[1])  # TODO make cases construct this directly
 
     cases.verify(
         cartesian_case,

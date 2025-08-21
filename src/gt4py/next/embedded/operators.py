@@ -85,7 +85,7 @@ def _get_out_domain(
     out: common.MutableField | tuple[common.MutableField | tuple, ...],
 ) -> common.Domain:
     return embedded_common.domain_intersection(
-        *[f.domain for f in utils.flatten_nested_tuple((out,))]
+        *[f.domain for f in utils.flatten_nested_tuple((out.u,))]
     )
 
 
