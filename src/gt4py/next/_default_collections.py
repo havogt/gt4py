@@ -14,12 +14,13 @@ from gt4py.next.type_system import type_specifications as ts, type_translation
 
 def _type_of_dataclass(cls: type) -> ts.NamedTupleType:
     assert dataclasses.is_dataclass(cls)
-    fields = dataclasses.fields(cls)
+    fields = [f for f in dataclasses.fields(cls) if not f.name.startswith("_")]
 
     types = [type_translation.from_type_hint(field.type) for field in fields]
-    fields = [field for field in dataclasses.fields(cls)]
     keys = [f.name for f in fields]
-    return_type = ts.NamedTupleType(types=types, keys=keys)
+    is_vector = getattr(cls, "__gt_is_vector__", False)
+    # return_type = ts.NamedTupleType(types=types, keys=keys)
+    return_type = ts.NamedTupleType(types=types, keys=keys, is_vector=is_vector)
     return return_type
 
     # TODO: the following is the type of the constructor

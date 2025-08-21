@@ -243,13 +243,6 @@ class FieldOperatorLowering(eve.PreserveLocationVisitor, eve.NodeTranslator):
             ind = named_tup_type.keys.index(node.attr)
             return im.tuple_get(ind, self.visit(node.value, **kwargs))
 
-        # return im.call("getattr")(
-        #     self.visit(node.value, **kwargs),
-        #     im.literal(
-        #         node.attr, typename=ts.ScalarType(kind=ts.ScalarKind.STRING)
-        #     ),  # or maybe special itir.Key type instead of literal
-        # )
-
     def visit_Subscript(self, node: foast.Subscript, **kwargs: Any) -> itir.Expr:
         if isinstance(node.index.type, ts.IndexType):
             # `field[LocalDim(42)]`
@@ -279,7 +272,42 @@ class FieldOperatorLowering(eve.PreserveLocationVisitor, eve.NodeTranslator):
             raise NotImplementedError(f"Unary operator '{node.op}' is not supported.")
 
     def visit_BinOp(self, node: foast.BinOp, **kwargs: Any) -> itir.FunCall:
-        return self._lower_and_map(node.op.value, node.left, node.right)
+        if any(
+            isinstance(arg.type, ts.NamedTupleType) and arg.type.is_vector
+            for arg in (node.left, node.right)
+        ):
+
+            def promote_to_tuple(expr: foast.Expr, size: int) -> itir.Expr:
+                if isinstance(expr.type, ts.NamedTupleType):
+                    return self.visit(expr)
+                else:
+                    return im.make_tuple(*[self.visit(expr)] * size)
+
+            tuple_type = (
+                node.left.type if isinstance(node.left.type, ts.NamedTupleType) else node.right.type
+            )
+            tuple_size = len(node.type.types)
+
+            left = promote_to_tuple(node.left, tuple_size)  # todo lower and map...
+            right = promote_to_tuple(node.right, tuple_size)
+
+            def create_binop(
+                left: itir.Expr, right: itir.Expr, arg_types: tuple[ts.TypeSpec, ts.TypeSpec]
+            ):
+                return _map(node.op.value, (left, right), arg_types)
+
+            result = lowering_utils.process_elements(
+                create_binop,
+                (left, right),
+                node.type,
+                (
+                    tuple_type,
+                    tuple_type,
+                ),  # use the correct type and do promotion in process_elements
+            )
+            return result
+        else:
+            return self._lower_and_map(node.op.value, node.left, node.right)
 
     def visit_TernaryExpr(self, node: foast.TernaryExpr, **kwargs: Any) -> itir.FunCall:
         assert (

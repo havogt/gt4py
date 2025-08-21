@@ -143,6 +143,7 @@ class TupleType(DataType):
 
 class NamedTupleType(TupleType):
     keys: list[str]
+    is_vector: bool = False  # TODO move to tuple
 
     def __getattr__(self, name):
         keys = object.__getattribute__(self, "keys")

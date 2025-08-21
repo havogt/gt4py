@@ -675,33 +675,50 @@ class FieldOperatorTypeDeduction(traits.VisitorWithSymbolTableTrait, NodeTransla
 
         err_msg = f"Unsupported operand type(s) for {node.op}: '{left.type}' and '{right.type}'."
 
-        if isinstance(left.type, (ts.ScalarType, ts.FieldType)) and isinstance(
-            right.type, (ts.ScalarType, ts.FieldType)
+        left_type = left.type
+        right_type = right.type
+
+        return_type = None
+        if isinstance(left_type, ts.NamedTupleType) and isinstance(  # TODO on TupleType
+            right_type, (ts.ScalarType, ts.FieldType)
+        ):
+            # assert all tuple elems are the same
+            return_type = left_type
+            left_type = left_type.types[0]
+        elif isinstance(right_type, ts.NamedTupleType) and isinstance(  # TODO on TupleType
+            right_type.types[0], (ts.ScalarType, ts.FieldType)
+        ):
+            return_type = right_type
+            right_type = right_type.types[0]
+
+        if isinstance(left_type, (ts.ScalarType, ts.FieldType)) and isinstance(
+            right_type, (ts.ScalarType, ts.FieldType)
         ):
             is_compatible = (
                 type_info.is_logical if node.op in logical_ops else type_info.is_arithmetic
             )
-            for arg in (left, right):
-                if not is_compatible(arg.type):
-                    raise errors.DSLError(arg.location, err_msg)
+            for arg_type in (left_type, right_type):
+                if not is_compatible(arg_type):
+                    raise errors.DSLError(node.location, err_msg)
 
             if node.op == dialect_ast_enums.BinaryOperator.POW:
-                return left.type
+                return left_type
 
             if node.op == dialect_ast_enums.BinaryOperator.MOD and not type_info.is_integral(
-                right.type
+                right_type
             ):
                 raise errors.DSLError(
-                    arg.location,
-                    f"Type '{right.type}' can not be used in operator '{node.op}', it only accepts 'int'.",
+                    node.location,
+                    f"Type '{right_type}' can not be used in operator '{node.op}', it only accepts 'int'.",
                 )
 
             try:
-                return type_info.promote(left.type, right.type)
+                return return_type or left_type  # TODO do the tuple promotion in promote
+                # return type_info.promote(left_type, right_type)
             except ValueError as ex:
                 raise errors.DSLError(
                     node.location,
-                    f"Could not promote '{left.type}' and '{right.type}' to common type"
+                    f"Could not promote '{left_type}' and '{right_type}' to common type"
                     f" in call to '{node.op}'.",
                 ) from ex
         elif isinstance(left.type, ts.DomainType) and isinstance(right.type, ts.DomainType):

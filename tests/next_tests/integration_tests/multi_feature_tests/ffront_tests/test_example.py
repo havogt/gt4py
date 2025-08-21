@@ -31,32 +31,47 @@ pytestmark = pytest.mark.uses_cartesian_shift
 class Velocity:
     u: gtx.Field[[IDim, JDim], gtx.float32]
     v: gtx.Field[[IDim, JDim], gtx.float32]
+    __gt_is_vector__: bool = True
 
 
-class Velocity:
-    def __init__(self, u, v):
-        self.u = u
-        self.v = v
+# (field_i, field_j, 1)*field_ij
 
-    def __gt_type__(self):
-        return ts.NamedTupleType(
-            types=[
-                ts.FieldType(
-                    dims=[IDim, JDim],
-                    dtype=ts.ScalarType(kind=ts.ScalarKind.FLOAT32),
-                ),
-                ts.FieldType(
-                    dims=[IDim, JDim],
-                    dtype=ts.ScalarType(kind=ts.ScalarKind.FLOAT32),
-                ),
-            ],
-            keys=["u", "v"],
-        )
+# vel = Velocity(u=vel.u, v=vel.v*3)
+
+# @field_operator
+# def foo(vel: tuple[field1, field2])
+#     vel*other_field
+
+# (field1,field2,field3)*field
+# make_tuple(tuple_)
+
+
+# class Velocity:
+#     def __init__(self, u, v):
+#         self.u = u
+#         self.v = v
+
+#     def __gt_type__(self):
+#         return ts.NamedTupleType(
+#             types=[
+#                 ts.FieldType(
+#                     dims=[IDim, JDim],
+#                     dtype=ts.ScalarType(kind=ts.ScalarKind.FLOAT32),
+#                 ),
+#                 ts.FieldType(
+#                     dims=[IDim, JDim],
+#                     dtype=ts.ScalarType(kind=ts.ScalarKind.FLOAT32),
+#                 ),
+#             ],
+#             keys=["u", "v"],
+#         )
 
 
 @gtx.field_operator
 def foo(
     vel: Velocity,
+    # vel: ts.NamedTuple
+    # vel:
 ) -> gtx.Field[[IDim, JDim], gtx.float32]:
     return vel.u + vel.v
 
@@ -103,6 +118,35 @@ def test_named_tuple_like_constructed_inside(cartesian_case):
         vel,
         out=out,
         ref=(vel.u + vel.v, vel.u - vel.v),
+    )
+
+
+@gtx.field_operator
+def unroll(
+    vel: Velocity,
+) -> tuple[gtx.Field[[IDim, JDim], gtx.float32], gtx.Field[[IDim, JDim], gtx.float32]]:
+    # ) -> Velocity:
+    tmp = Velocity(v=vel.u - vel.v, u=vel.u + vel.v)
+    return tmp.u, tmp.v
+
+
+@gtx.field_operator
+def unroll(vel: Velocity, factor: gtx.Field[[IDim, JDim], gtx.float32]) -> Velocity:
+    return vel * factor
+
+
+def test_unroll(cartesian_case):
+    vel = cases.allocate(cartesian_case, unroll, "vel")()
+    factor = cases.allocate(cartesian_case, unroll, "factor")()
+    out = cases.allocate(cartesian_case, unroll, cases.RETURN)()
+
+    cases.verify(
+        cartesian_case,
+        unroll,
+        vel,
+        factor,
+        out=out,
+        ref=(vel.u * factor, vel.v * factor),
     )
 
 

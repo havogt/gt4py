@@ -112,7 +112,9 @@ def flatten(args):
     return tuple(
         arg
         if isinstance(arg, common.Field) or not dataclasses.is_dataclass(arg)
-        else tuple(getattr(arg, f.name) for f in dataclasses.fields(arg))
+        else tuple(
+            getattr(arg, f.name) for f in dataclasses.fields(arg) if not f.name.startswith("_")
+        )
         for arg in args
     )
 
