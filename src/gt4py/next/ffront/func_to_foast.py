@@ -227,29 +227,24 @@ class FieldOperatorParser(DialectParser[foast.FunctionDefinition]):
         target = node.targets[0]  # there is only one element after assignment passes
 
         if isinstance(target, ast.Tuple):
-            new_targets: list[
-                foast.FieldSymbol | foast.TupleSymbol | foast.ScalarSymbol | foast.Starred
-            ] = []
+            new_targets: list[foast.Symbol | foast.Starred] = []
 
             for elt in target.elts:
                 if isinstance(elt, ast.Starred):
                     new_targets.append(
                         foast.Starred(
-                            id=foast.DataSymbol(
+                            id=foast.Symbol(
                                 id=self.visit(elt.value).id,
                                 location=self.get_location(elt),
-                                type=ts.DeferredType(constraint=ts.DataType),
                             ),
                             location=self.get_location(elt),
-                            type=ts.DeferredType(constraint=ts.DataType),
                         )
                     )
                 else:
                     new_targets.append(
-                        foast.DataSymbol(
+                        foast.Symbol(
                             id=self.visit(elt).id,
                             location=self.get_location(elt),
-                            type=ts.DeferredType(constraint=ts.DataType),
                         )
                     )
 
@@ -260,7 +255,7 @@ class FieldOperatorParser(DialectParser[foast.FunctionDefinition]):
         if not isinstance(target, ast.Name):
             raise errors.DSLError(self.get_location(node), "Can only assign to names.")
         new_value = self.visit(node.value)
-        constraint_type: Type[ts.DataType] = ts.DataType
+        constraint_type: Type[ts.DataType] | None = None
         if isinstance(new_value, foast.TupleExpr):
             constraint_type = ts.TupleType
         elif (
@@ -269,7 +264,7 @@ class FieldOperatorParser(DialectParser[foast.FunctionDefinition]):
         ):
             constraint_type = ts.ScalarType
         return foast.Assign(
-            target=foast.DataSymbol(
+            target=foast.Symbol(
                 id=target.id,
                 location=self.get_location(target),
                 type=ts.DeferredType(constraint=constraint_type),

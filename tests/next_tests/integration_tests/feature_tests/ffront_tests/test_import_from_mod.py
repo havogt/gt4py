@@ -10,7 +10,7 @@ import pytest
 import numpy as np
 
 import gt4py.next as gtx
-from gt4py.next import broadcast, astype
+from gt4py.next import broadcast, astype, int32
 
 from next_tests import integration_tests
 from next_tests.integration_tests import cases
@@ -54,6 +54,44 @@ def test_import_dims_module(cartesian_case):
     cases.verify(cartesian_case, mod_prog, f, out=out, ref=expected)
 
 
+def test_astype_local_alias(cartesian_case):
+    @gtx.field_operator
+    def field_op(f: cases.IFloatField) -> cases.IField:
+        type_ = int32
+        return astype(f, type_)
+
+    cases.verify_with_default_data(cartesian_case, field_op, ref=lambda f: np.astype(f, np.int32))
+
+
+def test_astype_type_from_module(cartesian_case):
+    @gtx.field_operator
+    def field_op(f: cases.IFloatField) -> cases.IField:
+        return astype(f, gtx.int32)
+
+    cases.verify_with_default_data(cartesian_case, field_op, ref=lambda f: np.astype(f, np.int32))
+
+
+def test_astype_pass_to_function(cartesian_case):
+    @gtx.field_operator
+    def indirect(f: cases.IFloatField, type_: type) -> cases.IField:
+        return astype(f, type_)
+
+    @gtx.field_operator
+    def field_op(f: cases.IFloatField) -> cases.IField:
+        return indirect(f, gtx.int32)
+
+    cases.verify_with_default_data(cartesian_case, field_op, ref=lambda f: np.astype(f, np.int32))
+
+
+def test_astype_type_from_module_and_alias(cartesian_case):
+    @gtx.field_operator
+    def field_op(f: cases.IFloatField) -> cases.IField:
+        type_ = gtx.int32
+        return astype(f, type_)
+
+    cases.verify_with_default_data(cartesian_case, field_op, ref=lambda f: np.astype(f, np.int32))
+
+
 # TODO: these set of features should be allowed as module imports in a later PR
 def test_import_module_errors_future_allowed(cartesian_case):
     with pytest.raises(gtx.errors.DSLError):
@@ -68,7 +106,7 @@ def test_import_module_errors_future_allowed(cartesian_case):
         @gtx.field_operator
         def field_op(f: cases.IField):
             type_ = gtx.int32
-            return astype(f, type_)
+            return astype(f, type_)  # TODO also test with tuple (at least for parsing tests)
 
     with pytest.raises(gtx.errors.DSLError):
 
