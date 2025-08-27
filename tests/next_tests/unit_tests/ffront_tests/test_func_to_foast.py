@@ -313,11 +313,13 @@ def test_closure_symbols():
 
     from gt4py.eve.utils import FrozenNamespace
 
-    nonlocals = FrozenNamespace(float_value=2.3, np_value=np.float32(3.4))
+    nonlocals = FrozenNamespace(
+        float_value=2.3, nested_ns=FrozenNamespace(np_value=np.float32(3.4))
+    )
 
     def operator_with_refs(inp: gtx.Field[[TDim], "float64"], inp2: gtx.Field[[TDim], "float32"]):
         a = inp + nonlocals.float_value
-        b = inp2 + nonlocals.np_value
+        b = inp2 + nonlocals.nested_ns.np_value
         return a, b
 
     parsed = FieldOperatorParser.apply_to_function(operator_with_refs)
@@ -335,7 +337,9 @@ def test_closure_symbols():
                 ),
                 P(
                     foast.Assign,
-                    value=P(foast.BinOp, right=P(foast.Constant, value=nonlocals.np_value)),
+                    value=P(
+                        foast.BinOp, right=P(foast.Constant, value=nonlocals.nested_ns.np_value)
+                    ),
                 ),
                 P(foast.Return),
             ],

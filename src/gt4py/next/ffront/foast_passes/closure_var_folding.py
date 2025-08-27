@@ -13,6 +13,7 @@ import gt4py.next.ffront.field_operator_ast as foast
 from gt4py.eve import NodeTranslator, traits
 from gt4py.eve.utils import FrozenNamespace
 from gt4py.next import errors
+from gt4py.next.ffront import fbuiltins
 
 
 @dataclass
@@ -48,9 +49,19 @@ class ClosureVarFolding(NodeTranslator, traits.VisitorWithSymbolTableTrait):
                     return foast.Constant(value=value, location=node.location)
         return node
 
+    def resolve_attribute(self, node: foast.Attribute | foast.Name) -> Any:
+        if isinstance(node, foast.Attribute):
+            return getattr(self.resolve_attribute(node.value), node.attr, None)
+        assert isinstance(node, foast.Name)
+        return self.closure_vars.get(node.id, None)
+
     def visit_Attribute(
         self, node: foast.Attribute, **kwargs: Any
     ) -> foast.Constant | foast.Attribute:
+        # TODO `eval()` to generalize this already in `func`?
+        obj = self.resolve_attribute(node)
+        if obj in fbuiltins.BUILTINS.values():
+            return foast.Name(id=node.attr, location=node.location)
         value = self.visit(node.value, **kwargs)
         if isinstance(value, foast.Constant):
             if hasattr(value.value, node.attr):

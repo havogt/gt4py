@@ -208,7 +208,10 @@ class FieldOperatorTypeDeductionCompletnessValidator(NodeVisitor):
         cls().visit(node, incomplete_nodes=incomplete_nodes)
 
         if incomplete_nodes:
-            raise AssertionError("'FOAST' expression is not fully typed.")
+            lst = [f"\n - {node}" for node in incomplete_nodes]
+            raise AssertionError(
+                f"FieldOperatorAST expression is not fully typed, missing types for: {','.join(lst)}."
+            )
 
     def visit_LocatedNode(
         self, node: foast.LocatedNode, *, incomplete_nodes: list[foast.LocatedNode]
@@ -769,7 +772,13 @@ class FieldOperatorTypeDeduction(traits.VisitorWithSymbolTableTrait, NodeTransla
             # have the proper format here.
             if not isinstance(
                 new_func,
-                (foast.FunctionDefinition, foast.FieldOperator, foast.ScanOperator, foast.Name),
+                (
+                    foast.FunctionDefinition,
+                    foast.FieldOperator,
+                    foast.ScanOperator,
+                    foast.Name,
+                    foast.Attribute,
+                ),
             ):
                 raise errors.DSLError(node.location, "Functions can only be called directly.")
         elif isinstance(new_func.type, ts.FieldType):

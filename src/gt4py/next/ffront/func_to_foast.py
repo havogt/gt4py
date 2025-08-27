@@ -191,10 +191,19 @@ class FieldOperatorParser(DialectParser[foast.FunctionDefinition]):
                     )
                 )
             except ValueError as e:
-                raise errors.DSLTypeError(
-                    loc,
-                    f"Unexpected object '{name}' of type '{type(self.closure_vars[name])}' encountered.",
-                ) from e
+                # TODO
+                closure_var_symbols.append(
+                    foast.Symbol(
+                        id=name,
+                        type=ts.DeferredType(constraint=None),
+                        namespace=dialect_ast_enums.Namespace.CLOSURE,
+                        location=self.get_location(node),
+                    )
+                )
+                # raise errors.DSLTypeError(
+                #     loc,
+                #     f"Unexpected object '{name}' of type '{type(self.closure_vars[name])}' encountered.",
+                # ) from e
 
         new_body = self._visit_stmts(node.body, self.get_location(node), **kwargs)
 

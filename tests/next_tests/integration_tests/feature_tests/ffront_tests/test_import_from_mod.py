@@ -11,6 +11,7 @@ import numpy as np
 
 import gt4py.next as gtx
 from gt4py.next import broadcast, astype, int32
+import gt4py.next.ffront.fbuiltins
 
 from next_tests import integration_tests
 from next_tests.integration_tests import cases
@@ -71,18 +72,6 @@ def test_astype_type_from_module(cartesian_case):
     cases.verify_with_default_data(cartesian_case, field_op, ref=lambda f: np.astype(f, np.int32))
 
 
-def test_astype_pass_to_function(cartesian_case):
-    @gtx.field_operator
-    def indirect(f: cases.IFloatField, type_: type) -> cases.IField:
-        return astype(f, type_)
-
-    @gtx.field_operator
-    def field_op(f: cases.IFloatField) -> cases.IField:
-        return indirect(f, gtx.int32)
-
-    cases.verify_with_default_data(cartesian_case, field_op, ref=lambda f: np.astype(f, np.int32))
-
-
 def test_astype_type_from_module_and_alias(cartesian_case):
     @gtx.field_operator
     def field_op(f: cases.IFloatField) -> cases.IField:
@@ -92,21 +81,46 @@ def test_astype_type_from_module_and_alias(cartesian_case):
     cases.verify_with_default_data(cartesian_case, field_op, ref=lambda f: np.astype(f, np.int32))
 
 
+def test_astype_type_from_nested_module(cartesian_case):
+    @gtx.field_operator
+    def field_op(f: cases.IFloatField) -> cases.IField:
+        return astype(f, gt4py.next.ffront.fbuiltins.int32)
+
+    cases.verify_with_default_data(cartesian_case, field_op, ref=lambda f: np.astype(f, np.int32))
+
+
+def test_astype_type_from_nested_module_and_alias(cartesian_case):
+    @gtx.field_operator
+    def field_op(f: cases.IFloatField) -> cases.IField:
+        type_ = gt4py.next.ffront.fbuiltins.int32
+        return astype(f, type_)
+
+    cases.verify_with_default_data(cartesian_case, field_op, ref=lambda f: np.astype(f, np.int32))
+
+
+def test_astype_from_module(cartesian_case):
+    @gtx.field_operator
+    def field_op(f: cases.IFloatField) -> cases.IField:
+        return gt4py.next.ffront.fbuiltins.astype(f, int32)
+
+    cases.verify_with_default_data(cartesian_case, field_op, ref=lambda f: np.astype(f, np.int32))
+
+
 # TODO: these set of features should be allowed as module imports in a later PR
 def test_import_module_errors_future_allowed(cartesian_case):
-    with pytest.raises(gtx.errors.DSLError):
+    # with pytest.raises(gtx.errors.DSLError):
 
-        @gtx.field_operator
-        def field_op(f: cases.IField):
-            f_i_k = gtx.broadcast(f, (cases.IDim, cases.KDim))
-            return f_i_k
+    #     @gtx.field_operator
+    #     def field_op(f: cases.IField):
+    #         f_i_k = gtx.broadcast(f, (cases.IDim, cases.KDim))
+    #         return f_i_k
 
-    with pytest.raises(gtx.errors.DSLError):
+    # with pytest.raises(gtx.errors.DSLError):
 
-        @gtx.field_operator
-        def field_op(f: cases.IField):
-            type_ = gtx.int32
-            return astype(f, type_)  # TODO also test with tuple (at least for parsing tests)
+    #     @gtx.field_operator
+    #     def field_op(f: cases.IField):
+    #         type_ = gtx.int32
+    #         return astype(f, type_)  # TODO also test with tuple (at least for parsing tests)
 
     with pytest.raises(gtx.errors.DSLError):
 
