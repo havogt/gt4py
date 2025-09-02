@@ -155,7 +155,7 @@ def main():
         allocator=backend,
     )
 
-    naive(phi_field, eps, out=res_field[2:-2, :, :])
+    naive.with_backend(backend)(phi_field, eps, out=res_field[2:-2, :, :])
 
     assert np.allclose(ref[2:-2, :, :], res_field.asnumpy()[2:-2, :, :])
 
@@ -166,7 +166,7 @@ def main():
         allocator=backend,
     )
 
-    v2(phi_field, eps, out=res2_field[2:-2, :, :])
+    v2.with_backend(backend)(phi_field, eps, out=res2_field[2:-2, :, :])
 
     assert np.allclose(ref[2:-2, :, :], res2_field.asnumpy()[2:-2, :, :])
 
