@@ -108,6 +108,7 @@ class FunCall(Expr):
 
 class FunctionDefinition(Node, SymbolTableTrait):
     id: Coerced[SymbolName]
+    declarations: List[Sym]  # Offset definitions
     params: List[Sym]
     expr: Expr
 
@@ -137,7 +138,7 @@ class Program(Node, ValidatedSymbolTableTrait):
     id: Coerced[SymbolName]
     function_definitions: List[FunctionDefinition]
     params: List[Sym]
-    declarations: List[Temporary]
+    declarations: List[Temporary | Sym]
     body: List[Stmt]
     implicit_domain: bool = False
 

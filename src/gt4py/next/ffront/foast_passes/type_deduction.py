@@ -501,13 +501,13 @@ class FieldOperatorTypeDeduction(traits.VisitorWithSymbolTableTrait, NodeTransla
                         f"Tuples need to be indexed with literal integers, got '{node.index}'.",
                     ) from ex
                 new_type = types[index]
-            case ts.OffsetType(source=source, target=(target1, target2)):
+            case ts.OffsetType(value=value, source=source, target=(target1, target2)):
                 if not target2.kind == DimensionKind.LOCAL:
                     raise errors.DSLError(
                         new_value.location, "Second dimension in offset must be a local dimension."
                     )
-                new_type = ts.OffsetType(source=source, target=(target1,))
-            case ts.OffsetType(source=source, target=(target,)):
+                new_type = ts.OffsetType(value=value, source=source, target=(target1,))
+            case ts.OffsetType(value=value, source=source, target=(target,)):
                 # for cartesian axes (e.g. I, J) the index of the subscript only
                 #  signifies the displacement in the respective dimension,
                 #  but does not change the target type.
@@ -661,7 +661,9 @@ class FieldOperatorTypeDeduction(traits.VisitorWithSymbolTableTrait, NodeTransla
             and isinstance(right.type, ts.ScalarType)
             and type_info.is_integral(right.type)
         ):
-            return ts.OffsetType(source=left.type.dim, target=(left.type.dim,))
+            return ts.OffsetType(
+                value=left.type.dim.value, source=left.type.dim, target=(left.type.dim,)
+            )
         if isinstance(left.type, ts.OffsetType):
             raise errors.DSLError(
                 node.location, f"Type '{left.type}' can not be used in operator '{node.op}'."

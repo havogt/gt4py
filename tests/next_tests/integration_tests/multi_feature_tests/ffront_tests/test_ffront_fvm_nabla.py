@@ -37,7 +37,7 @@ from next_tests.integration_tests.multi_feature_tests.fvm_nabla_setup import (
 def compute_zavgS(
     pp: gtx.Field[[Vertex], float], S_M: gtx.Field[[Edge], float]
 ) -> gtx.Field[[Edge], float]:
-    zavg = 0.5 * (pp(E2V[0]) + pp(E2V[1]))
+    zavg = 0.5 * (pp(V2E[0]) + pp(E2V[1]))
     return S_M * zavg
 
 

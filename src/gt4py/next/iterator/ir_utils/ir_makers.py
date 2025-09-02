@@ -290,7 +290,7 @@ class let:
         return call(lambda_(*self.vars)(form))(*self.init_forms)
 
 
-def shift(offset, value=None):
+def shift(offset: str | itir.SymRef, value: int | itir.Literal | None = None):
     """
     Create a shift call.
 
@@ -302,8 +302,7 @@ def shift(offset, value=None):
     >>> shift("V2E")("b")
     FunCall(fun=FunCall(fun=SymRef(id=SymbolRef('shift')), args=[OffsetLiteral(value='V2E')]), args=[SymRef(id=SymbolRef('b'))])
     """
-    offset = ensure_offset(offset)
-    args = [offset]
+    args = [ref(offset)]
     if value is not None:
         if isinstance(value, int):
             value = ensure_offset(value)

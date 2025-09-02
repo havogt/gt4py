@@ -99,24 +99,29 @@ class FieldOperatorLowering(eve.PreserveLocationVisitor, eve.NodeTranslator):
     def apply(cls, node: foast.LocatedNode) -> itir.FunctionDefinition:
         result = cls().visit(node)
         assert isinstance(result, itir.FunctionDefinition)
+        print(result)
         return result
 
     def visit_FunctionDefinition(
         self, node: foast.FunctionDefinition, **kwargs: Any
     ) -> itir.FunctionDefinition:
         params = self.visit(node.params)
+        declarations = [
+            itir.Sym(id=offset.id, type=offset.type)
+            for offset in node.closure_vars
+            if isinstance(offset.type, (ts.OffsetType, ts.DimensionType))
+        ]
         return itir.FunctionDefinition(
-            id=node.id, params=params, expr=self.visit_BlockStmt(node.body, inner_expr=None)
+            id=node.id,
+            declarations=declarations,
+            params=params,
+            expr=self.visit_BlockStmt(node.body, inner_expr=None),
         )  # `expr` is a lifted stencil
 
     def visit_FieldOperator(
         self, node: foast.FieldOperator, **kwargs: Any
     ) -> itir.FunctionDefinition:
-        func_definition: itir.FunctionDefinition = self.visit(node.definition, **kwargs)
-
-        return itir.FunctionDefinition(
-            id=func_definition.id, params=func_definition.params, expr=func_definition.expr
-        )
+        return self.visit(node.definition, **kwargs)
 
     def visit_ScanOperator(
         self, node: foast.ScanOperator, **kwargs: Any
@@ -145,7 +150,12 @@ class FieldOperatorLowering(eve.PreserveLocationVisitor, eve.NodeTranslator):
 
         body = im.as_fieldop(im.scan(definition, forward, init))(*stencil_args)
 
-        return itir.FunctionDefinition(id=node.id, params=definition.params[1:], expr=body)
+        return itir.FunctionDefinition(
+            id=node.id,
+            declarations=func_definition.declarations,
+            params=definition.params[1:],
+            expr=body,
+        )
 
     def visit_Stmt(self, node: foast.Stmt, **kwargs: Any) -> Never:
         raise AssertionError("Statements must always be visited in the context of a function.")

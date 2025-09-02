@@ -593,6 +593,11 @@ class ITIRTypeInference(eve.NodeTranslator):
 
         return result
 
+    def visit_Sym(self, node: itir.Sym, **kwargs) -> ts.TypeSpec:
+        if node.type is None:
+            raise ValueError(f"Symbol '{node.id}' has no type.")
+        return node.type
+
     def visit_Node(self, node: itir.Node, **kwargs):
         raise NotImplementedError(f"No type rule for nodes of type '{type(node).__name__}'.")
 
