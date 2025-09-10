@@ -53,4 +53,5 @@ class ClosureVarTypeDeduction(NodeTranslator, traits.VisitorWithSymbolTableTrait
             closure_vars=new_closure_vars,
             type=node.type,
             location=node.location,
+            known_symbols=node.known_symbols,
         )

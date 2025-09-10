@@ -216,6 +216,7 @@ class FieldOperatorParser(DialectParser[foast.FunctionDefinition]):
             body=new_body,
             closure_vars=closure_var_symbols,
             location=loc,
+            known_symbols=[],
         )
 
     def visit_arguments(self, node: ast.arguments) -> list[foast.DataSymbol]:

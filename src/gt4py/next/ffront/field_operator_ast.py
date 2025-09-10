@@ -197,6 +197,7 @@ class FunctionDefinition(LocatedNode, SymbolTableTrait):
     body: BlockStmt
     closure_vars: list[Symbol]
     type: Union[ts.FunctionType, ts.DeferredType] = ts.DeferredType(constraint=ts.FunctionType)
+    known_symbols: list[Symbol]
 
 
 class FieldOperator(LocatedNode, SymbolTableTrait):

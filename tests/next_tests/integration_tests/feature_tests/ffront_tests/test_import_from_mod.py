@@ -8,9 +8,10 @@
 
 import pytest
 import numpy as np
+from typing import Final
 
 import gt4py.next as gtx
-from gt4py.next import broadcast, astype, int32
+from gt4py.next import broadcast, astype, int32, constructors
 import gt4py.next.ffront.fbuiltins
 
 from next_tests import integration_tests
@@ -122,19 +123,83 @@ def test_import_module_errors_future_allowed(cartesian_case):
     #         type_ = gtx.int32
     #         return astype(f, type_)  # TODO also test with tuple (at least for parsing tests)
 
-    with pytest.raises(gtx.errors.DSLError):
+    # with pytest.raises(gtx.errors.DSLError):
+
+    @gtx.field_operator
+    def field_op_sample(a: cases.IField) -> cases.IField:
+        return a
+
+    @gtx.field_operator
+    def field_op(f: cases.IField):
+        f_new = field_op_sample(f)
+        # f_new = dummy_module.field_op_sample(f)
+        return f_new
+
+    print("trigger")
+    res = field_op.__gt_itir__()  # trigger linting
+    print("done")
+
+    # with pytest.raises(gtx.errors.DSLError):
+
+    #     @gtx.field_operator
+    #     def field_op(f: cases.IField):
+    #         return f
+
+    #     @gtx.program
+    #     def field_op(f: cases.IField):
+    #         dummy_module.field_op_sample(f, out=f, offset_provider={})
+
+
+def test_import_module_forbidden(cartesian_case):
+    with pytest.raises(gtx.errors.DSLError, match=r"Cannot close.*Field"):
 
         @gtx.field_operator
-        def field_op(f: cases.IField):
-            f_new = dummy_module.field_op_sample(f)
-            return f_new
+        def field_op():
+            return dummy_module.dummy_field
 
-    with pytest.raises(gtx.errors.DSLError):
+        field_op.__gt_itir__()  # trigger linting
+
+
+def test_import_module_forbidden2(cartesian_case):
+    with pytest.raises(gtx.errors.DSLError, match=r"Cannot close.*Field"):
+        f = constructors.empty({cases.IDim: 10}, dtype=gtx.int32)
 
         @gtx.field_operator
-        def field_op(f: cases.IField):
+        def field_op():
             return f
 
-        @gtx.program
+        field_op.__gt_itir__()  # trigger linting
+
+
+def test_import_module_forbidden3(cartesian_case):
+    with pytest.raises(gtx.errors.DSLError, match=r"Cannot close.*scalar variable"):
+
+        @gtx.field_operator
         def field_op(f: cases.IField):
-            dummy_module.field_op_sample(f, out=f, offset_provider={})
+            f_new = dummy_module.dummy_int
+            return f_new
+
+        field_op.__gt_itir__()  # trigger linting
+
+
+def test_import_module_forbidden4(cartesian_case):
+    with pytest.raises(gtx.errors.DSLError, match=r"Cannot close.*scalar variable"):
+        dummy_int = 42
+
+        @gtx.field_operator
+        def field_op(f: cases.IField):
+            f_new = dummy_int
+            return f_new
+
+        field_op.__gt_itir__()  # trigger linting
+
+
+def test_import_module_final(cartesian_case):
+    dummy_int: Final = 42
+
+    @gtx.field_operator
+    def field_op(f: cases.IField):
+        f_new = dummy_int
+        return f_new
+
+    field_op.__gt_itir__()  # trigger linting

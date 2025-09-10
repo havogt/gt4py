@@ -285,6 +285,7 @@ class FieldOperatorTypeDeduction(traits.VisitorWithSymbolTableTrait, NodeTransla
             closure_vars=new_closure_vars,
             type=new_type,
             location=node.location,
+            known_symbols=node.known_symbols,
         )
 
     # TODO(tehrengruber): make sure all scalar arguments are lifted to 0-dim field args
