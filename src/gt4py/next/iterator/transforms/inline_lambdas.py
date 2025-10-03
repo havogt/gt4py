@@ -55,7 +55,7 @@ def inline_lambda(  # see todo above
 
     if force_inline_applied_as_fieldop:
         for i, arg in enumerate(node.args):
-            if cpm.is_applied_as_fieldop(arg):
+            if cpm.is_applied_as_fieldop(arg) and not cpm.is_call_to(arg.fun.args[0], "scan"):
                 eligible_params[i] = True
 
     # inline trivial lifts, i.e. `lift(λ() → 1)()`
