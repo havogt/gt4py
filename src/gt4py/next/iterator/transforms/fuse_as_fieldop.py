@@ -189,10 +189,19 @@ def fuse_as_fieldop(
 
 
 def _arg_inline_predicate(
-    node: itir.Expr, shifts: set[tuple[itir.OffsetLiteral, ...]], *, fuse_all: bool
+    node: itir.Expr,
+    shifts: set[tuple[itir.OffsetLiteral, ...]],
+    *,
+    fuse_all: bool,
+    debug: bool,
 ) -> bool:
     if _is_tuple_expr_of_literals(node):
         return True
+
+    if debug:
+        if cpm.is_applied_as_fieldop(node):
+            print("Not inlined yet:")
+            print(node)
 
     if (
         is_applied_fieldop := cpm.is_applied_as_fieldop(node)
@@ -281,6 +290,7 @@ class FuseAsFieldOp(
 
     enabled_transformations = Transformation.all()
     fuse_all: bool = False
+    debug: bool = False
 
     uids: eve_utils.UIDGenerator
 
@@ -295,6 +305,7 @@ class FuseAsFieldOp(
         within_set_at_expr: Optional[bool] = None,
         enabled_transformations: Optional[Transformation] = None,
         fuse_all: bool = False,
+        debug: bool = False,
     ):
         enabled_transformations = enabled_transformations or cls.enabled_transformations
 
@@ -314,6 +325,7 @@ class FuseAsFieldOp(
             uids=uids,
             enabled_transformations=enabled_transformations,
             fuse_all=fuse_all,
+            debug=debug,
         ).visit(node, within_set_at_expr=within_set_at_expr)
         # The `FuseAsFieldOp` pass does not fully preserve the type information yet. In particular
         # for the generated lifts this is tricky and error-prone. For simplicity, we just reinfer
@@ -387,6 +399,9 @@ class FuseAsFieldOp(
 
     def transform_fuse_as_fieldop(self, node: itir.Node, **kwargs):
         if cpm.is_applied_as_fieldop(node):
+            if self.debug:
+                print("found applied as_fieldop:")
+                print(node)
             node = ir_misc.canonicalize_as_fieldop(node)
             stencil = node.fun.args[0]  # type: ignore[attr-defined]  # ensure cpm.is_applied_as_fieldop
             assert isinstance(stencil, itir.Lambda) or cpm.is_call_to(stencil, "scan")
@@ -394,7 +409,7 @@ class FuseAsFieldOp(
             shifts = trace_shifts.trace_stencil(stencil, num_args=len(args))
 
             eligible_els = [
-                _arg_inline_predicate(arg, arg_shifts, fuse_all=self.fuse_all)
+                _arg_inline_predicate(arg, arg_shifts, fuse_all=self.fuse_all, debug=self.debug)
                 for arg, arg_shifts in zip(args, shifts, strict=True)
             ]
             if any(eligible_els):
@@ -409,7 +424,9 @@ class FuseAsFieldOp(
         # might become referenced once only. In order to be able to continue fusing such arguments
         # try inlining here.
         if cpm.is_let(node):
-            new_node = inline_lambdas.inline_lambda(node, opcount_preserving=True)
+            new_node = inline_lambdas.inline_lambda(
+                node, opcount_preserving=True, force_inline_applied_as_fieldop=True
+            )
             if new_node is not node:  # nothing has been inlined
                 return self.visit(new_node, **kwargs)
 

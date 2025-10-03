@@ -78,7 +78,9 @@ def apply_common_transforms(
     ir = inline_lifts.InlineLifts().visit(ir)
 
     ir = dead_code_elimination.dead_code_elimination(
-        ir, collapse_tuple_uids=collapse_tuple_uids, offset_provider_type=offset_provider_type
+        ir,
+        collapse_tuple_uids=collapse_tuple_uids,
+        offset_provider_type=offset_provider_type,
     )  # domain inference does not support dead-code
     ir = inline_dynamic_shifts.InlineDynamicShifts.apply(
         ir
@@ -128,12 +130,21 @@ def apply_common_transforms(
     else:
         raise RuntimeError("Inlining 'lift' and 'lambdas' did not converge.")
 
+    # fuse_as_fieldop.FuseAsFieldOp.apply(
+    #     inlined,
+    #     uids=mergeasfop_uids,
+    #     offset_provider_type=offset_provider_type,
+    #     fuse_all=fuse_all_fieldops,
+    #     debug=True,
+    # )
+
     # breaks in test_zero_dim_tuple_arg as trivial tuple_get is not inlined
     if common_subexpression_elimination:
         ir = CommonSubexpressionElimination.apply(ir, offset_provider_type=offset_provider_type)
         ir = MergeLet().visit(ir)
         ir = InlineLambdas.apply(ir, opcount_preserving=True)
 
+    # print(ir)
     if extract_temporaries:
         ir = infer(ir, inplace=True, offset_provider_type=offset_provider_type)
         ir = global_tmps.create_global_tmps(
