@@ -222,7 +222,14 @@ def _arg_inline_predicate(
         if isinstance(dtype, ts.ListType):
             return True
         # only accessed at the center location
-        if shifts in [set(), {()}]:
+        print(shifts)
+        only_koff = True
+        for access in shifts:
+            for off in access:
+                if isinstance(off.value, str) and off.value.lower() != "koff":
+                    only_koff = False
+        if only_koff:
+            print("only koff")
             return True
         # TODO(tehrengruber): Disabled as the InlineCenterDerefLiftVars does not support this yet
         #  and it would increase the size of the tree otherwise.
