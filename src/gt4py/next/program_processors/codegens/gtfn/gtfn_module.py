@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import dataclasses
 import functools
-from typing import Any, Final, Optional
+from typing import Any, Optional
 
 import factory
 import numpy as np
@@ -21,7 +21,7 @@ from gt4py.next import common
 from gt4py.next.ffront import fbuiltins
 from gt4py.next.iterator import ir as itir
 from gt4py.next.iterator.transforms import pass_manager
-from gt4py.next.otf import languages, stages, step_types, workflow
+from gt4py.next.otf import languages, stages, workflow
 from gt4py.next.otf.binding import cpp_interface, interface
 from gt4py.next.program_processors.codegens.gtfn.codegen import GTFNCodegen, GTFNIMCodegen
 from gt4py.next.program_processors.codegens.gtfn.gtfn_ir_to_gtfn_im_ir import GTFN_IM_lowering
@@ -51,6 +51,7 @@ class GTFNTranslationStep(
     # TODO replace by more general mechanism, see https://github.com/GridTools/gt4py/issues/1135
     enable_itir_transforms: bool = True
     use_imperative_backend: bool = False
+    fuse_all_fieldops: bool = False
     device_type: core_defs.DeviceType = core_defs.DeviceType.CPU
     symbolic_domain_sizes: Optional[dict[str, str]] = None
 
@@ -163,6 +164,7 @@ class GTFNTranslationStep(
             extract_temporaries=True,
             offset_provider=offset_provider,
             symbolic_domain_sizes=self.symbolic_domain_sizes,
+            fuse_all_fieldops=self.fuse_all_fieldops,
         )
 
         new_program = apply_common_transforms(
@@ -315,10 +317,3 @@ class GTFNTranslationStep(
 class GTFNTranslationStepFactory(factory.Factory[GTFNTranslationStep]):
     class Meta:
         model = GTFNTranslationStep
-
-
-translate_program_cpu: Final[step_types.TranslationStep] = GTFNTranslationStepFactory()  # type: ignore[assignment] # factory-boy typing not precise enough
-
-translate_program_gpu: Final[step_types.TranslationStep] = GTFNTranslationStepFactory(  # type: ignore[assignment] # factory-boy typing not precise enough
-    device_type=core_defs.DeviceType.CUDA
-)

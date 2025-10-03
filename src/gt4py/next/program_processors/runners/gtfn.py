@@ -105,6 +105,7 @@ class GTFNCompileWorkflowFactory(factory.Factory):
 
     class Params:
         device_type: core_defs.DeviceType = core_defs.DeviceType.CPU
+        fuse_all_fieldops: bool = False
         cmake_build_type: config.CMakeBuildType = factory.LazyFunction(  # type: ignore[assignment] # factory-boy typing not precise enough
             lambda: config.CMAKE_BUILD_TYPE
         )
@@ -125,6 +126,7 @@ class GTFNCompileWorkflowFactory(factory.Factory):
         bare_translation = factory.SubFactory(
             gtfn_module.GTFNTranslationStepFactory,
             device_type=factory.SelfAttribute("..device_type"),
+            fuse_all_fieldops=factory.SelfAttribute("..fuse_all_fieldops"),
         )
 
     translation = factory.LazyAttribute(lambda o: o.bare_translation)
@@ -163,9 +165,12 @@ class GTFNBackendFactory(factory.Factory):
             name_cached="_cached",
         )
         device_type = core_defs.DeviceType.CPU
+        fuse_all_fieldops: bool = False
         hash_function = stages.compilation_hash
         otf_workflow = factory.SubFactory(
-            GTFNCompileWorkflowFactory, device_type=factory.SelfAttribute("..device_type")
+            GTFNCompileWorkflowFactory,
+            device_type=factory.SelfAttribute("..device_type"),
+            fuse_all_fieldops=factory.SelfAttribute("..fuse_all_fieldops"),
         )
 
     name = factory.LazyAttribute(

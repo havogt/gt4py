@@ -54,6 +54,7 @@ def apply_common_transforms(
     unroll_reduce=False,
     common_subexpression_elimination=True,
     force_inline_lambda_args=False,
+    fuse_all_fieldops: bool = False,
     #: A dictionary mapping axes names to their length. See :func:`infer_domain.infer_expr` for
     #: more details.
     symbolic_domain_sizes: Optional[dict[str, str]] = None,
@@ -115,7 +116,10 @@ def apply_common_transforms(
         # a list. Such expressions must be inlined however because no backend supports such
         # field operators right now.
         inlined = fuse_as_fieldop.FuseAsFieldOp.apply(
-            inlined, uids=mergeasfop_uids, offset_provider_type=offset_provider_type
+            inlined,
+            uids=mergeasfop_uids,
+            offset_provider_type=offset_provider_type,
+            fuse_all=fuse_all_fieldops,
         )
 
         if inlined == ir:

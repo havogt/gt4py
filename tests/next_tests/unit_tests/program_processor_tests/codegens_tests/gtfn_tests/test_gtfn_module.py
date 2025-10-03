@@ -74,7 +74,7 @@ def program_example():
 
 def test_codegen(program_example):
     fencil, parameters = program_example
-    module = gtfn_module.translate_program_cpu(
+    module = gtfn_module.GTFNTranslationStepFactory()(
         stages.CompilableProgram(
             data=fencil,
             args=arguments.CompileTimeArgs.from_concrete(*parameters, **{"offset_provider": {}}),

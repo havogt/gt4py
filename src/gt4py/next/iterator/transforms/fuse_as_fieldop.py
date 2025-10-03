@@ -188,7 +188,9 @@ def fuse_as_fieldop(
     return new_node
 
 
-def _arg_inline_predicate(node: itir.Expr, shifts: set[tuple[itir.OffsetLiteral, ...]]) -> bool:
+def _arg_inline_predicate(
+    node: itir.Expr, shifts: set[tuple[itir.OffsetLiteral, ...]], *, fuse_all: bool
+) -> bool:
     if _is_tuple_expr_of_literals(node):
         return True
 
@@ -196,6 +198,8 @@ def _arg_inline_predicate(node: itir.Expr, shifts: set[tuple[itir.OffsetLiteral,
         is_applied_fieldop := cpm.is_applied_as_fieldop(node)
         and not cpm.is_call_to(node.fun.args[0], "scan")
     ) or cpm.is_call_to(node, "if_"):
+        if fuse_all:
+            return True
         # always inline arg if it is an applied fieldop with only a single arg
         if is_applied_fieldop and len(node.args) == 1:
             return True
@@ -276,6 +280,7 @@ class FuseAsFieldOp(
     REINFER_TYPES = True
 
     enabled_transformations = Transformation.all()
+    fuse_all: bool = False
 
     uids: eve_utils.UIDGenerator
 
@@ -289,6 +294,7 @@ class FuseAsFieldOp(
         allow_undeclared_symbols=False,
         within_set_at_expr: Optional[bool] = None,
         enabled_transformations: Optional[Transformation] = None,
+        fuse_all: bool = False,
     ):
         enabled_transformations = enabled_transformations or cls.enabled_transformations
 
@@ -304,9 +310,11 @@ class FuseAsFieldOp(
         if not uids:
             uids = eve_utils.UIDGenerator()
 
-        new_node = cls(uids=uids, enabled_transformations=enabled_transformations).visit(
-            node, within_set_at_expr=within_set_at_expr
-        )
+        new_node = cls(
+            uids=uids,
+            enabled_transformations=enabled_transformations,
+            fuse_all=fuse_all,
+        ).visit(node, within_set_at_expr=within_set_at_expr)
         # The `FuseAsFieldOp` pass does not fully preserve the type information yet. In particular
         # for the generated lifts this is tricky and error-prone. For simplicity, we just reinfer
         # everything here ensuring later passes can use the information.
@@ -386,7 +394,7 @@ class FuseAsFieldOp(
             shifts = trace_shifts.trace_stencil(stencil, num_args=len(args))
 
             eligible_els = [
-                _arg_inline_predicate(arg, arg_shifts)
+                _arg_inline_predicate(arg, arg_shifts, fuse_all=self.fuse_all)
                 for arg, arg_shifts in zip(args, shifts, strict=True)
             ]
             if any(eligible_els):
