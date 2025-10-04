@@ -194,6 +194,7 @@ def _arg_inline_predicate(
     *,
     fuse_all: bool,
     debug: bool,
+    is_scan: bool,
 ) -> bool:
     if _is_tuple_expr_of_literals(node):
         return True
@@ -207,6 +208,8 @@ def _arg_inline_predicate(
         is_applied_fieldop := cpm.is_applied_as_fieldop(node)
         and not cpm.is_call_to(node.fun.args[0], "scan")
     ) or cpm.is_call_to(node, "if_"):
+        if is_scan and shifts not in [set(), {()}]:
+            return False
         if fuse_all:
             return True
         # always inline arg if it is an applied fieldop with only a single arg
@@ -418,7 +421,13 @@ class FuseAsFieldOp(
             shifts = trace_shifts.trace_stencil(stencil, num_args=len(args))
 
             eligible_els = [
-                _arg_inline_predicate(arg, arg_shifts, fuse_all=self.fuse_all, debug=self.debug)
+                _arg_inline_predicate(
+                    arg,
+                    arg_shifts,
+                    fuse_all=self.fuse_all,
+                    debug=self.debug,
+                    is_scan=cpm.is_call_to(stencil, "scan"),
+                )
                 for arg, arg_shifts in zip(args, shifts, strict=True)
             ]
             if any(eligible_els):
