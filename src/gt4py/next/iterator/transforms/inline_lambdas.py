@@ -11,8 +11,11 @@ from typing import Mapping, Optional, TypeVar
 
 from gt4py.eve import NodeTranslator, PreserveLocationVisitor
 from gt4py.next.iterator import ir
-from gt4py.next.iterator.ir_utils import ir_makers as im, misc as ir_misc
-from gt4py.next.iterator.ir_utils.common_pattern_matcher import is_applied_lift
+from gt4py.next.iterator.ir_utils import (
+    common_pattern_matcher as cpm,
+    ir_makers as im,
+    misc as ir_misc,
+)
 from gt4py.next.iterator.transforms.remap_symbols import RemapSymbolRefs, RenameSymbols
 from gt4py.next.iterator.transforms.symbol_ref_utils import CountSymbolRefs
 from gt4py.next.iterator.type_system import inference as itir_inference
@@ -26,6 +29,7 @@ def inline_lambda(  # see todo above
     force_inline_lift_args=False,
     force_inline_trivial_lift_args=False,
     force_inline_lambda_args=False,
+    force_inline_applied_as_fieldop=False,
     eligible_params: Optional[list[bool]] = None,
 ):
     assert isinstance(node.fun, ir.Lambda)
@@ -46,13 +50,18 @@ def inline_lambda(  # see todo above
     # inline lifts, i.e. `lift(λ(...) → ...)(...)`
     if force_inline_lift_args:
         for i, arg in enumerate(node.args):
-            if is_applied_lift(arg):
+            if cpm.is_applied_lift(arg):
+                eligible_params[i] = True
+
+    if force_inline_applied_as_fieldop:
+        for i, arg in enumerate(node.args):
+            if cpm.is_applied_as_fieldop(arg) and not cpm.is_call_to(arg.fun.args[0], "scan"):
                 eligible_params[i] = True
 
     # inline trivial lifts, i.e. `lift(λ() → 1)()`
     if force_inline_trivial_lift_args:
         for i, arg in enumerate(node.args):
-            if is_applied_lift(arg) and len(arg.args) == 0:
+            if cpm.is_applied_lift(arg) and len(arg.args) == 0:
                 eligible_params[i] = True
 
     # inline lambdas passed as arguments

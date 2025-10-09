@@ -188,7 +188,9 @@ def fuse_as_fieldop(
     return new_node
 
 
-def _arg_inline_predicate(node: itir.Expr, shifts: set[tuple[itir.OffsetLiteral, ...]]) -> bool:
+def _arg_inline_predicate(
+    node: itir.Expr, shifts: set[tuple[itir.OffsetLiteral, ...]], is_scan: bool
+) -> bool:
     if _is_tuple_expr_of_literals(node):
         return True
 
@@ -196,6 +198,9 @@ def _arg_inline_predicate(node: itir.Expr, shifts: set[tuple[itir.OffsetLiteral,
         is_applied_fieldop := cpm.is_applied_as_fieldop(node)
         and not cpm.is_call_to(node.fun.args[0], "scan")
     ) or cpm.is_call_to(node, "if_"):
+        if is_scan and shifts not in [set(), {()}]:
+            return False
+        return True
         # always inline arg if it is an applied fieldop with only a single arg
         if is_applied_fieldop and len(node.args) == 1:
             return True
@@ -386,7 +391,11 @@ class FuseAsFieldOp(
             shifts = trace_shifts.trace_stencil(stencil, num_args=len(args))
 
             eligible_els = [
-                _arg_inline_predicate(arg, arg_shifts)
+                _arg_inline_predicate(
+                    arg,
+                    arg_shifts,
+                    is_scan=cpm.is_call_to(stencil, "scan"),
+                )
                 for arg, arg_shifts in zip(args, shifts, strict=True)
             ]
             if any(eligible_els):
@@ -401,7 +410,9 @@ class FuseAsFieldOp(
         # might become referenced once only. In order to be able to continue fusing such arguments
         # try inlining here.
         if cpm.is_let(node):
-            new_node = inline_lambdas.inline_lambda(node, opcount_preserving=True)
+            new_node = inline_lambdas.inline_lambda(
+                node, opcount_preserving=True, force_inline_applied_as_fieldop=True
+            )
             if new_node is not node:  # nothing has been inlined
                 return self.visit(new_node, **kwargs)
 
