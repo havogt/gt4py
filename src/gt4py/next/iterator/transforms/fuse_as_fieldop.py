@@ -196,7 +196,6 @@ def _arg_inline_predicate(node: itir.Expr, shifts: set[tuple[itir.OffsetLiteral,
         is_applied_fieldop := cpm.is_applied_as_fieldop(node)
         and not cpm.is_call_to(node.fun.args[0], "scan")
     ) or cpm.is_call_to(node, "if_"):
-        return True
         # always inline arg if it is an applied fieldop with only a single arg
         if is_applied_fieldop and len(node.args) == 1:
             return True
