@@ -182,7 +182,7 @@ def extract_projector(
     """
     projector: itir.Lambda | None = None
     expr = node
-    if cpm.is_let(node) and len(node.fun.params) == 1:
+    if False and cpm.is_let(node) and len(node.fun.params) == 1:
         # a single param let, it's a projector if the let value aka `node.fun.expr` is a projector
         # > let val = expr
         # >  val[x]
