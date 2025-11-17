@@ -137,7 +137,8 @@ def _can_deref(x):
 
 def _shift(*offsets):
     assert all(
-        isinstance(offset, ir.OffsetLiteral) or offset in [Sentinel.ALL_NEIGHBORS, Sentinel.VALUE]
+        isinstance(offset, (ir.OffsetLiteral, ir.SymRef))
+        or offset in [Sentinel.ALL_NEIGHBORS, Sentinel.VALUE]
         for offset in offsets
     )
 
@@ -284,7 +285,9 @@ class TraceShifts(PreserveLocationVisitor, NodeTranslator):
             return Sentinel.TYPE
         elif node.id in (builtins.ARITHMETIC_BUILTINS | {"list_get", "make_const_list", "cast_"}):
             return _combine
-        raise ValueError(f"Undefined symbol {node.id}")
+        else:
+            return node
+        # raise ValueError(f"Undefined symbol {node.id}")
 
     def visit_FunCall(self, node: ir.FunCall, *, ctx: dict[str, Any]) -> Any:
         if node.fun == ir.SymRef(id="tuple_get"):

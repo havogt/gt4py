@@ -109,8 +109,12 @@ class SymbolicDomain:
             return self
         if len(shift) == 2:
             off, val = shift
-            assert isinstance(off, itir.OffsetLiteral) and isinstance(off.value, str)
-            connectivity_type = common.get_offset_type(offset_provider_type, off.value)
+            if isinstance(off, itir.OffsetLiteral):
+                assert isinstance(off.value, str)
+                connectivity_type = common.get_offset_type(offset_provider_type, off.value)
+            else:
+                assert isinstance(off, itir.SymRef)
+                connectivity_type = common.get_offset_type(offset_provider_type, off.id)
 
             if isinstance(connectivity_type, common.Dimension):
                 if val is trace_shifts.Sentinel.VALUE:

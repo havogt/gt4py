@@ -6,14 +6,18 @@
 # Please, refer to the LICENSE file in the root directory.
 # SPDX-License-Identifier: BSD-3-Clause
 
+import dataclasses
 from typing import Any, Dict
 
-from gt4py.eve import NodeTranslator, PreserveLocationVisitor
+from gt4py import eve
 from gt4py.next.iterator import ir as itir
 from gt4py.next.iterator.transforms import symbol_ref_utils
 
 
-class InlineFundefs(PreserveLocationVisitor, NodeTranslator):
+@dataclasses.dataclass
+class InlineFundefs(
+    eve.PreserveLocationVisitor, eve.NodeTranslator, eve.VisitorWithSymbolTableTrait
+):
     def visit_SymRef(self, node: itir.SymRef, *, symtable: Dict[str, Any]):
         if node.id in symtable and isinstance(
             (symbol := symtable[node.id]), itir.FunctionDefinition
@@ -24,8 +28,21 @@ class InlineFundefs(PreserveLocationVisitor, NodeTranslator):
             )
         return self.generic_visit(node)
 
-    def visit_Program(self, node: itir.Program):
-        return self.generic_visit(node, symtable=node.annex.symtable)
+    def visit_Program(self, node: itir.Program, **kwargs: Any):
+        fun_declarations = set()
+        for fun in node.function_definitions:
+            for decl in fun.declarations:
+                fun_declarations.add(decl)
+        body = self.visit(node.body, **kwargs)
+        print(body)
+        return itir.Program(
+            id=node.id,
+            function_definitions=[],
+            params=node.params,
+            declarations=[*node.declarations, *fun_declarations],
+            body=body,
+            implicit_domain=node.implicit_domain,
+        )
 
 
 def prune_unreferenced_fundefs(program: itir.Program) -> itir.Program:

@@ -64,8 +64,11 @@ class IndexType(TypeSpec):
         return f"Index[{self.dim}]"
 
 
+# TODO: like DimensionType?
+# only temporary, maybe the name would be better as Symbol somewhere
 class OffsetType(TypeSpec):
     # TODO(havogt): replace by ConnectivityType
+    value: str
     source: common.Dimension
     target: tuple[common.Dimension] | tuple[common.Dimension, common.Dimension]
 
