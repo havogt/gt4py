@@ -36,7 +36,7 @@ from gt4py.next.iterator.ir_utils import (
     domain_utils,
     ir_makers as im,
 )
-from gt4py.next.iterator.transforms import infer_domain
+from gt4py.next.iterator.transforms import infer_domain, inline_lambdas
 from gt4py.next.program_processors.runners.dace.lowering import (
     gtir_dataflow,
     gtir_domain,
@@ -633,6 +633,8 @@ def translate_scan(
         im.sym(p.id, arg_type)
         for p, arg_type in zip(stencil_expr.params, lambda_arg_types, strict=True)
     ]
+
+    stencil_expr = inline_lambdas.InlineLambdas.apply(stencil_expr)
 
     # lower the scan stencil expression in a separate SDFG context
     lambda_ctx, lambda_output = _lower_lambda_to_nested_sdfg(
