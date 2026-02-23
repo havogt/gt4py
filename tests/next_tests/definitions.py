@@ -79,6 +79,7 @@ class OptionalProgramBackendId(_PythonObjectIdMixin, str, enum.Enum):
     DACE_CPU = "gt4py.next.program_processors.runners.dace.run_dace_cpu"
     DACE_GPU = "gt4py.next.program_processors.runners.dace.run_dace_gpu"
     DACE_CPU_NO_OPT = "gt4py.next.program_processors.runners.dace.run_dace_cpu_noopt"
+    JAX_JIT = "gt4py.next.program_processors.runners.jax_jit.run_jax_jit"
 
 
 class ProgramFormatterId(_PythonObjectIdMixin, str, enum.Enum):
