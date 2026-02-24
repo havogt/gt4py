@@ -14,6 +14,8 @@ import functools
 from collections.abc import Mapping, Sequence
 from typing import Any, Callable, Final, Generic, TypeAlias, TypeVar, cast
 
+import array_api_compat
+
 import gt4py.eve as eve
 import gt4py.next.common as common
 import gt4py.next.custom_layout_allocators as next_allocators
@@ -32,7 +34,8 @@ Field construction API.
 The user-facing API consists of the functions 'empty', 'zeros', 'ones', 'full' and 'as_field',
 or the 'FieldConstructor' class for more advanced use cases.
 
-These functions create GT4Py 'Field's backed by arrays (NDArrayField) created using a specified allocator, which can be either an array namespace
+These functions create GT4Py 'Field's backed by arrays (NDArrayField)
+created using a specified allocator, which can be either an array namespace
 (e.g. 'numpy', 'cupy') or a GT4Py field buffer allocator (e.g. a backend).
 
 This module deals with 3 concepts:
@@ -43,7 +46,8 @@ This module deals with 3 concepts:
 
 # Type to be used by the end-user
 Allocator: TypeAlias = core_ndarray_utils.ArrayNamespace | next_allocators.FieldBufferAllocationUtil
-"""Type for field memory allocators.
+"""
+Type for field memory allocators.
 
 Accepts either:
 - An array namespace following the Array API standard (e.g. ``numpy``, ``cupy``, ``jax.numpy``),
@@ -250,14 +254,19 @@ class _FieldArrayConstructor(abc.ABC):
     ) -> core_defs.NDArrayObject: ...
 
 
-_ANS = TypeVar("_ANS", bound=core_ndarray_utils.ArrayNamespace)
+_ArrayNST = TypeVar("_ArrayNST", bound=core_ndarray_utils.ArrayNamespace)
 
 
 @dataclasses.dataclass(frozen=True)
-class _ArrayAPIArrayConstructor(_FieldArrayConstructor, Generic[_ANS]):
-    array_ns: _ANS
+class _ArrayAPIArrayConstructor(_FieldArrayConstructor, Generic[_ArrayNST]):
+    array_ns: _ArrayNST
     # device in the format expected by the array namespace
     device: Any = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "array_ns", array_api_compat.array_namespace(self.array_ns.empty((1,)))
+        )
 
     def _to_array_ns_dtype(self, dtype: core_defs.DType) -> Any:
         return getattr(self.array_ns, core_types.type_to_name[dtype.scalar_type])

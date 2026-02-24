@@ -9,6 +9,7 @@
 from collections.abc import Hashable
 from typing import Any, Callable, Protocol, TypeGuard, cast
 
+import array_api_compat
 import numpy as np
 
 from gt4py._core import definitions as core_defs
@@ -20,7 +21,8 @@ except ImportError:
     cupy = None
 
 
-class _EqualityComparable(Protocol):
+class _ArrayDType(Protocol):
+    # The only requirement for array API dtypes is equality comparability.
     def __eq__(self, other: Any) -> bool: ...
 
 
@@ -62,17 +64,17 @@ class ArrayNamespace(Hashable, Protocol):
         copy: bool | None = None,
     ) -> core_defs.NDArrayObject: ...
 
-    bool: _EqualityComparable
-    int8: _EqualityComparable
-    int16: _EqualityComparable
-    int32: _EqualityComparable
-    int64: _EqualityComparable
-    uint8: _EqualityComparable
-    uint16: _EqualityComparable
-    uint32: _EqualityComparable
-    uint64: _EqualityComparable
-    float32: _EqualityComparable
-    float64: _EqualityComparable
+    bool: _ArrayDType
+    int8: _ArrayDType
+    int16: _ArrayDType
+    int32: _ArrayDType
+    int64: _ArrayDType
+    uint8: _ArrayDType
+    uint16: _ArrayDType
+    uint32: _ArrayDType
+    uint64: _ArrayDType
+    float32: _ArrayDType
+    float64: _ArrayDType
 
 
 def is_array_namespace(obj: Any) -> TypeGuard[ArrayNamespace]:
@@ -103,21 +105,7 @@ def is_array_namespace(obj: Any) -> TypeGuard[ArrayNamespace]:
 
 
 def array_namespace(array: core_defs.NDArrayObject) -> ArrayNamespace:
-    """
-    Get the namespace of the array.
-
-    This is defined in https://data-apis.org/array-api/latest/API_specification/generated/array_api.array.__array_namespace__.html,
-    however not implemented in CuPy < 14.
-    """
-    # TODO(havogt): this function can be replaced by https://data-apis.org/array-api-compat/
-    if hasattr(array, "__array_namespace__"):
-        return array.__array_namespace__()
-    else:
-        if isinstance(array, np.ndarray):
-            return np
-        if cupy is not None and isinstance(array, cupy.ndarray):
-            return cupy
-        raise TypeError(f"Could not determine array namespace of {array} of type {type(array)}")
+    return cast(ArrayNamespace, array_api_compat.array_namespace(array))
 
 
 def _numpy_device_translator(device: core_defs.Device | None) -> Any:
@@ -129,7 +117,7 @@ def _numpy_device_translator(device: core_defs.Device | None) -> Any:
 
 
 # Currently private as we only support a concrete set of array namespaces.
-_device_translation_registry: dict[ArrayNamespace, Callable[[core_defs.Device], Any]] = {
+_device_translation_registry: dict[ArrayNamespace, Callable[[core_defs.Device | None], Any]] = {
     cast(ArrayNamespace, np): _numpy_device_translator
 }
 """
@@ -153,7 +141,7 @@ if cupy is not None:
     _device_translation_registry[cupy] = _cupy_device_translator
 
 
-def get_device_translator(array_ns: ArrayNamespace) -> Callable[[core_defs.Device], Any]:
+def get_device_translator(array_ns: ArrayNamespace) -> Callable[[core_defs.Device | None], Any]:
     """
     Returns a mapping from a GT4Py 'Device' to the corresponding device object for the given array namespace.
     """

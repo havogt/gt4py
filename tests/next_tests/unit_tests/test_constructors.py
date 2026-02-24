@@ -6,7 +6,8 @@
 # Please, refer to the LICENSE file in the root directory.
 # SPDX-License-Identifier: BSD-3-Clause
 
-import warnings
+import dataclasses
+from types import ModuleType
 
 import numpy as np
 from typing import Any
@@ -16,11 +17,11 @@ import dataclasses
 
 from gt4py import next as gtx
 from gt4py._core import definitions as core_defs
-from gt4py.next import common, custom_layout_allocators as next_allocators
-from gt4py.next.constructors import (
-    FieldConstructor,
-    _ArrayAPIArrayConstructor,
-    _CustomLayoutConstructor,
+from gt4py.next import (
+    common,
+    custom_layout_allocators as next_allocators,
+    typing as gtx_typing,
+    constructors,
 )
 
 
@@ -34,31 +35,31 @@ cp = core_defs.cp
 
 
 @dataclasses.dataclass
-class ConstructureTestSetup:
-    allocator: Any  #: gtx.FieldAllocator
+class ConstructorTestSetup:
+    allocator: gtx_typing.Allocator
     device: core_defs.Device
     expected_xp: ModuleType
 
 
 def _constructor_test_cases():
     return [
-        ConstructureTestSetup(
+        ConstructorTestSetup(
             allocator=next_allocators.StandardCPUFieldBufferAllocator(),
             device=None,
             expected_xp=np,
         ),
-        ConstructureTestSetup(
+        ConstructorTestSetup(
             allocator=None,
             device=core_defs.Device(core_defs.DeviceType.CPU, 0),
             expected_xp=np,
         ),
-        ConstructureTestSetup(
+        ConstructorTestSetup(
             allocator=np,
             device=None,
             expected_xp=np,
         ),
         pytest.param(
-            ConstructureTestSetup(
+            ConstructorTestSetup(
                 allocator=next_allocators.StandardGPUFieldBufferAllocator(),
                 device=None,
                 expected_xp=cp,
@@ -66,7 +67,7 @@ def _constructor_test_cases():
             marks=pytest.mark.requires_gpu,
         ),
         pytest.param(
-            ConstructureTestSetup(
+            ConstructorTestSetup(
                 allocator=None,
                 device=core_defs.Device(core_defs.CUPY_DEVICE_TYPE, 0),
                 expected_xp=cp,
@@ -214,64 +215,72 @@ def test_as_connectivity(nd_array_implementation, data, skip_value):
 
 
 class TestFieldConstructorInit:
-    """Tests for the different codepaths of FieldConstructor.__init__."""
+    """Tests for the different codepaths of FieldConstructor.__init__.
+
+    Test relies on CustomLayoutAllocator not creating a c-layout.
+    """
+
+    # 2D domain so memory layout is observable (1D arrays are always both C and F contiguous).
+    _domain = common.Domain(dims=(I, J), ranges=(common.UnitRange(0, 4), common.UnitRange(0, 5)))
 
     def test_no_allocator_no_device_uses_default_cpu(self):
-        """allocator=None, device=None → default CPU device allocator → _FieldBufferCreationNamespace."""
-        fc = FieldConstructor(allocator=None, device=None)
-        assert isinstance(fc._array_constructor, _CustomLayoutConstructor)
-        assert fc._array_constructor.allocator.__gt_device_type__ == core_defs.DeviceType.CPU
+        """allocator=None, device=None → default CPU custom-layout allocator."""
+        fc = constructors.FieldConstructor(allocator=None, device=None)
+        field = fc.zeros(self._domain)
+        assert isinstance(field.ndarray, np.ndarray)
+        assert not field.ndarray.flags["C_CONTIGUOUS"]  # custom layout
 
     def test_no_allocator_with_device(self):
-        """allocator=None, device=given → device_allocators lookup → _FieldBufferCreationNamespace."""
+        """allocator=None, device=CPU → device-lookup custom-layout allocator."""
         device = core_defs.Device(core_defs.DeviceType.CPU, 0)
-        fc = FieldConstructor(allocator=None, device=device)
-        assert isinstance(fc._array_constructor, _CustomLayoutConstructor)
-        assert fc._array_constructor.device == device
+        fc = constructors.FieldConstructor(allocator=None, device=device)
+        field = fc.zeros(self._domain)
+        assert isinstance(field.ndarray, np.ndarray)
+        assert not field.ndarray.flags["C_CONTIGUOUS"]  # custom layout
 
     def test_array_namespace_allocator_no_device(self):
-        """allocator=numpy, device=None → _ArrayApiCreationNamespace with device=None."""
-        fc = FieldConstructor(allocator=np, device=None)
-        assert isinstance(fc._array_constructor, _ArrayAPIArrayConstructor)
-        assert fc._array_constructor.array_ns is np
-        assert fc._array_constructor.device is None
+        """allocator=numpy, device=None → array-API standard allocation."""
+        fc = constructors.FieldConstructor(allocator=np, device=None)
+        field = fc.zeros(self._domain)
+        assert isinstance(field.ndarray, np.ndarray)
+        assert field.ndarray.flags["C_CONTIGUOUS"]  # standard array-API allocation
 
     def test_array_namespace_allocator_with_device(self):
-        """allocator=numpy, device=CPU → _ArrayApiCreationNamespace with translated device."""
+        """allocator=numpy, device=CPU → array-API standard allocation with device translation."""
         device = core_defs.Device(core_defs.DeviceType.CPU, 0)
-        fc = FieldConstructor(allocator=np, device=device)
-        assert isinstance(fc._array_constructor, _ArrayAPIArrayConstructor)
-        assert fc._array_constructor.array_ns is np
-        # numpy device translator maps CPU → None
-        assert fc._array_constructor.device is None
+        fc = constructors.FieldConstructor(allocator=np, device=device)
+        field = fc.zeros(self._domain)
+        assert isinstance(field.ndarray, np.ndarray)
+        assert field.ndarray.flags["C_CONTIGUOUS"]  # standard array-API allocation
 
     def test_array_namespace_allocator_aligned_index_warns(self):
         """allocator=numpy with aligned_index → warns and ignores aligned_index."""
         aligned_index = [common.NamedIndex(I, 0)]
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            fc = FieldConstructor(allocator=np, aligned_index=aligned_index)
-            assert len(w) == 1
-            assert "aligned_index" in str(w[0].message)
-        assert isinstance(fc._array_constructor, _ArrayAPIArrayConstructor)
+        with pytest.warns(UserWarning, match="aligned_index"):
+            fc = constructors.FieldConstructor(allocator=np, aligned_index=aligned_index)
+        field = fc.zeros(self._domain)
+        assert isinstance(field.ndarray, np.ndarray)
+        assert field.ndarray.flags["C_CONTIGUOUS"]  # standard array-API allocation
 
     def test_field_buffer_allocator(self):
-        """allocator=FieldBufferAllocator → _FieldBufferCreationNamespace."""
+        """allocator=FieldBufferAllocator → custom-layout allocation."""
         allocator = next_allocators.StandardCPUFieldBufferAllocator()
-        fc = FieldConstructor(allocator=allocator)
-        assert isinstance(fc._array_constructor, _CustomLayoutConstructor)
-        assert fc._array_constructor.allocator is allocator
+        fc = constructors.FieldConstructor(allocator=allocator)
+        field = fc.zeros(self._domain)
+        assert isinstance(field.ndarray, np.ndarray)
+        assert not field.ndarray.flags["C_CONTIGUOUS"]  # custom layout
 
     def test_field_buffer_allocator_with_aligned_index(self):
-        """allocator=FieldBufferAllocator + aligned_index → passed through."""
+        """allocator=FieldBufferAllocator + aligned_index → accepted without error."""
         allocator = next_allocators.StandardCPUFieldBufferAllocator()
         aligned_index = [common.NamedIndex(I, 0)]
-        fc = FieldConstructor(allocator=allocator, aligned_index=aligned_index)
-        assert isinstance(fc._array_constructor, _CustomLayoutConstructor)
-        assert fc._array_constructor.aligned_index == aligned_index
+        fc = constructors.FieldConstructor(allocator=allocator, aligned_index=aligned_index)
+        field = fc.zeros(self._domain)
+        assert isinstance(field.ndarray, np.ndarray)
+        assert not field.ndarray.flags["C_CONTIGUOUS"]  # custom layout
 
     def test_field_buffer_allocator_factory(self):
-        """allocator=FieldBufferAllocatorFactory → unwraps __gt_allocator__ → _FieldBufferCreationNamespace."""
+        """allocator=FieldBufferAllocatorFactory → unwraps and uses custom-layout allocation."""
         inner_allocator = next_allocators.StandardCPUFieldBufferAllocator()
 
         class FakeFactory:
@@ -279,26 +288,28 @@ class TestFieldConstructorInit:
             def __gt_allocator__(self):
                 return inner_allocator
 
-        fc = FieldConstructor(allocator=FakeFactory())
-        assert isinstance(fc._array_constructor, _CustomLayoutConstructor)
-        assert fc._array_constructor.allocator is inner_allocator
+        fc = constructors.FieldConstructor(allocator=FakeFactory())
+        field = fc.zeros(self._domain)
+        assert isinstance(field.ndarray, np.ndarray)
+        assert not field.ndarray.flags["C_CONTIGUOUS"]  # custom layout
 
     def test_field_buffer_allocator_device_mismatch_raises(self):
         """allocator=CPU allocator, device=CUDA → raises ValueError."""
         allocator = next_allocators.StandardCPUFieldBufferAllocator()
         device = core_defs.Device(core_defs.DeviceType.CUDA, 0)
         with pytest.raises(ValueError, match="device type"):
-            FieldConstructor(allocator=allocator, device=device)
+            constructors.FieldConstructor(allocator=allocator, device=device)
 
     def test_field_buffer_allocator_device_matches(self):
-        """allocator=CPU allocator, device=CPU → succeeds with matching device."""
+        """allocator=CPU allocator, device=CPU → succeeds with custom layout."""
         allocator = next_allocators.StandardCPUFieldBufferAllocator()
         device = core_defs.Device(core_defs.DeviceType.CPU, 0)
-        fc = FieldConstructor(allocator=allocator, device=device)
-        assert isinstance(fc._array_constructor, _CustomLayoutConstructor)
-        assert fc._array_constructor.device == device
+        fc = constructors.FieldConstructor(allocator=allocator, device=device)
+        field = fc.zeros(self._domain)
+        assert isinstance(field.ndarray, np.ndarray)
+        assert not field.ndarray.flags["C_CONTIGUOUS"]  # custom layout
 
     def test_invalid_allocator_raises(self):
         """allocator=invalid object → raises ValueError."""
         with pytest.raises(ValueError, match="Invalid field allocator"):
-            FieldConstructor(allocator="not_an_allocator")
+            constructors.FieldConstructor(allocator="not_an_allocator")
