@@ -103,12 +103,13 @@ def initialize_interior(xp, M, N, dx, dy, a):
     return u, v, p
 
 
-def _interior_to_halo(xp, interior):
+def _interior_to_halo(interior):
     """Build (M+2, N+2) array from (M, N) interior with periodic halos.
 
     Wraps the interior periodically: last col -> left halo, first col -> right halo,
     last row -> top halo, first row -> bottom halo.
     """
+    xp = interior.__array_namespace__()
     M, N = interior.shape
 
     # Wrap columns: [last_col | interior | first_col]
@@ -122,106 +123,118 @@ def _interior_to_halo(xp, interior):
     return xp.concat([top_row, middle_rows, bottom_row], axis=0)  # (M+2, N+2)
 
 
-def apply_periodic_halo(xp, interior, x):
+def apply_periodic_halo(x):
     """Apply periodic boundary conditions by filling the halo from the interior.
 
     The array x has shape (M+2, N+2) where the interior is x[1:-1, 1:-1].
     The halos are filled by wrapping around the interior periodically.
     """
-    return _interior_to_halo(xp, x[1:-1, 1:-1])
+    return _interior_to_halo(x[1:-1, 1:-1])
 
 
-def avg_x(xp, f):
-    """Average field in the x direction."""
+def avg_x(f):
+    """Average field in the x direction. (M+2, N+2) -> (M, N)."""
     M, N = f.shape[0] - 2, f.shape[1] - 2
-    interior = 0.5 * (f[2 : M + 2, 1 : N + 1] + f[1 : M + 1, 1 : N + 1])
-    return _interior_to_halo(xp, interior)
+    return 0.5 * (f[2 : M + 2, 1 : N + 1] + f[1 : M + 1, 1 : N + 1])
 
 
-def avg_y(xp, f):
-    """Average field in the y direction."""
+def avg_y(f):
+    """Average field in the y direction. (M+2, N+2) -> (M, N)."""
     M, N = f.shape[0] - 2, f.shape[1] - 2
-    interior = 0.5 * (f[1 : M + 1, 2 : N + 2] + f[1 : M + 1, 1 : N + 1])
-    return _interior_to_halo(xp, interior)
+    return 0.5 * (f[1 : M + 1, 2 : N + 2] + f[1 : M + 1, 1 : N + 1])
 
 
-def avg_x_staggered(xp, f):
-    """Average field which is staggered in x in the x direction."""
+def avg_x_staggered(f):
+    """Average field which is staggered in x in the x direction. (M+2, N+2) -> (M, N)."""
     M, N = f.shape[0] - 2, f.shape[1] - 2
-    interior = 0.5 * (f[0:M, 1 : N + 1] + f[1 : M + 1, 1 : N + 1])
-    return _interior_to_halo(xp, interior)
+    return 0.5 * (f[0:M, 1 : N + 1] + f[1 : M + 1, 1 : N + 1])
 
 
-def avg_y_staggered(xp, f):
-    """Average field which is staggered in y in the y direction."""
+def avg_y_staggered(f):
+    """Average field which is staggered in y in the y direction. (M+2, N+2) -> (M, N)."""
     M, N = f.shape[0] - 2, f.shape[1] - 2
-    interior = 0.5 * (f[1 : M + 1, 0:N] + f[1 : M + 1, 1 : N + 1])
-    return _interior_to_halo(xp, interior)
+    return 0.5 * (f[1 : M + 1, 0:N] + f[1 : M + 1, 1 : N + 1])
 
 
-def delta_x(xp, dx, f):
-    """Calculate the difference in the x direction."""
+def delta_x(dx, f):
+    """Calculate the difference in the x direction. (M+2, N+2) -> (M, N)."""
     M, N = f.shape[0] - 2, f.shape[1] - 2
-    interior = (1.0 / dx) * (f[2 : M + 2, 1 : N + 1] - f[1 : M + 1, 1 : N + 1])
-    return _interior_to_halo(xp, interior)
+    return (1.0 / dx) * (f[2 : M + 2, 1 : N + 1] - f[1 : M + 1, 1 : N + 1])
 
 
-def delta_y(xp, dx, f):
-    """Calculate the difference in the y direction."""
+def delta_y(dx, f):
+    """Calculate the difference in the y direction. (M+2, N+2) -> (M, N)."""
     M, N = f.shape[0] - 2, f.shape[1] - 2
-    interior = (1.0 / dx) * (f[1 : M + 1, 2 : N + 2] - f[1 : M + 1, 1 : N + 1])
-    return _interior_to_halo(xp, interior)
+    return (1.0 / dx) * (f[1 : M + 1, 2 : N + 2] - f[1 : M + 1, 1 : N + 1])
 
 
-def delta_x_staggered(xp, dx, f):
-    """Calculate the difference in the x direction for field staggered in x."""
+def delta_x_staggered(dx, f):
+    """Calculate the difference in the x direction for field staggered in x. (M+2, N+2) -> (M, N)."""
     M, N = f.shape[0] - 2, f.shape[1] - 2
-    interior = (1.0 / dx) * (f[1 : M + 1, 1 : N + 1] - f[0:M, 1 : N + 1])
-    return _interior_to_halo(xp, interior)
+    return (1.0 / dx) * (f[1 : M + 1, 1 : N + 1] - f[0:M, 1 : N + 1])
 
 
-def delta_y_staggered(xp, dx, f):
-    """Calculate the difference in the y direction for field staggered in y."""
+def delta_y_staggered(dx, f):
+    """Calculate the difference in the y direction for field staggered in y. (M+2, N+2) -> (M, N)."""
     M, N = f.shape[0] - 2, f.shape[1] - 2
-    interior = (1.0 / dx) * (f[1 : M + 1, 1 : N + 1] - f[1 : M + 1, 0:N])
-    return _interior_to_halo(xp, interior)
+    return (1.0 / dx) * (f[1 : M + 1, 1 : N + 1] - f[1 : M + 1, 0:N])
 
 
-def timestep(xp, u, v, p, uold, vold, pold, dx, dy, dt_val, alpha_val, M, N):
+def timestep(u, v, p, uold, vold, pold, dx, dy, dt_val, alpha_val):
     """Perform one timestep of the shallow water equations.
 
-    All fields have shape (M+2, N+2) with 1-wide symmetric halos.
-    Each helper function takes a full (M+2, N+2) array and returns a full
-    (M+2, N+2) array with periodic halos, enabling direct composition.
+    All input fields have shape (M+2, N+2) with 1-wide symmetric halos.
+    Helper functions take (M+2, N+2) and return (M, N) interiors.
+    _interior_to_halo is applied where needed for stencil composition
+    and at the end for the output fields (like apply_periodicity in swm.py).
     """
-    cu = avg_x(xp, p) * u
-    cv = avg_y(xp, p) * v
-    z = (delta_x(xp, dx, v) - delta_y(xp, dy, u)) / avg_x(xp, avg_y(xp, p))
-    h = p + 0.5 * (avg_x_staggered(xp, u * u) + avg_y_staggered(xp, v * v))
+    # Intermediate fields need halos for subsequent stencil operations
+    cu = _interior_to_halo(avg_x(p) * u[1:-1, 1:-1])
+    cv = _interior_to_halo(avg_y(p) * v[1:-1, 1:-1])
+    z = _interior_to_halo(
+        (delta_x(dx, v) - delta_y(dy, u)) / avg_x(_interior_to_halo(avg_y(p)))
+    )
+    h = _interior_to_halo(
+        p[1:-1, 1:-1] + 0.5 * (avg_x_staggered(u * u) + avg_y_staggered(v * v))
+    )
 
+    # New fields (interior only)
     unew = (
-        uold
-        + avg_y_staggered(xp, z) * avg_y_staggered(xp, avg_x(xp, cv)) * dt_val
-        - delta_x(xp, dx, h) * dt_val
+        uold[1:-1, 1:-1]
+        + avg_y_staggered(z) * avg_y_staggered(_interior_to_halo(avg_x(cv))) * dt_val
+        - delta_x(dx, h) * dt_val
     )
     vnew = (
-        vold
-        - avg_x_staggered(xp, z) * avg_x_staggered(xp, avg_y(xp, cu)) * dt_val
-        - delta_y(xp, dy, h) * dt_val
+        vold[1:-1, 1:-1]
+        - avg_x_staggered(z) * avg_x_staggered(_interior_to_halo(avg_y(cu))) * dt_val
+        - delta_y(dy, h) * dt_val
     )
-    pnew = pold - delta_x_staggered(xp, dx, cu) * dt_val - delta_y_staggered(xp, dy, cv) * dt_val
+    pnew = (
+        pold[1:-1, 1:-1]
+        - delta_x_staggered(dx, cu) * dt_val
+        - delta_y_staggered(dy, cv) * dt_val
+    )
 
-    uold_new = u + alpha_val * (unew - 2.0 * u + uold)
-    vold_new = v + alpha_val * (vnew - 2.0 * v + vold)
-    pold_new = p + alpha_val * (pnew - 2.0 * p + pold)
+    # Time filter (interior only)
+    uold_new = u[1:-1, 1:-1] + alpha_val * (unew - 2.0 * u[1:-1, 1:-1] + uold[1:-1, 1:-1])
+    vold_new = v[1:-1, 1:-1] + alpha_val * (vnew - 2.0 * v[1:-1, 1:-1] + vold[1:-1, 1:-1])
+    pold_new = p[1:-1, 1:-1] + alpha_val * (pnew - 2.0 * p[1:-1, 1:-1] + pold[1:-1, 1:-1])
 
-    return unew, vnew, pnew, uold_new, vold_new, pold_new
+    # Apply periodicity at the end
+    return (
+        _interior_to_halo(unew),
+        _interior_to_halo(vnew),
+        _interior_to_halo(pnew),
+        _interior_to_halo(uold_new),
+        _interior_to_halo(vold_new),
+        _interior_to_halo(pold_new),
+    )
 
 
 def initialize_2halo(xp, M, N, dx, dy, a):
     """Initialize fields with 2-halo (1 on each side) symmetric padding."""
     u, v, p = initialize_interior(xp, M, N, dx, dy, a)
-    return _interior_to_halo(xp, u), _interior_to_halo(xp, v), _interior_to_halo(xp, p)
+    return _interior_to_halo(u), _interior_to_halo(v), _interior_to_halo(p)
 
 
 def to_reference_layout(arr, M, N):
@@ -377,7 +390,7 @@ def main():
 
     # Set up the timestep function, optionally with JIT compilation
     def timestep_fn(u, v, p, uold, vold, pold, dt_val, alpha_val):
-        return timestep(xp, u, v, p, uold, vold, pold, dx, dy, dt_val, alpha_val, M, N)
+        return timestep(u, v, p, uold, vold, pold, dx, dy, dt_val, alpha_val)
 
     if args.compile:
         if args.array_library == "jax":
