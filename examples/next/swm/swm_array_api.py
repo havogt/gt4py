@@ -133,86 +133,73 @@ def apply_periodic_halo(x):
 
 
 def avg_x(f):
-    """Average field in the x direction. (M+2, N+2) -> (M, N)."""
-    M, N = f.shape[0] - 2, f.shape[1] - 2
-    return 0.5 * (f[2 : M + 2, 1 : N + 1] + f[1 : M + 1, 1 : N + 1])
+    """Average adjacent elements in the x direction. (X, Y) -> (X-1, Y)."""
+    return 0.5 * (f[1:] + f[:-1])
 
 
 def avg_y(f):
-    """Average field in the y direction. (M+2, N+2) -> (M, N)."""
-    M, N = f.shape[0] - 2, f.shape[1] - 2
-    return 0.5 * (f[1 : M + 1, 2 : N + 2] + f[1 : M + 1, 1 : N + 1])
-
-
-def avg_x_staggered(f):
-    """Average field which is staggered in x in the x direction. (M+2, N+2) -> (M, N)."""
-    M, N = f.shape[0] - 2, f.shape[1] - 2
-    return 0.5 * (f[0:M, 1 : N + 1] + f[1 : M + 1, 1 : N + 1])
-
-
-def avg_y_staggered(f):
-    """Average field which is staggered in y in the y direction. (M+2, N+2) -> (M, N)."""
-    M, N = f.shape[0] - 2, f.shape[1] - 2
-    return 0.5 * (f[1 : M + 1, 0:N] + f[1 : M + 1, 1 : N + 1])
+    """Average adjacent elements in the y direction. (X, Y) -> (X, Y-1)."""
+    return 0.5 * (f[:, 1:] + f[:, :-1])
 
 
 def delta_x(dx, f):
-    """Calculate the difference in the x direction. (M+2, N+2) -> (M, N)."""
-    M, N = f.shape[0] - 2, f.shape[1] - 2
-    return (1.0 / dx) * (f[2 : M + 2, 1 : N + 1] - f[1 : M + 1, 1 : N + 1])
+    """Difference in the x direction, scaled by 1/dx. (X, Y) -> (X-1, Y)."""
+    return (1.0 / dx) * (f[1:] - f[:-1])
 
 
-def delta_y(dx, f):
-    """Calculate the difference in the y direction. (M+2, N+2) -> (M, N)."""
-    M, N = f.shape[0] - 2, f.shape[1] - 2
-    return (1.0 / dx) * (f[1 : M + 1, 2 : N + 2] - f[1 : M + 1, 1 : N + 1])
-
-
-def delta_x_staggered(dx, f):
-    """Calculate the difference in the x direction for field staggered in x. (M+2, N+2) -> (M, N)."""
-    M, N = f.shape[0] - 2, f.shape[1] - 2
-    return (1.0 / dx) * (f[1 : M + 1, 1 : N + 1] - f[0:M, 1 : N + 1])
-
-
-def delta_y_staggered(dx, f):
-    """Calculate the difference in the y direction for field staggered in y. (M+2, N+2) -> (M, N)."""
-    M, N = f.shape[0] - 2, f.shape[1] - 2
-    return (1.0 / dx) * (f[1 : M + 1, 1 : N + 1] - f[1 : M + 1, 0:N])
+def delta_y(dy, f):
+    """Difference in the y direction, scaled by 1/dy. (X, Y) -> (X, Y-1)."""
+    return (1.0 / dy) * (f[:, 1:] - f[:, :-1])
 
 
 def timestep(u, v, p, uold, vold, pold, dx, dy, dt_val, alpha_val):
     """Perform one timestep of the shallow water equations.
 
-    All input fields have shape (M+2, N+2) with 1-wide symmetric halos.
-    Helper functions take (M+2, N+2) and return (M, N) interiors.
-    _interior_to_halo is applied where needed for stencil composition
-    and at the end for the output fields (like apply_periodicity in swm.py).
+    All input fields have shape (M+2, N+2) with 1-wide periodic halos.
+
+    Helper functions are pure array operations with natural dimension reduction:
+      avg_x:   (X, Y) -> (X-1, Y)
+      avg_y:   (X, Y) -> (X, Y-1)
+      delta_x: (X, Y) -> (X-1, Y)
+      delta_y: (X, Y) -> (X, Y-1)
+
+    The forward/backward alignment (staggering) is expressed through slicing
+    the result to extract the (M, N) interior:
+      Forward x:  result[1:, 1:-1]   (avg_x, delta_x)
+      Backward x: result[:-1, 1:-1]  (avg_x_staggered, delta_x_staggered)
+      Forward y:  result[1:-1, 1:]   (avg_y, delta_y)
+      Backward y: result[1:-1, :-1]  (avg_y_staggered, delta_y_staggered)
     """
-    # Intermediate fields need halos for subsequent stencil operations
-    cu = _interior_to_halo(avg_x(p) * u[1:-1, 1:-1])
-    cv = _interior_to_halo(avg_y(p) * v[1:-1, 1:-1])
+    # Intermediate fields (need halos for subsequent stencil ops)
+    cu = _interior_to_halo(avg_x(p)[1:, 1:-1] * u[1:-1, 1:-1])
+    cv = _interior_to_halo(avg_y(p)[1:-1, 1:] * v[1:-1, 1:-1])
     z = _interior_to_halo(
-        (delta_x(dx, v) - delta_y(dy, u)) / avg_x(_interior_to_halo(avg_y(p)))
+        (delta_x(dx, v)[1:, 1:-1] - delta_y(dy, u)[1:-1, 1:])
+        / avg_x(avg_y(p))[1:, 1:]
     )
     h = _interior_to_halo(
-        p[1:-1, 1:-1] + 0.5 * (avg_x_staggered(u * u) + avg_y_staggered(v * v))
+        p[1:-1, 1:-1] + 0.5 * (avg_x(u * u)[:-1, 1:-1] + avg_y(v * v)[1:-1, :-1])
     )
 
     # New fields (interior only)
     unew = (
         uold[1:-1, 1:-1]
-        + avg_y_staggered(z) * avg_y_staggered(_interior_to_halo(avg_x(cv))) * dt_val
-        - delta_x(dx, h) * dt_val
+        + avg_y(z)[1:-1, :-1]
+        * avg_y(_interior_to_halo(avg_x(cv)[1:, 1:-1]))[1:-1, :-1]
+        * dt_val
+        - delta_x(dx, h)[1:, 1:-1] * dt_val
     )
     vnew = (
         vold[1:-1, 1:-1]
-        - avg_x_staggered(z) * avg_x_staggered(_interior_to_halo(avg_y(cu))) * dt_val
-        - delta_y(dy, h) * dt_val
+        - avg_x(z)[:-1, 1:-1]
+        * avg_x(_interior_to_halo(avg_y(cu)[1:-1, 1:]))[:-1, 1:-1]
+        * dt_val
+        - delta_y(dy, h)[1:-1, 1:] * dt_val
     )
     pnew = (
         pold[1:-1, 1:-1]
-        - delta_x_staggered(dx, cu) * dt_val
-        - delta_y_staggered(dy, cv) * dt_val
+        - delta_x(dx, cu)[:-1, 1:-1] * dt_val
+        - delta_y(dy, cv)[1:-1, :-1] * dt_val
     )
 
     # Time filter (interior only)
