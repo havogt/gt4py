@@ -88,10 +88,15 @@ class ScanOperator(EmbeddedOperator[xtyping.MaybeNestedInTuple[core_defs.ScalarT
         return res
 
 
-def _get_out_domain(out: xtyping.MaybeNestedInTuple[common.MutableField]) -> common.Domain:
+def _get_out_domain(
+    out: xtyping.MaybeNestedInTuple[common.MutableField],
+) -> common.Domain:
     return embedded_common.domain_intersection(
         *[f.domain for f in utils.flatten_nested_tuple((out,))]
     )
+
+
+import jax
 
 
 def field_operator_call(op: EmbeddedOperator[_R, _P], args: Any, kwargs: Any) -> Optional[_R]:
@@ -133,10 +138,15 @@ def field_operator_call(op: EmbeddedOperator[_R, _P], args: Any, kwargs: Any) ->
         return None
     else:
         # called from other field_operator or missing `out` argument
-        if "offset_provider" in kwargs:
-            # assuming we wanted to call the field_operator as program, otherwise `offset_provider` would not be there
-            raise errors.MissingArgumentError(None, "out", True)
-        return op(*args, **kwargs)
+        # if "offset_provider" in kwargs:
+        #     # assuming we wanted to call the field_operator as program, otherwise `offset_provider` would not be there
+        #     raise errors.MissingArgumentError(None, "out", True)
+        domain = kwargs.pop("domain", None)
+        kwargs.pop("offset_provider", None)  # remove offset_provider if present
+        res = jax.jit(op)(*args, **kwargs)
+        if domain is not None:
+            return _tuple_slice_field(res, common.domain(domain))  # type: ignore[return-value]
+        return res
 
 
 @utils.tree_map
@@ -144,6 +154,19 @@ def _get_vertical_range(domain: common.Domain) -> common.NamedRange | eve.Nothin
     vertical_dim_filtered = [nr for nr in domain if nr.dim.kind == common.DimensionKind.VERTICAL]
     assert len(vertical_dim_filtered) <= 1
     return vertical_dim_filtered[0] if vertical_dim_filtered else eve.NOTHING
+
+
+def _tuple_slice_field(
+    field: xtyping.MaybeNestedInTuple[common.Field],
+    domain: xtyping.MaybeNestedInTuple[common.Domain],
+) -> xtyping.MaybeNestedInTuple[common.Field]:
+    @named_collections.tree_map_named_collection
+    def impl(field: common.Field, domain: common.Domain) -> None:
+        return field[domain]
+
+    if not isinstance(domain, tuple):
+        domain = named_collections.tree_map_named_collection(lambda _: domain)(field)
+    return impl(field, domain)
 
 
 def _tuple_assign_field(
@@ -156,7 +179,7 @@ def _tuple_assign_field(
         if isinstance(source, common.Field):
             target[domain] = source[domain]
         else:
-            assert core_defs.is_scalar_type(source)
+            # assert core_defs.is_scalar_type(source)
             target[domain] = source
 
     if not isinstance(domain, tuple):

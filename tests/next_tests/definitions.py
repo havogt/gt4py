@@ -49,6 +49,7 @@ class ProgramBackendId(_PythonObjectIdMixin, str, enum.Enum):
     GTIR_EMBEDDED = "gt4py.next.program_processors.runners.roundtrip.gtir"
     ROUNDTRIP_WITH_TEMPORARIES = "gt4py.next.program_processors.runners.roundtrip.with_temporaries"
     DOUBLE_ROUNDTRIP = "gt4py.next.program_processors.runners.double_roundtrip.backend"
+    JAX_JIT = "gt4py.next.program_processors.runners.jax_jit.jax_jit"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -126,6 +127,7 @@ USES_PROGRAM_METRICS = "uses_program_metrics"
 USES_SCALAR_IN_DOMAIN_AND_FO = "uses_scalar_in_domain_and_fo"
 USES_CONCAT_WHERE = "uses_concat_where"
 USES_PROGRAM_WITH_SLICED_OUT_ARGUMENTS = "uses_program_with_sliced_out_arguments"
+USES_PROGRAM = "uses_program"
 CHECKS_SPECIFIC_ERROR = "checks_specific_error"
 
 # Skip messages (available format keys: 'marker', 'backend')
@@ -172,6 +174,10 @@ EMBEDDED_SKIP_LIST = [
 JAX_EMBEDDED_SKIP_LIST = EMBEDDED_SKIP_LIST + [
     (USES_PROGRAM_WITH_SLICED_OUT_ARGUMENTS, XFAIL, UNSUPPORTED_MESSAGE),
 ]
+JAX_JIT_SKIP_LIST = JAX_EMBEDDED_SKIP_LIST + [
+    (USES_UNSTRUCTURED_SHIFT, XFAIL, UNSUPPORTED_MESSAGE),
+    (USES_PROGRAM, XFAIL, UNSUPPORTED_MESSAGE),
+]
 ROUNDTRIP_SKIP_LIST = DOMAIN_INFERENCE_SKIP_LIST + [
     (USES_PROGRAM_METRICS, XFAIL, UNSUPPORTED_MESSAGE),
     (USES_SPARSE_FIELDS_AS_OUTPUT, XFAIL, UNSUPPORTED_MESSAGE),
@@ -203,6 +209,7 @@ BACKEND_SKIP_TEST_MATRIX = {
     OptionalProgramBackendId.DACE_CPU: DACE_SKIP_TEST_LIST,
     OptionalProgramBackendId.DACE_GPU: DACE_SKIP_TEST_LIST,
     OptionalProgramBackendId.DACE_CPU_NO_OPT: DACE_SKIP_TEST_LIST,
+    ProgramBackendId.JAX_JIT: JAX_JIT_SKIP_LIST,
     ProgramBackendId.GTFN_CPU: GTFN_SKIP_TEST_LIST
     + [(USES_SCAN_NESTED, XFAIL, UNSUPPORTED_MESSAGE)],
     ProgramBackendId.GTFN_CPU_IMPERATIVE: GTFN_SKIP_TEST_LIST

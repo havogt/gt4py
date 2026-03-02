@@ -198,7 +198,9 @@ class _CompilableGTEntryPointMixin(Generic[ffront_stages.DSLDefinitionT]):
         return self
 
 
-def _field_domain_descriptor_mapping_from_func_type(func_type: ts.FunctionType) -> list[str]:
+def _field_domain_descriptor_mapping_from_func_type(
+    func_type: ts.FunctionType,
+) -> list[str]:
     static_domain_args = []
     param_types = func_type.pos_or_kw_args | func_type.kw_only_args
     for name, type_ in param_types.items():
@@ -310,7 +312,8 @@ class Program(_CompilableGTEntryPointMixin[ffront_stages.DSLProgramDef]):
 
     def with_grid_type(self, grid_type: common.GridType) -> Program:
         return dataclasses.replace(
-            self, definition_stage=dataclasses.replace(self.definition_stage, grid_type=grid_type)
+            self,
+            definition_stage=dataclasses.replace(self.definition_stage, grid_type=grid_type),
         )
 
     def with_static_params(self, *static_params: str | None) -> Program:
@@ -392,7 +395,10 @@ class Program(_CompilableGTEntryPointMixin[ffront_stages.DSLProgramDef]):
 
             if self.backend is not None:
                 self._compiled_programs(
-                    *args, **kwargs, offset_provider=offset_provider, enable_jit=enable_jit
+                    *args,
+                    **kwargs,
+                    offset_provider=offset_provider,
+                    enable_jit=enable_jit,
                 )
             else:
                 # Embedded execution.
@@ -422,7 +428,10 @@ class ProgramWithBoundArgs(Program):
 
     @override
     def __call__(
-        self, *args: Any, offset_provider: common.OffsetProvider | None = None, **kwargs: Any
+        self,
+        *args: Any,
+        offset_provider: common.OffsetProvider | None = None,
+        **kwargs: Any,
     ) -> None:
         if offset_provider is None:
             offset_provider = {}
@@ -456,7 +465,10 @@ class ProgramWithBoundArgs(Program):
                     raise ValueError(f"Parameter '{name}' already set as a bound argument.")
 
             type_info.accepts_args(
-                new_type, with_args=arg_types, with_kwargs=kwarg_types, raise_exception=True
+                new_type,
+                with_args=arg_types,
+                with_kwargs=kwarg_types,
+                raise_exception=True,
             )
         except ValueError as err:
             bound_arg_names = ", ".join([f"'{bound_arg}'" for bound_arg in self.bound_args.keys()])
@@ -531,7 +543,8 @@ def program(
         program = Program.from_function(
             definition,
             backend=typing.cast(
-                next_backend.Backend | None, DEFAULT_BACKEND if backend is eve.NOTHING else backend
+                next_backend.Backend | None,
+                DEFAULT_BACKEND if backend is eve.NOTHING else backend,
             ),
             grid_type=grid_type,
             **compilation_options,
@@ -622,7 +635,8 @@ class FieldOperator(_CompilableGTEntryPointMixin[ffront_stages.DSLFieldOperatorD
 
     def with_grid_type(self, grid_type: common.GridType) -> FieldOperator:
         return dataclasses.replace(
-            self, definition_stage=dataclasses.replace(self.definition_stage, grid_type=grid_type)
+            self,
+            definition_stage=dataclasses.replace(self.definition_stage, grid_type=grid_type),
         )
 
     # TODO(tehrengruber): We can not use transforms from `self.backend` since this can be
@@ -724,7 +738,9 @@ def field_operator(
 
 @typing.overload
 def field_operator(
-    *, backend: next_backend.Backend | eve.NothingType | None, grid_type: common.GridType | None
+    *,
+    backend: next_backend.Backend | eve.NothingType | None,
+    grid_type: common.GridType | None,
 ) -> Callable[[types.FunctionType], FieldOperator]: ...
 
 
@@ -755,7 +771,8 @@ def field_operator(
         return FieldOperator.from_function(
             definition,
             typing.cast(
-                next_backend.Backend | None, DEFAULT_BACKEND if backend is eve.NOTHING else backend
+                next_backend.Backend | None,
+                DEFAULT_BACKEND if backend is eve.NOTHING else backend,
             ),
             grid_type,
             **compilation_options,
@@ -829,7 +846,8 @@ def scan_operator(
         return FieldOperator.from_function(
             definition,
             typing.cast(
-                next_backend.Backend | None, DEFAULT_BACKEND if backend is eve.NOTHING else backend
+                next_backend.Backend | None,
+                DEFAULT_BACKEND if backend is eve.NOTHING else backend,
             ),
             grid_type,
             operator_node_cls=foast.ScanOperator,

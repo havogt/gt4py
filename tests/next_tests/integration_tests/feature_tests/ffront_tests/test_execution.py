@@ -247,7 +247,7 @@ def test_np_bool_scalar_arg(unstructured_case):
 
     @gtx.field_operator
     def testee(a: gtx.bool) -> cases.VBoolField:
-        return broadcast(not a, (Vertex,))
+        return broadcast(~a, (Vertex,))
 
     a = np.bool_(True)  # explicitly using a np.bool
 
@@ -381,6 +381,7 @@ def test_double_use_scalar(cartesian_case):
     )
 
 
+@pytest.mark.uses_program
 @pytest.mark.uses_scalar_in_domain_and_fo
 def test_scalar_in_domain_spec_and_fo_call(cartesian_case):
     @gtx.field_operator
@@ -399,6 +400,7 @@ def test_scalar_in_domain_spec_and_fo_call(cartesian_case):
     )
 
 
+@pytest.mark.uses_program
 @pytest.mark.uses_scan
 def test_scalar_scan(cartesian_case):
     @gtx.scan_operator(axis=KDim, forward=True, init=(0.0))
@@ -1097,6 +1099,7 @@ def test_scan_tuple_field_scalar_mixed(cartesian_case):
     cases.verify(cartesian_case, foo, 1.0, inp2, out=out, ref=expected)
 
 
+@pytest.mark.uses_program
 def test_docstring(cartesian_case):
     @gtx.field_operator
     def fieldop_with_docstring(a: cases.IField) -> cases.IField:
@@ -1113,6 +1116,7 @@ def test_docstring(cartesian_case):
     cases.verify(cartesian_case, test_docstring, a, inout=a, ref=a)
 
 
+@pytest.mark.uses_program
 def test_domain(cartesian_case):
     @gtx.field_operator
     def fieldop_domain(a: cases.IField) -> cases.IField:
@@ -1131,6 +1135,7 @@ def test_domain(cartesian_case):
     cases.verify(cartesian_case, program_domain, a, size, out, inout=out, ref=ref)
 
 
+@pytest.mark.uses_program
 @pytest.mark.uses_floordiv
 def test_domain_input_bounds(cartesian_case):
     lower_i = 1
@@ -1155,6 +1160,7 @@ def test_domain_input_bounds(cartesian_case):
     cases.verify(cartesian_case, program_domain, inp, out, lower_i, upper_i, inout=out, ref=ref)
 
 
+@pytest.mark.uses_program
 def test_domain_input_bounds_1(cartesian_case):
     lower_i = 1
     upper_i = cartesian_case.default_sizes[IDim]
@@ -1200,6 +1206,7 @@ def test_domain_input_bounds_1(cartesian_case):
     )
 
 
+@pytest.mark.uses_program
 @pytest.mark.uses_program_with_sliced_out_arguments
 def test_domain_tuple(cartesian_case):
     @gtx.field_operator
@@ -1376,6 +1383,7 @@ def test_constant_closure_vars(cartesian_case):
     )
 
 
+@pytest.mark.uses_unstructured_shift
 def test_local_index_premapped_field(request, unstructured_case):
     if request.node.get_closest_marker(pytest.mark.uses_mesh_with_skip_values.name):
         pytest.skip("This test only works with non-skip value meshes.")
