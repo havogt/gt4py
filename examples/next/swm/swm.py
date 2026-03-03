@@ -21,7 +21,9 @@ for all fields
 
 from gt4py import next as gtx
 from gt4py.next import common as gtx_common
+from gt4py.next.experimental import concat_where
 from time import perf_counter
+from gt4py.next.ffront.decorator import field_operator
 import initial_conditions
 import utils
 import config
@@ -127,6 +129,16 @@ def delta_y_staggered(dx: dtype, f: IJField):
 
 
 @gtx.field_operator
+def make_periodic(f: IJField, M: gtx.int32, N: gtx.int32):
+    """Make the field f periodic by copying values from the opposite sides."""
+    f = concat_where(I <= -1, f(I + M), f)
+    f = concat_where(I >= M, f(I - M), f)
+    f = concat_where(J <= -1, f(J + N), f)
+    f = concat_where(J >= N, f(J - N), f)
+    return f
+
+
+@gtx.field_operator
 def timestep(
     u: IJField,
     v: IJField,
@@ -138,6 +150,8 @@ def timestep(
     vold: IJField,
     pold: IJField,
     alpha: dtype,
+    M: gtx.int32,
+    N: gtx.int32,
 ) -> tuple[IJField, IJField, IJField, IJField, IJField, IJField]:
     cu = avg_x(p) * u
     cv = avg_y(p) * v
@@ -151,6 +165,14 @@ def timestep(
     uold_new = u + alpha * (unew - 2.0 * u + uold)
     vold_new = v + alpha * (vnew - 2.0 * v + vold)
     pold_new = p + alpha * (pnew - 2.0 * p + pold)
+
+    unew = make_periodic(unew, M, N)
+    vnew = make_periodic(vnew, M, N)
+    pnew = make_periodic(pnew, M, N)
+
+    uold_new = make_periodic(uold_new, M, N)
+    vold_new = make_periodic(vold_new, M, N)
+    pold_new = make_periodic(pold_new, M, N)
 
     return (
         unew,
@@ -191,8 +213,10 @@ def timestep_program(
         vold=vold,
         pold=pold,
         alpha=alpha,
+        M=M,
+        N=N,
         out=(unew, vnew, pnew, uold, vold, pold),
-        domain={I: (0, M), J: (0, N)},
+        domain={I: (-1, M + 1), J: (-1, N + 1)},
     )
 
 
@@ -297,6 +321,8 @@ def main():
                 vold=vold,
                 pold=pold,
                 alpha=config.alpha if ncycle > 0 else 0.0,
+                M=M,
+                N=N,
             )
         elif USE_PROGRAM:
             prog(
@@ -339,14 +365,14 @@ def main():
         dt3 = dt3 + (t3_stop - t3_start)
 
         t25_start = perf_counter()
-        if backend == jax.jit:
-            unew = apply_periodicity_jax(unew)
-            vnew = apply_periodicity_jax(vnew)
-            pnew = apply_periodicity_jax(pnew)
-        else:
-            unew = apply_periodicity(unew)
-            vnew = apply_periodicity(vnew)
-            pnew = apply_periodicity(pnew)
+        # if backend == jax.jit:
+        #     unew = apply_periodicity_jax(unew)
+        #     vnew = apply_periodicity_jax(vnew)
+        #     pnew = apply_periodicity_jax(pnew)
+        # else:
+        #     unew = apply_periodicity(unew)
+        #     vnew = apply_periodicity(vnew)
+        #     pnew = apply_periodicity(pnew)
         t25_stop = perf_counter()
         dt25 = dt25 + (t25_stop - t25_start)
 
