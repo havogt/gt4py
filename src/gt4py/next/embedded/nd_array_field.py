@@ -867,7 +867,10 @@ def _intersect_fields(
     promoted_dims = common.promote_dims(
         *(f.domain.dims for f in fields if isinstance(f, common.Field))
     )
-    broadcasted_fields = [_broadcast(_to_field(f, nd_array_class), promoted_dims) for f in fields]
+    # TODO(havogt): disabled becaues jax tracing cannot create a field from nothing in broadcast
+    # broadcasted_fields = [_broadcast(_to_field(f, nd_array_class), promoted_dims) for f in fields]
+    # broadcasted_fields = [_to_field(f, nd_array_class), promoted_dims) for f in fields]
+    broadcasted_fields = fields
 
     intersected_domains = embedded_common.restrict_to_intersection(
         *[f.domain for f in broadcasted_fields], ignore_dims=ignore_dims

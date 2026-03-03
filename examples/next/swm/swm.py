@@ -20,14 +20,11 @@ for all fields
 """
 
 from gt4py import next as gtx
-from gt4py.next import common as gtx_common
 from gt4py.next.experimental import concat_where
 from time import perf_counter
-from gt4py.next.ffront.decorator import field_operator
 import initial_conditions
 import utils
 import config
-from gt4py.next.otf import compiled_program
 from gt4py.next.program_processors.runners.dace import run_dace_gpu_cached, run_dace_cpu_cached
 
 # from gt4py.next.program_processors.runners import jax_jit
@@ -53,15 +50,13 @@ BACKENDS = {
     "dace_gpu": (run_dace_gpu_cached, run_dace_gpu_cached),
     "dace_cpu": (run_dace_cpu_cached, run_dace_cpu_cached),
     "numpy": (None, np),
-    "jnp": (None, jnp),
-    "jax_jit": (jax.jit, jnp),
 }
 if cp is not None:
     BACKENDS["cupy"] = (None, cp)
 if jnp is not None:
     assert jax is not None
     BACKENDS["jax"] = (None, jnp)
-    BACKENDS["jax_jit"] = (jax.jit, jnp)
+    BACKENDS["jax_jit"] = (jax.jit(static_argnames=["M", "N"]), jnp)
 
 
 allocator = None
@@ -166,13 +161,19 @@ def timestep(
     vold_new = v + alpha * (vnew - 2.0 * v + vold)
     pold_new = p + alpha * (pnew - 2.0 * p + pold)
 
-    unew = make_periodic(unew, M, N)
-    vnew = make_periodic(vnew, M, N)
-    pnew = make_periodic(pnew, M, N)
+    # because GT4Py does not allow slicing and periodic halo is not a supported pattern we need to trick GT4Py to shrink the domain
+    unew = make_periodic(unew, M, N) + u * 0.0
+    vnew = make_periodic(vnew, M, N) + v * 0.0
+    pnew = make_periodic(pnew, M, N) + p * 0.0
 
-    uold_new = make_periodic(uold_new, M, N)
-    vold_new = make_periodic(vold_new, M, N)
-    pold_new = make_periodic(pold_new, M, N)
+    # The following only works in embedded/jax.jit but is not compliant GT4Py DSL (slightly faster than the above with jax.jit)
+    # unew = make_periodic(unew, M, N)[gtx.domain({I: (-1, M + 1), J: (-1, N + 1)})]
+    # vnew = make_periodic(vnew, M, N)[gtx.domain({I: (-1, M + 1), J: (-1, N + 1)})]
+    # pnew = make_periodic(pnew, M, N)[gtx.domain({I: (-1, M + 1), J: (-1, N + 1)})]
+
+    # uold_new = make_periodic(uold_new, M, N)
+    # vold_new = make_periodic(vold_new, M, N)
+    # pold_new = make_periodic(pold_new, M, N)
 
     return (
         unew,
@@ -220,28 +221,8 @@ def timestep_program(
     )
 
 
-def apply_periodicity(x: IJField):
-    """Apply periodicity to the field x."""
-    return gtx_common._field(
-        x.array_ns.pad(x.ndarray[1:-1, 1:-1], ((1, 1), (1, 1)), mode="wrap"),
-        domain=x.domain,
-        dtype=x.dtype,
-    )
-
-
-def apply_periodicity_jax(x: IJField):
-    """Apply periodicity to the field x."""
-    return gtx_common._field(
-        x.array_ns.pad(x.ndarray, ((1, 1), (1, 1)), mode="wrap"),
-        domain=gtx.domain({I: (-1, x.shape[0] + 1), J: (-1, x.shape[1] + 1)}),
-        dtype=x.dtype,
-    )
-
-
 def main():
     dt0 = 0.0
-    dt25 = 0.0
-    dt3 = 0.0
 
     M = config.M
     N = config.N
@@ -278,7 +259,7 @@ def main():
 
     USE_PROGRAM = True
 
-    if backend == jax.jit:
+    if backend.__module__.startswith("jax"):
         prog = timestep.with_backend(backend)
     elif backend is not None:
         if USE_PROGRAM:
@@ -308,8 +289,7 @@ def main():
                 "init",
             )
 
-        t3_start = perf_counter()
-        if backend == jax.jit:
+        if backend.__module__.startswith("jax"):
             unew, vnew, pnew, uold, vold, pold = prog(
                 u=u,
                 v=v,
@@ -361,20 +341,6 @@ def main():
 
         if hasattr(u.array_ns, "cuda"):
             u.array_ns.cuda.runtime.deviceSynchronize()
-        t3_stop = perf_counter()
-        dt3 = dt3 + (t3_stop - t3_start)
-
-        t25_start = perf_counter()
-        # if backend == jax.jit:
-        #     unew = apply_periodicity_jax(unew)
-        #     vnew = apply_periodicity_jax(vnew)
-        #     pnew = apply_periodicity_jax(pnew)
-        # else:
-        #     unew = apply_periodicity(unew)
-        #     vnew = apply_periodicity(vnew)
-        #     pnew = apply_periodicity(pnew)
-        t25_stop = perf_counter()
-        dt25 = dt25 + (t25_stop - t25_start)
 
         # swap x with xnew fields
         u, unew = unew, u
@@ -389,6 +355,8 @@ def main():
                 "ncycle: " + str(ncycle),
             )
 
+    if cp is not None:
+        cp.cuda.runtime.deviceSynchronize()
     t0_stop = perf_counter()
     dt0 = dt0 + (t0_stop - t0_start)
     # Print initial conditions
@@ -398,8 +366,10 @@ def main():
         print(" diagonal elements of u:\n", u[:, :].ndarray.diagonal()[:-1])
         print(" diagonal elements of v:\n", v[:, :].ndarray.diagonal()[:-1])
     print("total: ", dt0)
-    print("t100+t200+t300: ", dt3)
-    print("t150+t250: ", dt25)
+
+    u = u[gtx.domain({I: (-1, M + 1), J: (-1, N + 1)})]
+    v = v[gtx.domain({I: (-1, M + 1), J: (-1, N + 1)})]
+    p = p[gtx.domain({I: (-1, M + 1), J: (-1, N + 1)})]
 
     if config.VAL:
         utils.final_validation(
