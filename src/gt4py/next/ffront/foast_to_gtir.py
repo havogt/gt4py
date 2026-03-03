@@ -305,10 +305,18 @@ class FieldOperatorLowering(eve.PreserveLocationVisitor, eve.NodeTranslator):
                 case foast.BinOp(
                     op=dialect_ast_enums.BinaryOperator.ADD | dialect_ast_enums.BinaryOperator.SUB,
                     left=foast.Name(id=dimension),  # TODO(tehrengruber): use type of lhs
-                    right=foast.Constant(value=offset_index),
+                    right=right,
                 ):
-                    if arg.op == dialect_ast_enums.BinaryOperator.SUB:
-                        offset_index *= -1
+                    if isinstance(right, foast.Constant):
+                        offset_index = right.value
+                        if arg.op == dialect_ast_enums.BinaryOperator.SUB:
+                            offset_index *= -1
+                    elif isinstance(right, foast.Name):
+                        offset_index = self.visit(right, **kwargs)
+                        if arg.op == dialect_ast_enums.BinaryOperator.SUB:
+                            offset_index = im.call("neg")(offset_index)
+                    else:
+                        raise FieldOperatorLoweringError("Unexpected shift argument!")
                     # TODO(havogt): we rely on the naming-convention for implicit offsets, see `dimension_to_implicit_offset`
                     current_expr = im.as_fieldop(
                         im.lambda_("__it")(
