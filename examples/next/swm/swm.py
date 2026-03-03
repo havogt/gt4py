@@ -22,6 +22,7 @@ for all fields
 from gt4py import next as gtx
 from gt4py.next.experimental import concat_where
 from time import perf_counter
+from gt4py.eve.utils import FrozenNamespace
 import initial_conditions
 import utils
 import config
@@ -56,7 +57,7 @@ if cp is not None:
 if jnp is not None:
     assert jax is not None
     BACKENDS["jax"] = (None, jnp)
-    BACKENDS["jax_jit"] = (jax.jit(static_argnames=["M", "N"]), jnp)
+    BACKENDS["jax_jit"] = (jax.jit, jnp)
 
 
 allocator = None
@@ -73,6 +74,8 @@ I = gtx.Dimension("I")
 J = gtx.Dimension("J")
 
 IJField = gtx.Field[gtx.Dims[I, J], dtype]
+
+sizes = FrozenNamespace(M=config.M, N=config.N)
 
 
 @gtx.field_operator
@@ -145,8 +148,8 @@ def timestep(
     vold: IJField,
     pold: IJField,
     alpha: dtype,
-    M: gtx.int32,
-    N: gtx.int32,
+    # M: gtx.int32,
+    # N: gtx.int32,
 ) -> tuple[IJField, IJField, IJField, IJField, IJField, IJField]:
     cu = avg_x(p) * u
     cv = avg_y(p) * v
@@ -162,9 +165,9 @@ def timestep(
     pold_new = p + alpha * (pnew - 2.0 * p + pold)
 
     # because GT4Py does not allow slicing and periodic halo is not a supported pattern we need to trick GT4Py to shrink the domain
-    unew = make_periodic(unew, M, N) + u * 0.0
-    vnew = make_periodic(vnew, M, N) + v * 0.0
-    pnew = make_periodic(pnew, M, N) + p * 0.0
+    unew = make_periodic(unew, sizes.M, sizes.N) + u * 0.0
+    vnew = make_periodic(vnew, sizes.M, sizes.N) + v * 0.0
+    pnew = make_periodic(pnew, sizes.M, sizes.N) + p * 0.0
 
     # The following only works in embedded/jax.jit but is not compliant GT4Py DSL (slightly faster than the above with jax.jit)
     # unew = make_periodic(unew, M, N)[gtx.domain({I: (-1, M + 1), J: (-1, N + 1)})]
@@ -200,8 +203,6 @@ def timestep_program(
     unew: IJField,
     vnew: IJField,
     pnew: IJField,
-    M: gtx.int32,
-    N: gtx.int32,
 ):
     timestep(
         u=u,
@@ -214,10 +215,8 @@ def timestep_program(
         vold=vold,
         pold=pold,
         alpha=alpha,
-        M=M,
-        N=N,
         out=(unew, vnew, pnew, uold, vold, pold),
-        domain={I: (-1, M + 1), J: (-1, N + 1)},
+        domain={I: (-1, sizes.M + 1), J: (-1, sizes.N + 1)},
     )
 
 
@@ -301,8 +300,6 @@ def main():
                 vold=vold,
                 pold=pold,
                 alpha=config.alpha if ncycle > 0 else 0.0,
-                M=M,
-                N=N,
             )
         elif USE_PROGRAM:
             prog(
@@ -319,8 +316,6 @@ def main():
                 unew=unew,
                 vnew=vnew,
                 pnew=pnew,
-                M=M,
-                N=N,
             )
         else:
             prog(
@@ -336,7 +331,7 @@ def main():
                 alpha=config.alpha if ncycle > 0 else 0.0,
                 offset_provider={},
                 out=(unew, vnew, pnew, uold, vold, pold),
-                domain={I: (0, M), J: (0, N)},
+                domain={I: (0, sizes.M), J: (0, sizes.N)},
             )
 
         if hasattr(u.array_ns, "cuda"):
