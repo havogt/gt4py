@@ -321,7 +321,7 @@ def main():
         print(f"Running with {args.array_library} via array_api_compat namespace")
 
     # Initialize fields
-    u, v, p = initial_conditions.initialize_2halo(xp, M, N, dx, dy, a)
+    u, v, p = initial_conditions.initialize_2halo(xp, M, N, dx, dy, a, ic=config.ic)
 
     if args.strict and args.array_library != "array_api_strict":
         # Convert to array_api_strict arrays

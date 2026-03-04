@@ -15,6 +15,13 @@ parser.add_argument("--L_OUT", type=bool, default=True, help="a boolean for L_OU
 parser.add_argument("--ITMAX", type=int, default=4000, help="Number of iterations")
 parser.add_argument("--VAL_DEEP", type=bool, default=True, help="Do deep validation")
 parser.add_argument("--backend", type=str, default="gtfn_cpu", help="Backend to use")
+parser.add_argument(
+    "--ic",
+    type=str,
+    default="default",
+    choices=["default", "dam_break", "colliding_vortices", "shear", "gravity_wave"],
+    help="Initial condition scenario",
+)
 
 
 args = parser.parse_args()
@@ -43,6 +50,7 @@ fsdx = 4.0 / (dx)
 fsdy = 4.0 / (dy)
 a = 1000000.0
 alpha = 0.001
+ic = args.ic
 
-# Validation only works at reference resolution
-VAL = (M == _M_REF and N == _N_REF)
+# Validation only works at reference resolution with default IC
+VAL = (M == _M_REF and N == _N_REF and ic == "default")
