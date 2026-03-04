@@ -104,6 +104,20 @@ def create_animation(output_path="swm_animation.mp4", fps=20):
 
     print(f"Creating animation from {len(_frame_data)} frames...")
 
+    # Compute global min/max across all frames for consistent color scaling
+    all_u = np.array([f[0] for f in _frame_data])
+    all_v = np.array([f[1] for f in _frame_data])
+    all_p = np.array([f[2] for f in _frame_data])
+
+    u_absmax = max(abs(all_u.min()), abs(all_u.max()))
+    v_absmax = max(abs(all_v.min()), abs(all_v.max()))
+    p_mid = 0.5 * (all_p.min() + all_p.max())
+    p_half = max(abs(all_p.min() - p_mid), abs(all_p.max() - p_mid))
+
+    print(f"  u range: [{-u_absmax:.4f}, {u_absmax:.4f}]")
+    print(f"  v range: [{-v_absmax:.4f}, {v_absmax:.4f}]")
+    print(f"  p range: [{p_mid - p_half:.4f}, {p_mid + p_half:.4f}]")
+
     fig, (ax1, ax2, ax3) = plt.subplots(figsize=(13, 3.5), ncols=3)
     fig.subplots_adjust(top=0.85, bottom=0.05, wspace=0.3)
 
@@ -111,15 +125,15 @@ def create_animation(output_path="swm_animation.mp4", fps=20):
     fu0 = _frame_data[0][0]
     fv0 = _frame_data[0][1]
 
-    im1 = ax1.imshow(fp0, cmap="Blues", vmin=49999, vmax=50001, interpolation="none")
+    im1 = ax1.imshow(fp0, cmap="RdBu_r", vmin=p_mid - p_half, vmax=p_mid + p_half, interpolation="none")
     ax1.set_title("p (pressure)")
     plt.colorbar(im1, ax=ax1, shrink=0.8)
 
-    im2 = ax2.imshow(fu0, cmap="Reds", vmin=-1, vmax=1, interpolation="none")
+    im2 = ax2.imshow(fu0, cmap="RdBu_r", vmin=-u_absmax, vmax=u_absmax, interpolation="none")
     ax2.set_title("u (zonal velocity)")
     plt.colorbar(im2, ax=ax2, shrink=0.8)
 
-    im3 = ax3.imshow(fv0, cmap="Greens", vmin=-1, vmax=1, interpolation="none")
+    im3 = ax3.imshow(fv0, cmap="RdBu_r", vmin=-v_absmax, vmax=v_absmax, interpolation="none")
     ax3.set_title("v (meridional velocity)")
     plt.colorbar(im3, ax=ax3, shrink=0.8)
 
