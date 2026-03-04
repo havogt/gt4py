@@ -28,7 +28,7 @@ N_LEN = N + 1
 L_OUT = args.L_OUT
 VAL = True
 VAL_DEEP = False  # args.VAL_DEEP
-VIS = False
+VIS = True
 VIS_DT = 100
 
 ITMAX = args.ITMAX

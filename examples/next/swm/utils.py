@@ -6,9 +6,18 @@
 # Please, refer to the LICENSE file in the root directory.
 # SPDX-License-Identifier: BSD-3-Clause
 
+import os
 import numpy as np
-from IPython.display import clear_output
 from matplotlib import pyplot as plt
+import matplotlib.animation as animation
+
+try:
+    from IPython.display import clear_output
+except ImportError:
+    clear_output = None
+
+FRAME_DIR = os.path.join(os.path.dirname(__file__), "frames")
+_frame_data = []  # Collect (u, v, p, title) tuples for animation
 
 
 def _to_2d(x):
@@ -83,20 +92,58 @@ def live_plot_val(fu, fv, fp, title=""):
 
 
 def live_plot3(fu, fv, fp, title=""):
-    clear_output(wait=True)
-    fig, (ax1, ax2, ax3) = plt.subplots(figsize=(13, 3), ncols=3)
+    _frame_data.append((fu.copy(), fv.copy(), fp.copy(), title))
+    print(f"  [VIS] Captured frame: {title}")
 
-    pos1 = ax1.imshow(fp, cmap="Blues", vmin=49999, vmax=50001, interpolation="none")
-    ax1.set_title("p")
-    pos2 = ax2.imshow(fu, cmap="Reds", vmin=-1, vmax=1, interpolation="none")
-    ax2.set_title("u")
-    pos3 = ax3.imshow(fv, cmap="Greens", vmin=-1, vmax=1, interpolation="none")
-    ax3.set_title("v")
 
-    fig.suptitle(title)
-    # plt.xlabel('x')
-    # plt.ylabel('y')
-    plt.show()
+def create_animation(output_path="swm_animation.mp4", fps=20):
+    """Create an MP4 animation from captured frames."""
+    if not _frame_data:
+        print("No frames captured.")
+        return
+
+    print(f"Creating animation from {len(_frame_data)} frames...")
+
+    fig, (ax1, ax2, ax3) = plt.subplots(figsize=(13, 3.5), ncols=3)
+    fig.subplots_adjust(top=0.85, bottom=0.05, wspace=0.3)
+
+    fp0 = _frame_data[0][2]
+    fu0 = _frame_data[0][0]
+    fv0 = _frame_data[0][1]
+
+    im1 = ax1.imshow(fp0, cmap="Blues", vmin=49999, vmax=50001, interpolation="none")
+    ax1.set_title("p (pressure)")
+    plt.colorbar(im1, ax=ax1, shrink=0.8)
+
+    im2 = ax2.imshow(fu0, cmap="Reds", vmin=-1, vmax=1, interpolation="none")
+    ax2.set_title("u (zonal velocity)")
+    plt.colorbar(im2, ax=ax2, shrink=0.8)
+
+    im3 = ax3.imshow(fv0, cmap="Greens", vmin=-1, vmax=1, interpolation="none")
+    ax3.set_title("v (meridional velocity)")
+    plt.colorbar(im3, ax=ax3, shrink=0.8)
+
+    suptitle = fig.suptitle(_frame_data[0][3], fontsize=14, fontweight="bold")
+
+    def update(frame_idx):
+        fu, fv, fp, title = _frame_data[frame_idx]
+        im1.set_data(fp)
+        im2.set_data(fu)
+        im3.set_data(fv)
+        suptitle.set_text(title)
+        return [im1, im2, im3, suptitle]
+
+    anim = animation.FuncAnimation(
+        fig, update, frames=len(_frame_data), interval=1000 // fps, blit=True
+    )
+
+    # Use pillow for GIF (no ffmpeg dependency)
+    if output_path.endswith(".mp4"):
+        output_path = output_path.replace(".mp4", ".gif")
+    anim.save(output_path, writer="pillow", fps=fps, dpi=150)
+    plt.close(fig)
+    print(f"Animation saved to: {output_path}")
+    print(f"  ({len(_frame_data)} frames, {fps} fps, ~{len(_frame_data)/fps:.1f}s duration)")
 
 
 def final_validation(u, v, p, ITMAX, M, N):

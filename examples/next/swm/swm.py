@@ -257,6 +257,11 @@ def main():
             N=N,
         )
 
+    if config.VIS:
+        import os
+        anim_path = os.path.join(os.path.dirname(__file__), "swm_animation.mp4")
+        utils.create_animation(output_path=anim_path, fps=20)
+
 
 if __name__ == "__main__":
     main()
