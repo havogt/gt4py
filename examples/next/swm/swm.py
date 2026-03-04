@@ -165,7 +165,6 @@ def timestep(
     vold_new = v + alpha * (vnew - 2.0 * v + vold)
     pold_new = p + alpha * (pnew - 2.0 * p + pold)
 
-    # because GT4Py does not allow slicing and periodic halo is not a supported pattern we need to trick GT4Py to shrink the domain
     unew = make_periodic(unew, M, N)
     vnew = make_periodic(vnew, M, N)
     pnew = make_periodic(pnew, M, N)
@@ -199,6 +198,8 @@ def timestep_program(
     unew: IJField,
     vnew: IJField,
     pnew: IJField,
+    M: gtx.int32,
+    N: gtx.int32,
 ):
     timestep(
         u=u,
@@ -211,8 +212,10 @@ def timestep_program(
         vold=vold,
         pold=pold,
         alpha=alpha,
+        M=M,
+        N=N,
         out=(unew, vnew, pnew, uold, vold, pold),
-        domain={I: (-1, sizes.M + 1), J: (-1, sizes.N + 1)},
+        domain={I: (-1, M + 1), J: (-1, N + 1)},
     )
 
 
@@ -252,18 +255,13 @@ def main():
         print(" Initial u:\n", u[:, :].ndarray.diagonal()[1:-1])
         print(" Initial v:\n", v[:, :].ndarray.diagonal()[1:-1])
 
-    USE_PROGRAM = True
-
     if backend.__module__.startswith("jax"):
         prog = backend(functools.partial(timestep.definition, M=M, N=N))
     elif backend is not None:
-        if USE_PROGRAM:
-            prog = timestep_program.with_backend(backend).compile(offset_provider={}, M=[M], N=[N])
-        else:
-            prog = timestep.with_backend(backend).compile(offset_provider={})
+        prog = timestep_program.with_backend(backend).compile(offset_provider={}, M=[M], N=[N])
         gtx.wait_for_compilation()
     else:
-        prog = timestep_program if USE_PROGRAM else timestep
+        prog = timestep_program
 
     t0_start = perf_counter()
 
@@ -297,7 +295,7 @@ def main():
                 pold=pold,
                 alpha=config.alpha if ncycle > 0 else 0.0,
             )
-        elif USE_PROGRAM:
+        else:
             prog(
                 u=u,
                 v=v,
@@ -312,22 +310,8 @@ def main():
                 unew=unew,
                 vnew=vnew,
                 pnew=pnew,
-            )
-        else:
-            prog(
-                u=u,
-                v=v,
-                p=p,
-                dx=config.dx,
-                dy=config.dy,
-                dt=config.dt if ncycle == 0 else config.dt * 2.0,
-                uold=uold,
-                vold=vold,
-                pold=pold,
-                alpha=config.alpha if ncycle > 0 else 0.0,
-                offset_provider={},
-                out=(unew, vnew, pnew, uold, vold, pold),
-                domain={I: (0, sizes.M), J: (0, sizes.N)},
+                M=M,
+                N=N,
             )
 
         if hasattr(u.array_ns, "cuda"):
