@@ -20,6 +20,7 @@ for all fields
 """
 
 from gt4py import next as gtx
+import functools
 from gt4py.next.experimental import concat_where
 from time import perf_counter
 from gt4py.eve.utils import FrozenNamespace
@@ -129,10 +130,10 @@ def delta_y_staggered(dx: dtype, f: IJField):
 @gtx.field_operator
 def make_periodic(f: IJField, M: gtx.int32, N: gtx.int32):
     """Make the field f periodic by copying values from the opposite sides."""
-    f = concat_where(I <= -1, f(I + M), f)
-    f = concat_where(I >= M, f(I - M), f)
-    f = concat_where(J <= -1, f(J + N), f)
-    f = concat_where(J >= N, f(J - N), f)
+    f = concat_where(I == -1, f(I + M), f)
+    f = concat_where(I == M, f(I - M), f)
+    f = concat_where(J == -1, f(J + N), f)
+    f = concat_where(J == N, f(J - N), f)
     return f
 
 
@@ -148,8 +149,8 @@ def timestep(
     vold: IJField,
     pold: IJField,
     alpha: dtype,
-    # M: gtx.int32,
-    # N: gtx.int32,
+    M: gtx.int32,
+    N: gtx.int32,
 ) -> tuple[IJField, IJField, IJField, IJField, IJField, IJField]:
     cu = avg_x(p) * u
     cv = avg_y(p) * v
@@ -165,14 +166,9 @@ def timestep(
     pold_new = p + alpha * (pnew - 2.0 * p + pold)
 
     # because GT4Py does not allow slicing and periodic halo is not a supported pattern we need to trick GT4Py to shrink the domain
-    unew = make_periodic(unew, sizes.M, sizes.N) + u * 0.0
-    vnew = make_periodic(vnew, sizes.M, sizes.N) + v * 0.0
-    pnew = make_periodic(pnew, sizes.M, sizes.N) + p * 0.0
-
-    # The following only works in embedded/jax.jit but is not compliant GT4Py DSL (slightly faster than the above with jax.jit)
-    # unew = make_periodic(unew, M, N)[gtx.domain({I: (-1, M + 1), J: (-1, N + 1)})]
-    # vnew = make_periodic(vnew, M, N)[gtx.domain({I: (-1, M + 1), J: (-1, N + 1)})]
-    # pnew = make_periodic(pnew, M, N)[gtx.domain({I: (-1, M + 1), J: (-1, N + 1)})]
+    unew = make_periodic(unew, M, N)
+    vnew = make_periodic(vnew, M, N)
+    pnew = make_periodic(pnew, M, N)
 
     # uold_new = make_periodic(uold_new, M, N)
     # vold_new = make_periodic(vold_new, M, N)
@@ -259,7 +255,7 @@ def main():
     USE_PROGRAM = True
 
     if backend.__module__.startswith("jax"):
-        prog = timestep.with_backend(backend)
+        prog = backend(functools.partial(timestep.definition, M=M, N=N))
     elif backend is not None:
         if USE_PROGRAM:
             prog = timestep_program.with_backend(backend).compile(offset_provider={}, M=[M], N=[N])
