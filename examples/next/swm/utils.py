@@ -137,10 +137,7 @@ def create_animation(output_path="swm_animation.mp4", fps=20):
         fig, update, frames=len(_frame_data), interval=1000 // fps, blit=True
     )
 
-    # Use pillow for GIF (no ffmpeg dependency)
-    if output_path.endswith(".mp4"):
-        output_path = output_path.replace(".mp4", ".gif")
-    anim.save(output_path, writer="pillow", fps=fps, dpi=150)
+    anim.save(output_path, writer="ffmpeg", fps=fps, dpi=150)
     plt.close(fig)
     print(f"Animation saved to: {output_path}")
     print(f"  ({len(_frame_data)} frames, {fps} fps, ~{len(_frame_data)/fps:.1f}s duration)")

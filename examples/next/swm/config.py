@@ -29,7 +29,7 @@ L_OUT = args.L_OUT
 VAL = True
 VAL_DEEP = False  # args.VAL_DEEP
 VIS = True
-VIS_DT = 100
+VIS_DT = 1
 
 ITMAX = args.ITMAX
 dt = 90.0
