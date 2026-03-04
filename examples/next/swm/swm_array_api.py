@@ -73,7 +73,7 @@ def _to_numpy(arr):
     return np.asarray(arr)
 
 
-def _interior_to_halo(xp, interior):
+def interior_to_halo(xp, interior):
     """Build (M+2, N+2) array from (M, N) interior with periodic halos.
 
     Wraps the interior periodically: last col -> left halo, first col -> right halo,
@@ -221,9 +221,9 @@ def timestep(xp, u, v, p, uold, vold, pold, dx, dy, dt_val, alpha_val, M, N):
     )
 
     # Build full arrays with halos for all returned fields.
-    unew = _interior_to_halo(xp, unew_interior)
-    vnew = _interior_to_halo(xp, vnew_interior)
-    pnew = _interior_to_halo(xp, pnew_interior)
+    unew = interior_to_halo(xp, unew_interior)
+    vnew = interior_to_halo(xp, vnew_interior)
+    pnew = interior_to_halo(xp, pnew_interior)
 
     return unew, vnew, pnew, uold_new, vold_new, pold_new
 
