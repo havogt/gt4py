@@ -25,12 +25,17 @@ from time import perf_counter
 import initial_conditions
 import utils
 import config
-from gt4py.next.program_processors.runners.dace import run_dace_gpu_cached, run_dace_cpu_cached
 
 from operators import timestep, I, J, IJField
 
 # from gt4py.next.program_processors.runners import jax_jit
 import numpy as np
+
+try:
+    from gt4py.next.program_processors.runners.dace import run_dace_gpu_cached, run_dace_cpu_cached
+except ImportError:
+    run_dace_gpu_cached = None
+    run_dace_cpu_cached = None
 
 try:
     import cupy as cp
@@ -53,6 +58,10 @@ BACKENDS = {
     "dace_cpu": (run_dace_cpu_cached, run_dace_cpu_cached),
     "numpy": (None, np),
 }
+if run_dace_cpu_cached is not None:
+    BACKENDS["dace_cpu"] = (run_dace_cpu_cached, run_dace_cpu_cached)
+if run_dace_gpu_cached is not None:
+    BACKENDS["dace_gpu"] = (run_dace_gpu_cached, run_dace_gpu_cached)
 if cp is not None:
     BACKENDS["cupy"] = (None, cp)
 if jnp is not None:
