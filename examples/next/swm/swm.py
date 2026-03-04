@@ -27,7 +27,7 @@ import utils
 import config
 from gt4py.next.program_processors.runners.dace import run_dace_gpu_cached, run_dace_cpu_cached
 
-from operators import timestep, timestep_program, I, J
+from operators import timestep, I, J, IJField
 
 # from gt4py.next.program_processors.runners import jax_jit
 import numpy as np
@@ -70,6 +70,49 @@ if config.backend not in BACKENDS:
 backend, allocator = BACKENDS[config.backend]
 
 print(f"Using backend '{getattr(backend, 'name', backend)}'.")
+
+
+@gtx.program
+def timestep_program(
+    u: IJField,
+    v: IJField,
+    p: IJField,
+    dx: dtype,
+    dy: dtype,
+    dt: dtype,
+    uold: IJField,
+    vold: IJField,
+    pold: IJField,
+    alpha: dtype,
+    unew: IJField,
+    vnew: IJField,
+    pnew: IJField,
+    M: gtx.int32,
+    N: gtx.int32,
+):
+    timestep(
+        u=u,
+        v=v,
+        p=p,
+        dx=dx,
+        dy=dy,
+        dt=dt,
+        uold=uold,
+        vold=vold,
+        pold=pold,
+        alpha=alpha,
+        M=M,
+        N=N,
+        out=(unew, vnew, pnew, uold, vold, pold),
+        domain=(
+            {I: (-1, M + 1), J: (-1, N + 1)},
+            {I: (-1, M + 1), J: (-1, N + 1)},
+            {I: (-1, M + 1), J: (-1, N + 1)},
+            {I: (0, M), J: (0, N)},
+            {I: (0, M), J: (0, N)},
+            {I: (0, M), J: (0, N)},
+        ),
+    )
 
 
 def main():
