@@ -26,17 +26,23 @@ N = args.N
 M_LEN = M + 1
 N_LEN = N + 1
 L_OUT = args.L_OUT
-VAL = True
 VAL_DEEP = False  # args.VAL_DEEP
 VIS = True
 VIS_DT = 1
 
-ITMAX = args.ITMAX
-dt = 90.0
-dt = dt
-dx = 100000.0
-dy = 100000.0
+# Reference resolution: M=N=16 with dx=dy=100000, dt=90
+# Scale dx/dy/dt to keep the domain size and CFL number fixed at any resolution
+_M_REF = 16
+_N_REF = 16
+dx = 100000.0 * _M_REF / M
+dy = 100000.0 * _N_REF / N
+dt = 90.0 * min(_M_REF / M, _N_REF / N)
+
+ITMAX = args.ITMAX if args.ITMAX != 4000 else int(4000 * max(M / _M_REF, N / _N_REF))
 fsdx = 4.0 / (dx)
 fsdy = 4.0 / (dy)
 a = 1000000.0
 alpha = 0.001
+
+# Validation only works at reference resolution
+VAL = (M == _M_REF and N == _N_REF)
