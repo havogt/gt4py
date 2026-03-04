@@ -132,10 +132,7 @@ def field_operator_call(op: EmbeddedOperator[_R, _P], args: Any, kwargs: Any) ->
         _tuple_assign_field(container_extracted_out, container_extracted_res, domain=out_domain)  # type: ignore[arg-type]
         return None
     else:
-        # called from other field_operator or missing `out` argument
-        if "offset_provider" in kwargs:
-            # assuming we wanted to call the field_operator as program, otherwise `offset_provider` would not be there
-            raise errors.MissingArgumentError(None, "out", True)
+        # called from other field_operator
         return op(*args, **kwargs)
 
 

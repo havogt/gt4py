@@ -98,10 +98,6 @@ class _CompilableGTEntryPointMixin(Generic[ffront_stages.DSLDefinitionT]):
     def __gt_type__(self) -> ts.CallableType: ...
 
     def with_backend(self, backend: next_backend.Backend) -> Self:
-        if backend.__module__.startswith("jax"):
-            if not isinstance(self.definition_stage, ffront_stages.DSLFieldOperatorDef):
-                raise ValueError("JAX backend is only supported for field operators.")
-            return backend(self.definition_stage.definition)
         return dataclasses.replace(self, backend=backend)
 
     def with_compilation_options(
@@ -645,11 +641,6 @@ class FieldOperator(_CompilableGTEntryPointMixin[ffront_stages.DSLFieldOperatorD
         return self.foast_stage.closure_vars
 
     def __call__(self, *args: Any, enable_jit: bool | None = None, **kwargs: Any) -> Any:
-        if not next_embedded.context.within_valid_context() and (
-            self.backend is None or self.backend.__module__.startswith("jax")
-        ):
-            # TODO(havogt): only jax.jit for now (we are not setting up the embedded context and just call the operator as is)
-            return self.definition(*args, **kwargs)
         if not next_embedded.context.within_valid_context() and self.backend is not None:
             # non embedded execution
             offset_provider = {**kwargs.pop("offset_provider", {})}
@@ -673,7 +664,7 @@ class FieldOperator(_CompilableGTEntryPointMixin[ffront_stages.DSLFieldOperatorD
                 else enable_jit,
             )
         else:
-            if not next_embedded.context.within_valid_context():
+            if not next_embedded.context.within_valid_context() and "out" in kwargs:
                 # field_operator as program
                 kwargs["offset_provider"] = {**kwargs.pop("offset_provider", {})}
             attributes = (

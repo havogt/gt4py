@@ -20,16 +20,22 @@ for all fields
 """
 
 from gt4py import next as gtx
-from gt4py.next import common as gtx_common
+import functools
 from time import perf_counter
 import initial_conditions
 import utils
 import config
-from gt4py.next.otf import compiled_program
-from gt4py.next.program_processors.runners.dace import run_dace_gpu_cached, run_dace_cpu_cached
+
+from operators import timestep, I, J, IJField
 
 # from gt4py.next.program_processors.runners import jax_jit
 import numpy as np
+
+try:
+    from gt4py.next.program_processors.runners.dace import run_dace_gpu_cached, run_dace_cpu_cached
+except ImportError:
+    run_dace_gpu_cached = None
+    run_dace_cpu_cached = None
 
 try:
     import cupy as cp
@@ -51,9 +57,11 @@ BACKENDS = {
     "dace_gpu": (run_dace_gpu_cached, run_dace_gpu_cached),
     "dace_cpu": (run_dace_cpu_cached, run_dace_cpu_cached),
     "numpy": (None, np),
-    "jnp": (None, jnp),
-    "jax_jit": (jax.jit, jnp),
 }
+if run_dace_cpu_cached is not None:
+    BACKENDS["dace_cpu"] = (run_dace_cpu_cached, run_dace_cpu_cached)
+if run_dace_gpu_cached is not None:
+    BACKENDS["dace_gpu"] = (run_dace_gpu_cached, run_dace_gpu_cached)
 if cp is not None:
     BACKENDS["cupy"] = (None, cp)
 if jnp is not None:
@@ -72,97 +80,8 @@ backend, allocator = BACKENDS[config.backend]
 
 print(f"Using backend '{getattr(backend, 'name', backend)}'.")
 
-I = gtx.Dimension("I")
-J = gtx.Dimension("J")
 
-IJField = gtx.Field[gtx.Dims[I, J], dtype]
-
-
-@gtx.field_operator
-def avg_x(f: IJField):
-    """Average field in the x direction."""
-    return 0.5 * (f(I + 1) + f)
-
-
-@gtx.field_operator
-def avg_y(f: IJField):
-    """Average field in the y direction."""
-    return 0.5 * (f(J + 1) + f)
-
-
-@gtx.field_operator
-def avg_x_staggered(f: IJField):
-    """Average field which is staggered in x in the x direction."""
-    return 0.5 * (f(I - 1) + f)
-
-
-@gtx.field_operator
-def avg_y_staggered(f: IJField):
-    """Average field which is staggered in y in the y direction."""
-    return 0.5 * (f(J - 1) + f)
-
-
-@gtx.field_operator
-def delta_x(dx: dtype, f: IJField):
-    """Calculate the difference in the x direction."""
-    return (1.0 / dx) * (f(I + 1) - f)
-
-
-@gtx.field_operator
-def delta_y(dx: dtype, f: IJField):
-    """Calculate the difference in the y direction."""
-    return (1.0 / dx) * (f(J + 1) - f)
-
-
-@gtx.field_operator
-def delta_x_staggered(dx: dtype, f: IJField):
-    """Calculate the difference in the x direction for field staggered in x."""
-    return (1.0 / dx) * (f - f(I - 1))
-
-
-@gtx.field_operator
-def delta_y_staggered(dx: dtype, f: IJField):
-    """Calculate the difference in the y direction for field staggered in y."""
-    return (1.0 / dx) * (f - f(J - 1))
-
-
-@gtx.field_operator
-def timestep(
-    u: IJField,
-    v: IJField,
-    p: IJField,
-    dx: dtype,
-    dy: dtype,
-    dt: dtype,
-    uold: IJField,
-    vold: IJField,
-    pold: IJField,
-    alpha: dtype,
-) -> tuple[IJField, IJField, IJField, IJField, IJField, IJField]:
-    cu = avg_x(p) * u
-    cv = avg_y(p) * v
-    z = (delta_x(dx, v) - delta_y(dy, u)) / avg_x(avg_y(p))
-    h = p + 0.5 * (avg_x_staggered(u * u) + avg_y_staggered(v * v))
-
-    unew = uold + avg_y_staggered(z) * avg_y_staggered(avg_x(cv)) * dt - delta_x(dx, h) * dt
-    vnew = vold - avg_x_staggered(z) * avg_x_staggered(avg_y(cu)) * dt - delta_y(dy, h) * dt
-    pnew = pold - delta_x_staggered(dx, cu) * dt - delta_y_staggered(dy, cv) * dt
-
-    uold_new = u + alpha * (unew - 2.0 * u + uold)
-    vold_new = v + alpha * (vnew - 2.0 * v + vold)
-    pold_new = p + alpha * (pnew - 2.0 * p + pold)
-
-    return (
-        unew,
-        vnew,
-        pnew,
-        uold_new,
-        vold_new,
-        pold_new,
-    )
-
-
-@gtx.program(backend=backend)
+@gtx.program
 def timestep_program(
     u: IJField,
     v: IJField,
@@ -191,33 +110,22 @@ def timestep_program(
         vold=vold,
         pold=pold,
         alpha=alpha,
+        M=M,
+        N=N,
         out=(unew, vnew, pnew, uold, vold, pold),
-        domain={I: (0, M), J: (0, N)},
-    )
-
-
-def apply_periodicity(x: IJField):
-    """Apply periodicity to the field x."""
-    return gtx_common._field(
-        x.array_ns.pad(x.ndarray[1:-1, 1:-1], ((1, 1), (1, 1)), mode="wrap"),
-        domain=x.domain,
-        dtype=x.dtype,
-    )
-
-
-def apply_periodicity_jax(x: IJField):
-    """Apply periodicity to the field x."""
-    return gtx_common._field(
-        x.array_ns.pad(x.ndarray, ((1, 1), (1, 1)), mode="wrap"),
-        domain=gtx.domain({I: (-1, x.shape[0] + 1), J: (-1, x.shape[1] + 1)}),
-        dtype=x.dtype,
+        domain=(
+            {I: (-1, M + 1), J: (-1, N + 1)},
+            {I: (-1, M + 1), J: (-1, N + 1)},
+            {I: (-1, M + 1), J: (-1, N + 1)},
+            {I: (0, M), J: (0, N)},
+            {I: (0, M), J: (0, N)},
+            {I: (0, M), J: (0, N)},
+        ),
     )
 
 
 def main():
     dt0 = 0.0
-    dt25 = 0.0
-    dt3 = 0.0
 
     M = config.M
     N = config.N
@@ -252,18 +160,13 @@ def main():
         print(" Initial u:\n", u[:, :].ndarray.diagonal()[1:-1])
         print(" Initial v:\n", v[:, :].ndarray.diagonal()[1:-1])
 
-    USE_PROGRAM = True
-
-    if backend == jax.jit:
-        prog = timestep.with_backend(backend)
+    if backend is not None and backend.__module__.startswith("jax"):
+        prog = backend(functools.partial(timestep.definition, M=M, N=N))
     elif backend is not None:
-        if USE_PROGRAM:
-            prog = timestep_program.with_backend(backend).compile(offset_provider={}, M=[M], N=[N])
-        else:
-            prog = timestep.with_backend(backend).compile(offset_provider={})
+        prog = timestep_program.with_backend(backend).compile(offset_provider={}, M=[M], N=[N])
         gtx.wait_for_compilation()
     else:
-        prog = timestep_program if USE_PROGRAM else timestep
+        prog = timestep_program
 
     t0_start = perf_counter()
 
@@ -284,8 +187,7 @@ def main():
                 "init",
             )
 
-        t3_start = perf_counter()
-        if backend == jax.jit:
+        if backend is not None and backend.__module__.startswith("jax"):
             unew, vnew, pnew, uold, vold, pold = prog(
                 u=u,
                 v=v,
@@ -298,7 +200,7 @@ def main():
                 pold=pold,
                 alpha=config.alpha if ncycle > 0 else 0.0,
             )
-        elif USE_PROGRAM:
+        else:
             prog(
                 u=u,
                 v=v,
@@ -316,39 +218,9 @@ def main():
                 M=M,
                 N=N,
             )
-        else:
-            prog(
-                u=u,
-                v=v,
-                p=p,
-                dx=config.dx,
-                dy=config.dy,
-                dt=config.dt if ncycle == 0 else config.dt * 2.0,
-                uold=uold,
-                vold=vold,
-                pold=pold,
-                alpha=config.alpha if ncycle > 0 else 0.0,
-                offset_provider={},
-                out=(unew, vnew, pnew, uold, vold, pold),
-                domain={I: (0, M), J: (0, N)},
-            )
 
         if hasattr(u.array_ns, "cuda"):
             u.array_ns.cuda.runtime.deviceSynchronize()
-        t3_stop = perf_counter()
-        dt3 = dt3 + (t3_stop - t3_start)
-
-        t25_start = perf_counter()
-        if backend == jax.jit:
-            unew = apply_periodicity_jax(unew)
-            vnew = apply_periodicity_jax(vnew)
-            pnew = apply_periodicity_jax(pnew)
-        else:
-            unew = apply_periodicity(unew)
-            vnew = apply_periodicity(vnew)
-            pnew = apply_periodicity(pnew)
-        t25_stop = perf_counter()
-        dt25 = dt25 + (t25_stop - t25_start)
 
         # swap x with xnew fields
         u, unew = unew, u
@@ -363,6 +235,8 @@ def main():
                 "ncycle: " + str(ncycle),
             )
 
+    if cp is not None:
+        cp.cuda.runtime.deviceSynchronize()
     t0_stop = perf_counter()
     dt0 = dt0 + (t0_stop - t0_start)
     # Print initial conditions
@@ -372,8 +246,6 @@ def main():
         print(" diagonal elements of u:\n", u[:, :].ndarray.diagonal()[:-1])
         print(" diagonal elements of v:\n", v[:, :].ndarray.diagonal()[:-1])
     print("total: ", dt0)
-    print("t100+t200+t300: ", dt3)
-    print("t150+t250: ", dt25)
 
     if config.VAL:
         utils.final_validation(
