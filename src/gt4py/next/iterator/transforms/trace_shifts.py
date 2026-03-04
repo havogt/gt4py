@@ -290,7 +290,7 @@ class TraceShifts(PreserveLocationVisitor, NodeTranslator):
         # TODO(tehrengruber): Hacky fix to transform literals into offset literals so that
         # domain inference sees them instead of SENTINEL.VALUE
         if cpm.is_call_to(node, "shift") and any(isinstance(arg, ir.Literal) for arg in node.args):
-            node = im.call("shift")(*(im.ensure_offset(int(arg.value) if isinstance(arg, ir.Literal) else arg for arg in node.args)))
+            node = im.call("shift")(*(im.ensure_offset(int(arg.value)) if isinstance(arg, ir.Literal) else arg for arg in node.args))
         if node.fun == ir.SymRef(id="tuple_get"):
             assert isinstance(node.args[0], ir.Literal)
             index = int(node.args[0].value)
