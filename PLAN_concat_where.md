@@ -125,6 +125,44 @@ step2 = concat_where(J < 1, bottom_bc, step1)
    but Domain expects NamedRange. `I != 0` crashes. Should use
    `Domain(dims=(self,), ranges=(...))`.
 
+4. **`Domain.__or__` with different dimensions** (common.py:537): Does not validate
+   that both domains have the same dimension. For `(I>0) | (J>0)`, it silently returns
+   `I>0`, completely dropping the J domain. This is a **silent data loss bug**.
+
+#### E. Missing operations — `&` and `|` with tuples
+
+`Dimension.__ne__` and `Domain.__or__` (disjoint case) return `tuple[Domain, Domain]`.
+Python tuples have no `__and__`/`__or__` operators, and Domain has no `__rand__`/`__ror__`.
+This means all compound expressions involving `!=` or disjoint `|` fail:
+
+| Expression | LHS | RHS | Status | Needed |
+|---|---|---|---|---|
+| `D(I) & D(J)` | Domain | Domain | **OK** | — |
+| `D(I) \| D(I)` same dim | Domain | Domain | **OK** | — |
+| `D(I) \| D(I)` disjoint | Domain | Domain | **OK** → tuple | — |
+| `D(I) \| D(J)` diff dim | Domain | Domain | **BUG** (wrong result) | Fix `__or__` |
+| `T & D` | tuple | Domain | **TypeError** | Add `__rand__` |
+| `D & T` | Domain | tuple | **AttributeError** | Extend `__and__` |
+| `T \| D` | tuple | Domain | **TypeError** | Add `__ror__` |
+| `D \| T` | Domain | tuple | **AttributeError** | Extend `__or__` |
+| `T & T` | tuple | tuple | **TypeError** | Introduce wrapper or handle in `_concat_where` |
+| `T \| T` | tuple | tuple | **TypeError** | Introduce wrapper or handle in `_concat_where` |
+
+Where `T` = `tuple[Domain, ...]` (from `!=` or disjoint `|`).
+
+**Practical expressions that are currently broken:**
+- `(I != 3) & (J == 0)` — tuple & Domain → TypeError
+- `(I != 3) | (J == 0)` — tuple | Domain → TypeError
+- `(I > 0) | (J > 0)` — different dims → wrong result (silent bug!)
+
+#### F. Scalars as boundary values
+
+A practical use case: `concat_where(I < 1, 0.0, interior_field)`. The scalar `0.0`
+becomes a 0-dimensional field that broadcasts to infinite extent in ALL dimensions
+including the mask dimension. With a semi-infinite mask like `I < 1`, this produces
+infinite domain slices. This is a fundamental limitation of embedded mode (see B above),
+but is a common pattern in compiled mode via backward domain inference.
+
 ---
 
 ## 2. Implementation Plan
@@ -134,43 +172,77 @@ step2 = concat_where(J < 1, bottom_bc, step1)
 1. **Fix `_invert_domain` sorting** — use `sorted_domains` consistently.
 2. **Fix mask validation** — `not all(m.ndim == 1 for m in masks)`.
 3. **Fix `Dimension.__ne__`** — use proper Domain constructor.
+4. **Fix `Domain.__or__` for different dims** — return tuple (not wrong Domain).
 
-### Phase 2: Multi-dimensional mask support
+### Phase 2: Domain operator support for tuples
 
-4. **Add recursive decomposition to `_concat_where`**: When a mask has ndim > 1,
-   extract first dimension as 1D mask, recurse with remaining dimensions:
-   ```python
-   mask_1d = Domain(m[0])
-   rest = Domain(*[m[i] for i in range(1, m.ndim)])
-   inner = _concat_where(rest, true_field, false_field)
-   return _concat_where(mask_1d, inner, false_field)
-   ```
+The cleanest approach: keep using plain tuples (no new wrapper type) but add
+`__rand__`/`__ror__` to Domain and extend `__and__`/`__or__` to handle tuple arguments.
 
-5. **Handle tuple-of-multi-dim-domains**: Decompose each before processing.
+5. **`Domain.__and__`** — if `other` is a tuple, distribute: return
+   `tuple(self & d for d in other)`.
+6. **`Domain.__rand__`** — same as `__and__` with reversed args (& is commutative
+   for domain intersection): `tuple(d & self for d in other)`.
+7. **`Domain.__or__`** — if `other` is a tuple, prepend self to tuple (or merge if
+   overlapping same-dim).
+8. **`Domain.__ror__`** — append self to tuple.
+9. **`tuple & tuple`** — cannot be implemented without a wrapper type. Document
+   that `(I != k) & (J != m)` is not directly supported. Users should write
+   `(I != k) & (J > m)` then `& (J < m)` separately, or we introduce a
+   `DomainUnion` wrapper.
 
-### Phase 3: Improve error messages
+### Phase 3: Multi-dimensional mask support in `_concat_where`
 
-6. **Better error for infinite domains**: When `_concat` encounters infinite domain
-   shapes, raise a clear error explaining that the field broadcasts in the mask
-   dimension and suggesting to use a field with explicit finite extent.
+10. **Recursive decomposition for `&` (multi-dim Domain)**: When a mask has ndim > 1,
+    decompose dimension-by-dimension:
+    ```python
+    # concat_where(d_I & d_J, a, b) → concat_where(d_I, concat_where(d_J, a, b), b)
+    mask_1d = Domain(m[0])
+    rest = Domain(*[m[i] for i in range(1, m.ndim)])
+    inner = _concat_where(rest, true_field, false_field)
+    return _concat_where(mask_1d, inner, false_field)
+    ```
 
-### Phase 4: Tests
+11. **Decomposition for `|` (tuple of different-dim Domains)**: When masks is a tuple
+    containing domains on different dimensions:
+    ```python
+    # concat_where(d_I | d_J, a, b) → concat_where(d_I, a, concat_where(d_J, a, b))
+    ```
+    Group tuple elements by dimension. Same-dim domains are processed together
+    (existing code). Different-dim groups are decomposed via nesting.
 
-7. **Unit tests for multi-dim masks**: 2D/3D with same-domain fields, partially
-   overlapping, subset relationships.
+12. **Handle mixed tuples**: A tuple may contain both 1D and multi-dim Domains
+    (e.g., from `(I != 3) & (J > 0)`). Decompose multi-dim entries first, then
+    group 1D entries by dimension.
 
-8. **Unit tests for broadcast cases**: Non-mask dim broadcast (works), mask dim
-   broadcast with finite mask (works), mask dim broadcast with semi-infinite mask
-   (error).
+### Phase 4: Improve error messages
 
-9. **Unit tests for `Dimension.__ne__`** and `Domain.__or__`.
+13. **Better error for infinite domains**: When `_concat` encounters infinite domain
+    shapes, raise a clear error explaining that the field broadcasts in the mask
+    dimension and suggesting to use a field with explicit finite extent, or a finite
+    mask (e.g., `I == 0` instead of `I < 1`).
 
-10. **Remove legacy commented-out tests** (boolean-mask-based, lines 1055-1118).
+### Phase 5: Tests
 
-### Phase 5: Cleanup
+14. **Domain construction tests**: All `&`/`|` operator combinations from the table
+    in section E, including reverse operations with tuples.
 
-11. **Update docstring** in `experimental.py`.
-12. **Remove type-ignore** on registration line.
+15. **Unit tests for multi-dim masks**: 2D/3D with same-domain fields, partially
+    overlapping, subset relationships.
+
+16. **Unit tests for `|` decomposition**: `concat_where(I==0 | J==0, ...)`,
+    `concat_where(I!=3, ...)` (tuple of same-dim domains).
+
+17. **Unit tests for broadcast cases**: Non-mask dim broadcast (works), mask dim
+    broadcast with finite mask (works), mask dim broadcast with semi-infinite mask
+    (error with clear message).
+
+18. **Remove legacy commented-out tests** (boolean-mask-based, lines 1055-1118).
+
+### Phase 6: Cleanup
+
+19. **Update docstring** in `experimental.py`.
+20. **Remove type-ignore** on registration line.
 
 ### Files to modify
 
