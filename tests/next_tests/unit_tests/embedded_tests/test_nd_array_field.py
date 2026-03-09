@@ -1157,3 +1157,278 @@ def test_concat_where(
 
         assert expected_domain == result.domain
         np.testing.assert_allclose(result.asnumpy(), expected_array)
+
+
+# --- Domain operator tests ---
+
+
+class TestDimensionComparisonOperators:
+    """Test Dimension comparison operators return correct Domain objects."""
+
+    def test_gt(self):
+        result = D0 > 3
+        assert result == Domain(dims=(D0,), ranges=(UnitRange(4, common.Infinity.POSITIVE),))
+
+    def test_ge(self):
+        result = D0 >= 3
+        assert result == Domain(dims=(D0,), ranges=(UnitRange(3, common.Infinity.POSITIVE),))
+
+    def test_lt(self):
+        result = D0 < 3
+        assert result == Domain(dims=(D0,), ranges=(UnitRange(common.Infinity.NEGATIVE, 3),))
+
+    def test_le(self):
+        result = D0 <= 3
+        assert result == Domain(dims=(D0,), ranges=(UnitRange(common.Infinity.NEGATIVE, 4),))
+
+    def test_eq_int(self):
+        result = D0 == 3  # noqa: SIM300 [yoda-conditions]
+        assert result == Domain(dims=(D0,), ranges=(UnitRange(3, 4),))
+
+    def test_ne_int(self):
+        """Dimension.__ne__ with int returns tuple of two Domains."""
+        result = D0 != 3  # noqa: SIM300 [yoda-conditions]
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        assert result[0] == Domain(dims=(D0,), ranges=(UnitRange(common.Infinity.NEGATIVE, 3),))
+        assert result[1] == Domain(dims=(D0,), ranges=(UnitRange(4, common.Infinity.POSITIVE),))
+
+
+class TestDomainAndOperator:
+    """Test Domain.__and__ (intersection)."""
+
+    def test_same_dim(self):
+        d1 = Domain(dims=(D0,), ranges=(UnitRange(0, 5),))
+        d2 = Domain(dims=(D0,), ranges=(UnitRange(3, 8),))
+        assert (d1 & d2) == Domain(dims=(D0,), ranges=(UnitRange(3, 5),))
+
+    def test_different_dims(self):
+        d1 = Domain(dims=(D0,), ranges=(UnitRange(0, 5),))
+        d2 = Domain(dims=(D1,), ranges=(UnitRange(2, 4),))
+        result = d1 & d2
+        assert result == Domain(dims=(D0, D1), ranges=(UnitRange(0, 5), UnitRange(2, 4)))
+
+    def test_and_with_tuple_rhs(self):
+        """Domain & tuple[Domain, ...] distributes over the tuple."""
+        d = Domain(dims=(D1,), ranges=(UnitRange(0, 5),))
+        t = (
+            Domain(dims=(D0,), ranges=(UnitRange(common.Infinity.NEGATIVE, 3),)),
+            Domain(dims=(D0,), ranges=(UnitRange(4, common.Infinity.POSITIVE),)),
+        )
+        result = d & t
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        assert result[0] == d & t[0]
+        assert result[1] == d & t[1]
+
+    def test_rand_tuple_and_domain(self):
+        """tuple[Domain, ...] & Domain uses __rand__."""
+        d = Domain(dims=(D1,), ranges=(UnitRange(0, 5),))
+        t = (
+            Domain(dims=(D0,), ranges=(UnitRange(common.Infinity.NEGATIVE, 3),)),
+            Domain(dims=(D0,), ranges=(UnitRange(4, common.Infinity.POSITIVE),)),
+        )
+        result = t & d
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        assert result[0] == t[0] & d
+        assert result[1] == t[1] & d
+
+
+class TestDomainOrOperator:
+    """Test Domain.__or__ (union)."""
+
+    def test_same_dim_overlapping(self):
+        d1 = Domain(dims=(D0,), ranges=(UnitRange(0, 5),))
+        d2 = Domain(dims=(D0,), ranges=(UnitRange(3, 8),))
+        result = d1 | d2
+        assert result == Domain(dims=(D0,), ranges=(UnitRange(0, 8),))
+
+    def test_same_dim_disjoint(self):
+        d1 = Domain(dims=(D0,), ranges=(UnitRange(0, 3),))
+        d2 = Domain(dims=(D0,), ranges=(UnitRange(5, 8),))
+        result = d1 | d2
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+
+    def test_different_dims_returns_tuple(self):
+        """Domain.__or__ with different dims must return tuple, not silently drop one."""
+        d1 = Domain(dims=(D0,), ranges=(UnitRange(0, 5),))
+        d2 = Domain(dims=(D1,), ranges=(UnitRange(2, 4),))
+        result = d1 | d2
+        assert isinstance(result, tuple)
+        assert d1 in result
+        assert d2 in result
+
+    def test_or_with_tuple_rhs(self):
+        """Domain | tuple[Domain, ...] appends/merges."""
+        d = Domain(dims=(D0,), ranges=(UnitRange(10, 15),))
+        t = (
+            Domain(dims=(D0,), ranges=(UnitRange(0, 3),)),
+            Domain(dims=(D0,), ranges=(UnitRange(5, 8),)),
+        )
+        result = d | t
+        assert isinstance(result, tuple)
+        assert d in result
+
+    def test_ror_tuple_or_domain(self):
+        """tuple[Domain, ...] | Domain uses __ror__."""
+        d = Domain(dims=(D0,), ranges=(UnitRange(10, 15),))
+        t = (
+            Domain(dims=(D0,), ranges=(UnitRange(0, 3),)),
+            Domain(dims=(D0,), ranges=(UnitRange(5, 8),)),
+        )
+        result = t | d
+        assert isinstance(result, tuple)
+        assert d in result
+
+
+# --- concat_where: multi-dim mask tests ---
+
+
+@pytest.mark.uses_concat_where
+class TestConcatWhereMultiDimMask:
+    """Test concat_where with multi-dimensional Domain masks (ndim > 1)."""
+
+    def test_2d_mask_corner(self, nd_array_implementation):
+        """Select top-left corner from true_field, rest from false_field."""
+        mask = (D0 < 1) & (D1 < 1)  # top-left cell (0,0)
+        true_field = _make_field_or_scalar(
+            [[10, 20], [30, 40]], nd_array_implementation, dtype=np.int32
+        )
+        false_field = _make_field_or_scalar(
+            [[1, 2], [3, 4]], nd_array_implementation, dtype=np.int32
+        )
+        result = nd_array_field._concat_where(mask, true_field, false_field)
+        expected = np.array([[10, 2], [3, 4]])
+        np.testing.assert_allclose(result.asnumpy(), expected)
+
+    def test_2d_mask_top_row(self, nd_array_implementation):
+        """Select top row from true_field, rest from false_field."""
+        mask = (D0 < 1) & (D1 < 3)  # top row, all columns (D1 < 3 covers 3-wide)
+        true_field = _make_field_or_scalar(
+            [[10, 20, 30], [40, 50, 60], [70, 80, 90]],
+            nd_array_implementation, dtype=np.int32,
+        )
+        false_field = _make_field_or_scalar(
+            [[1, 2, 3], [4, 5, 6], [7, 8, 9]],
+            nd_array_implementation, dtype=np.int32,
+        )
+        result = nd_array_field._concat_where(mask, true_field, false_field)
+        # D0 < 1 selects row 0, D1 < 3 covers all columns
+        # Row 0: from true_field [10, 20, 30], rows 1-2: from false_field
+        expected = np.array([[10, 20, 30], [4, 5, 6], [7, 8, 9]])
+        np.testing.assert_allclose(result.asnumpy(), expected)
+
+    def test_2d_mask_non_overlapping_fields(self, nd_array_implementation):
+        """Two non-overlapping fields stitched together with 2D mask."""
+        mask = (D0 < 1) & (D1 < 1)
+        true_field = _make_field_or_scalar(
+            [[99]], nd_array_implementation,
+            domain=common.domain({D0: (0, 1), D1: (0, 1)}), dtype=np.int32,
+        )
+        false_field = _make_field_or_scalar(
+            [[1, 2], [3, 4]], nd_array_implementation, dtype=np.int32,
+        )
+        result = nd_array_field._concat_where(mask, true_field, false_field)
+        # true_field covers (0,0) only; false_field covers all of [0,2)x[0,2)
+        # mask selects (0,0) from true, rest from false
+        expected = np.array([[99, 2], [3, 4]])
+        np.testing.assert_allclose(result.asnumpy(), expected)
+
+
+# --- concat_where: tuple mask (| decomposition) tests ---
+
+
+@pytest.mark.uses_concat_where
+class TestConcatWhereTupleMask:
+    """Test concat_where with tuple masks from != or | across different dims."""
+
+    def test_ne_same_dim_mask(self, nd_array_implementation):
+        """D0 != k produces tuple of two same-dim Domains."""
+        mask = D0 != 1  # noqa: SIM300 [yoda-conditions]
+        # mask = (D0 < 1, D0 > 1) i.e. everything except row 1
+        true_field = _make_field_or_scalar(
+            [10, 20, 30], nd_array_implementation, dtype=np.int32
+        )
+        false_field = _make_field_or_scalar(
+            [1, 2, 3], nd_array_implementation, dtype=np.int32
+        )
+        result = nd_array_field._concat_where(mask, true_field, false_field)
+        # Row 0: true (10), Row 1: false (2), Row 2: true (30)
+        expected = np.array([10, 2, 30])
+        np.testing.assert_allclose(result.asnumpy(), expected)
+
+    def test_or_different_dims(self, nd_array_implementation):
+        """(D0 < k) | (D1 < k) selects from true_field in either region."""
+        mask = (D0 < 1) | (D1 < 1)  # row 0 OR column 0
+        true_field = _make_field_or_scalar(
+            [[10, 20, 30], [40, 50, 60], [70, 80, 90]],
+            nd_array_implementation, dtype=np.int32,
+        )
+        false_field = _make_field_or_scalar(
+            [[1, 2, 3], [4, 5, 6], [7, 8, 9]],
+            nd_array_implementation, dtype=np.int32,
+        )
+        result = nd_array_field._concat_where(mask, true_field, false_field)
+        # Row 0 (all): from true_field → [10, 20, 30]
+        # Rows 1-2, col 0: from true_field → 40, 70
+        # Rows 1-2, cols 1-2: from false_field → [5, 6], [8, 9]
+        expected = np.array([[10, 20, 30], [40, 5, 6], [70, 8, 9]])
+        np.testing.assert_allclose(result.asnumpy(), expected)
+
+
+# --- concat_where: broadcast / scalar boundary tests ---
+
+
+@pytest.mark.uses_concat_where
+class TestConcatWhereBroadcast:
+    """Test concat_where with broadcasting and scalar boundary values."""
+
+    def test_broadcast_non_mask_dim(self, nd_array_implementation):
+        """Field with fewer dims broadcasts in non-mask dimension."""
+        mask = D0 < 1
+        # true_field is 1D along D0 only, broadcasts in D1
+        true_field = _make_field_or_scalar(
+            [10], nd_array_implementation,
+            domain=common.domain({D0: (0, 1)}), dtype=np.int32,
+        )
+        # false_field is 2D
+        false_field = _make_field_or_scalar(
+            [[1, 2], [3, 4]], nd_array_implementation,
+            domain=common.domain({D0: (1, 3), D1: (0, 2)}), dtype=np.int32,
+        )
+        result = nd_array_field._concat_where(mask, true_field, false_field)
+        # true_field broadcasts to [10, 10] in D1, covers D0:[0,1)
+        # false_field covers D0:[1,3), D1:[0,2)
+        expected = np.array([[10, 10], [1, 2], [3, 4]])
+        np.testing.assert_allclose(result.asnumpy(), expected)
+
+    def test_scalar_boundary_finite_mask(self, nd_array_implementation):
+        """Scalar as boundary value with a finite mask like D0 == 0."""
+        mask = D0 == 0  # noqa: SIM300 [yoda-conditions]
+        true_field = _make_field_or_scalar(0, nd_array_implementation, dtype=np.int32)
+        false_field = _make_field_or_scalar(
+            [1, 2, 3], nd_array_implementation,
+            domain=common.domain({D0: (1, 4)}), dtype=np.int32,
+        )
+        result = nd_array_field._concat_where(mask, true_field, false_field)
+        expected = np.array([0, 1, 2, 3])
+        assert result.domain == common.domain({D0: (0, 4)})
+        np.testing.assert_allclose(result.asnumpy(), expected)
+
+    def test_non_overlapping_boundary(self, nd_array_implementation):
+        """Typical BC pattern: boundary and interior don't overlap."""
+        mask = D0 < 1
+        boundary = _make_field_or_scalar(
+            [99], nd_array_implementation,
+            domain=common.domain({D0: (0, 1)}), dtype=np.int32,
+        )
+        interior = _make_field_or_scalar(
+            [10, 20, 30], nd_array_implementation,
+            domain=common.domain({D0: (1, 4)}), dtype=np.int32,
+        )
+        result = nd_array_field._concat_where(mask, boundary, interior)
+        expected = np.array([99, 10, 20, 30])
+        assert result.domain == common.domain({D0: (0, 4)})
+        np.testing.assert_allclose(result.asnumpy(), expected)
