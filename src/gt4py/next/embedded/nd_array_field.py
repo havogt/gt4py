@@ -830,20 +830,6 @@ NdArrayField.register_builtin_func(
 NdArrayField.register_builtin_func(fbuiltins.where, _make_builtin("where", "where"))
 
 
-def _trim_empty_domains(
-    lst: Iterable[tuple[bool, common.Domain]],
-) -> list[tuple[bool, common.Domain]]:
-    """Remove empty domains from beginning and end of the list."""
-    lst = list(lst)
-    if not lst:
-        return lst
-    if lst[0][1].is_empty():
-        return _trim_empty_domains(lst[1:])
-    if lst[-1][1].is_empty():
-        return _trim_empty_domains(lst[:-1])
-    return lst
-
-
 def _to_field(
     value: common.Field | core_defs.Scalar, nd_array_field_type: type[NdArrayField]
 ) -> common.Field:
@@ -991,10 +977,37 @@ def _concat_where(
 ) -> common.Field:
     if not isinstance(masks, tuple):
         masks = (masks,)
-    if any(m.ndim for m in masks) != 1:
-        raise NotImplementedError(
-            "'concat_where': Can only concatenate fields with a 1-dimensional mask."
-        )
+
+    # Multi-dim decomposition: peel off first dimension and recurse
+    # concat_where(d_I & d_J, a, b) -> concat_where(d_I, concat_where(d_J, a, b), b)
+    for i, mask in enumerate(masks):
+        if mask.ndim > 1:
+            first_dim_mask = common.Domain(mask[0])
+            rest_mask = mask[1:]
+            remaining_masks = masks[:i] + masks[i + 1 :]
+            inner_masks = (rest_mask,) + remaining_masks if remaining_masks else (rest_mask,)
+            inner = _concat_where(inner_masks, true_field, false_field)
+            return _concat_where(first_dim_mask, inner, false_field)
+
+    # Tuple decomposition for different-dim entries:
+    # concat_where(d_I | d_J, a, b) -> concat_where(d_I, a, concat_where(d_J, a, b))
+    # Group by dimension, process different-dim groups via nesting
+    dims_seen: dict[common.Dimension, list[common.Domain]] = {}
+    for mask in masks:
+        assert mask.ndim == 1
+        dim = mask.dims[0]
+        dims_seen.setdefault(dim, []).append(mask)
+
+    if len(dims_seen) > 1:
+        dim_groups = list(dims_seen.values())
+        # Start from the last group as the innermost call
+        result = _concat_where(tuple(dim_groups[-1]), true_field, false_field)
+        # Wrap with remaining groups from second-to-last to first
+        for group in reversed(dim_groups[:-1]):
+            result = _concat_where(tuple(group), true_field, result)
+        return result
+
+    # All masks are 1D on the same dimension — the base case
     mask_dim = masks[0].dims[0]
 
     # intersect the field in dimensions orthogonal to the mask, then all slices in the mask field have same domain
@@ -1014,7 +1027,7 @@ def _concat_where(
     return _concat(*f_slices, *t_slices, dim=mask_dim)
 
 
-NdArrayField.register_builtin_func(experimental.concat_where, _concat_where)  # type: ignore[arg-type] # TODO(havogt): this is still the "old" concat_where, needs to be replaced in a next PR
+NdArrayField.register_builtin_func(experimental.concat_where, _concat_where)  # type: ignore[arg-type]
 
 
 def _make_reduction(

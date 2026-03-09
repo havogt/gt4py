@@ -1030,21 +1030,6 @@ def test_hyperslice(index_array, expected):
             ([1, 1], {D0: (-2, 0)}),
             ([], {D0: (0, 0)}),
         ),
-        # broadcasting from scalar
-        # pytest.param(
-        #     D0 == 0,
-        #     ([0, 0], None),
-        #     (1, None),
-        #     ([0, 1], None),
-        #     marks=pytest.mark.embedded_concat_where_infinite_domain,
-        # ),
-        # different dimensions
-        # (
-        #     D0 == 0,
-        #     ([0, 0], {D0: (0, 2)}),
-        #     ([1, 1], {D1: (0, 2)}),
-        #     # TODO
-        # ),
         # 2D
         (
             ((D0 == 0) & (D1 == 0)),
@@ -1052,70 +1037,6 @@ def test_hyperslice(index_array, expected):
             ([[1, 1], [1, 1]], None),
             ([[0, 1], [1, 1]], None),
         ),
-        # (
-        #     ([True, False, True, False, True], None),
-        #     ([1, 2, 3, 4, 5], None),
-        #     ([6, 7, 8, 9, 10], None),
-        #     ([1, 7, 3, 9, 5], None),
-        # ),
-        # (
-        #     ([True, False, True, False], None),
-        #     ([1, 2, 3, 4, 5], {D0: (-2, 3)}),
-        #     ([6, 7, 8, 9], {D0: (1, 5)}),
-        #     ([3, 6, 5, 8], {D0: (0, 4)}),
-        # ),
-        # (
-        #     ([True, False, True, False, True], None),
-        #     ([1, 2, 3, 4, 5], {D0: (-2, 3)}),
-        #     ([6, 7, 8, 9, 10], {D0: (1, 6)}),
-        #     ([3, 6, 5, 8], {D0: (0, 4)}),
-        # ),
-        # (
-        #     ([True, False, True, False, True], None),
-        #     ([1, 2, 3, 4, 5], {D0: (-2, 3)}),
-        #     ([6, 7, 8, 9, 10], {D0: (2, 7)}),
-        #     None,
-        # ),
-        # (
-        #     # empty result domain
-        #     ([True, False, True, False, True], None),
-        #     ([1, 2, 3, 4, 5], {D0: (-5, 0)}),
-        #     ([6, 7, 8, 9, 10], {D0: (5, 10)}),
-        #     ([], {D0: (0, 0)}),
-        # ),
-        # (
-        #     ([True, False, True, False, True], None),
-        #     ([1, 2, 3, 4, 5], {D0: (-4, 1)}),
-        #     ([6, 7, 8, 9, 10], {D0: (5, 10)}),
-        #     ([5], {D0: (0, 1)}),
-        # ),
-        # (
-        #     # broadcasting true_field
-        #     ([True, False, True, False, True], {D0: 5}),
-        #     ([1, 2, 3, 4, 5], {D0: 5}),
-        #     ([[6, 11], [7, 12], [8, 13], [9, 14], [10, 15]], {D0: 5, D1: 2}),
-        #     ([[1, 1], [7, 12], [3, 3], [9, 14], [5, 5]], {D0: 5, D1: 2}),
-        # ),
-        # (
-        #     ([True, False, True, False, True], None),
-        #     (42, None),
-        #     ([6, 7, 8, 9, 10], None),
-        #     ([42, 7, 42, 9, 42], None),
-        # ),
-        # (
-        #     # parts of mask_ranges are concatenated
-        #     ([True, True, False, False], None),
-        #     ([1, 2], {D0: (1, 3)}),
-        #     ([3, 4], {D0: (1, 3)}),
-        #     ([1, 4], {D0: (1, 3)}),
-        # ),
-        # (
-        #     # parts of mask_ranges are concatenated and yield non-contiguous domain
-        #     ([True, False, True, False], None),
-        #     ([1, 2], {D0: (0, 2)}),
-        #     ([3, 4], {D0: (2, 4)}),
-        #     None,
-        # ),
     ],
 )
 def test_concat_where(

@@ -131,14 +131,12 @@ class Dimension:
             return False
 
     def __ne__(self, value: Dimension | core_defs.IntegralScalar) -> bool | tuple[Domain, Domain]:
-        # TODO add test
         if isinstance(value, Dimension):
             return self.value != value.value
         elif isinstance(value, core_defs.INTEGRAL_TYPES):
-            # TODO probably only within valid embedded context?
             return (
-                Domain(self, UnitRange(Infinity.NEGATIVE, value)),
-                Domain(self, UnitRange(value + 1, Infinity.POSITIVE)),
+                Domain(dims=(self,), ranges=(UnitRange(Infinity.NEGATIVE, value),)),
+                Domain(dims=(self,), ranges=(UnitRange(value + 1, Infinity.POSITIVE),)),
             )
         else:
             return True
@@ -524,6 +522,8 @@ class Domain(Sequence[NamedRange[_Rng]], Generic[_Rng]):
             ... )
             Domain(dims=(Dimension(value='I', kind=<DimensionKind.HORIZONTAL: 'horizontal'>), Dimension(value='J', kind=<DimensionKind.HORIZONTAL: 'horizontal'>)), ranges=(UnitRange(1, 3), UnitRange(2, 4)))
         """
+        if isinstance(other, tuple):
+            return tuple(self & d for d in other)
         broadcast_dims = tuple(promote_dims(self.dims, other.dims))
         intersected_ranges = tuple(
             rng1 & rng2
@@ -534,15 +534,22 @@ class Domain(Sequence[NamedRange[_Rng]], Generic[_Rng]):
         )
         return Domain(dims=broadcast_dims, ranges=intersected_ranges)
 
-    def __or__(self, other: Domain) -> Domain:
-        # TODO support arbitrary union of domains
-        # TODO add tests
+    def __rand__(self, other: tuple) -> tuple:
+        if isinstance(other, tuple):
+            return tuple(d & self for d in other)
+        return NotImplemented
+
+    def __or__(self, other: Domain | tuple) -> Domain | tuple[Domain, ...]:
+        if isinstance(other, tuple):
+            return (*other, self)
         if self.ndim > 1 or other.ndim > 1:
             raise NotImplementedError("Union of multidimensional domains is not supported.")
         if self.ndim == 0:
             return other
         if other.ndim == 0:
             return self
+        if self.dims[0] != other.dims[0]:
+            return (self, other)
         sorted_ = sorted((self, other), key=lambda x: x.ranges[0].start)
         if sorted_[0].ranges[0].stop >= sorted_[1].ranges[0].start:
             return Domain(
@@ -551,6 +558,11 @@ class Domain(Sequence[NamedRange[_Rng]], Generic[_Rng]):
             )
         else:
             return (sorted_[0], sorted_[1])
+
+    def __ror__(self, other: tuple) -> tuple:
+        if isinstance(other, tuple):
+            return (*other, self)
+        return NotImplemented
 
     @functools.cached_property
     def slice_at(self) -> utils.IndexerCallable[slice, Domain]:
