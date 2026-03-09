@@ -933,11 +933,11 @@ def _invert_domain(
     sorted_domains = sorted(domains, key=lambda d: d.ranges[0].start)
 
     result = []
-    if domains[0].ranges[0].start is not common.Infinity.NEGATIVE:
+    if sorted_domains[0].ranges[0].start is not common.Infinity.NEGATIVE:
         result.append(
             common.Domain(
                 dims=(dim,),
-                ranges=(common.UnitRange(common.Infinity.NEGATIVE, domains[0].ranges[0].start),),
+                ranges=(common.UnitRange(common.Infinity.NEGATIVE, sorted_domains[0].ranges[0].start),),
             )
         )
     for i in range(len(sorted_domains) - 1):
@@ -952,11 +952,11 @@ def _invert_domain(
                     ),
                 )
             )
-    if domains[-1].ranges[0].stop is not common.Infinity.POSITIVE:
+    if sorted_domains[-1].ranges[0].stop is not common.Infinity.POSITIVE:
         result.append(
             common.Domain(
                 dims=(dim,),
-                ranges=(common.UnitRange(domains[-1].ranges[0].stop, common.Infinity.POSITIVE),),
+                ranges=(common.UnitRange(sorted_domains[-1].ranges[0].stop, common.Infinity.POSITIVE),),
             )
         )
     return tuple(result)

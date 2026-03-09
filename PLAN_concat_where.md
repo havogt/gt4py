@@ -81,20 +81,28 @@ preserves this semantic.
 
 #### B. Broadcasting in the mask dimension
 
-When a field broadcasts (infinite extent) in the mask dimension:
+When a field broadcasts (infinite extent) in the mask dimension, the individual field's
+domain has infinite shape. However, `_concat` already computes the stacked domain from
+all slices via `_stack_domains`. The key insight: for non-mask dimensions, `_intersect_fields`
+ensures finite extent; for the mask dimension, each slice's extent is determined by the
+intersection with the mask (or its complement) and the other field's domain.
 
-| Mask type | Field broadcasts in mask dim | Result |
-|---|---|---|
-| Finite (`I==k`) | true_field broadcasts | **OK** — mask∩infinite is finite |
-| Finite (`I==k`) | false_field broadcasts | **FAIL** — complement∩infinite is infinite |
-| Semi-infinite (`I<k`) | either field broadcasts | **FAIL** — infinite intersection |
+The current `_concat` calls `broadcast_to(f.ndarray, f.domain.shape)` which fails for
+infinite domains. The fix: use the **stacked domain** to derive target shapes instead of
+each field's individual domain. For the concat dimension, use each field's own finite
+slice extent; for non-concat dimensions, use the stacked domain's (finite) extent.
 
-This is a **fundamental limitation of embedded mode**: without backward domain inference,
-we cannot determine the finite extent of a broadcast field's contribution. In compiled
-mode, the program output domain bounds the computation via backward inference.
+This enables scalar/broadcast boundary values like `concat_where(I == 0, 0.0, interior)`:
+- The scalar broadcasts to infinite extent in all dims
+- After `_intersect_fields`, non-mask dims become finite
+- The mask `I == 0` ∩ infinite → `[0, 1)` (finite)
+- The complement `I != 0` ∩ `interior.domain` → finite
+- `_concat` uses stacked domain shape → works
 
-**Recommendation**: Fields should have explicit finite extent in the mask dimension.
-Broadcasting in non-mask dimensions is always fine (restricted by `_intersect_fields`).
+**Remaining limitation**: If BOTH the mask and the complement produce infinite slices
+(e.g., two scalars with a semi-infinite mask), the stacked domain itself is infinite
+and materialization is impossible. This is a genuine embedded-mode limitation requiring
+a future lazy field implementation.
 
 #### C. Practical boundary condition patterns
 
@@ -157,11 +165,15 @@ Where `T` = `tuple[Domain, ...]` (from `!=` or disjoint `|`).
 
 #### F. Scalars as boundary values
 
-A practical use case: `concat_where(I < 1, 0.0, interior_field)`. The scalar `0.0`
-becomes a 0-dimensional field that broadcasts to infinite extent in ALL dimensions
-including the mask dimension. With a semi-infinite mask like `I < 1`, this produces
-infinite domain slices. This is a fundamental limitation of embedded mode (see B above),
-but is a common pattern in compiled mode via backward domain inference.
+A practical use case: `concat_where(I == 0, 0.0, interior_field)`. The scalar `0.0`
+becomes a 0-dimensional field that broadcasts to infinite extent in ALL dimensions.
+With a finite mask like `I == 0`, the mask∩infinite produces `[0, 1)` — finite. The
+fix in `_concat` (deriving shapes from stacked domain, see B) makes this work.
+
+For semi-infinite masks like `concat_where(I < 1, 0.0, interior_field)`, the scalar's
+contribution is `(-∞, 1)` which is infinite. However, `interior_field` provides the
+other bound: the stacked domain is `[interior.start, 1) ∪ [1, interior.stop)` which
+is finite if `interior_field` has finite extent. So this also works with the fix.
 
 ---
 
@@ -215,12 +227,20 @@ The cleanest approach: keep using plain tuples (no new wrapper type) but add
     (e.g., from `(I != 3) & (J > 0)`). Decompose multi-dim entries first, then
     group 1D entries by dimension.
 
-### Phase 4: Improve error messages
+### Phase 4: Fix `_concat` for infinite/broadcast domains
 
-13. **Better error for infinite domains**: When `_concat` encounters infinite domain
-    shapes, raise a clear error explaining that the field broadcasts in the mask
-    dimension and suggesting to use a field with explicit finite extent, or a finite
-    mask (e.g., `I == 0` instead of `I < 1`).
+13. **Derive shapes from stacked domain in `_concat`**: Instead of
+    `broadcast_to(f.ndarray, f.domain.shape)`, compute the target shape for non-concat
+    dimensions from the stacked domain (which is finite after `_intersect_fields`).
+    For the concat dimension, use each field's own extent. This enables scalars and
+    broadcast fields as boundary values.
+
+    ```python
+    # Instead of: broadcast_to(f.ndarray, f.domain.shape)
+    # Use: broadcast_to(f.ndarray, target_shape(f, new_domain, dim))
+    # where target_shape uses new_domain's ranges for non-concat dims
+    # and f's own range for the concat dim.
+    ```
 
 ### Phase 5: Tests
 
