@@ -56,66 +56,91 @@ Compound domains via logical operators:
 
 ### Corner Cases & Open Questions
 
-#### A. Multi-dimensional domains (the main gap)
+#### A. Multi-dimensional domains — recursive 1D decomposition
 
-Currently the embedded implementation restricts masks to 1D:
+Multi-dimensional domains like `(I == 0) & (J == 0)` cannot be handled natively because
+their complement is not a hyper-rectangle. The solution is to decompose into nested 1D
+calls:
+```
+concat_where(d_I & d_J, a, b) → concat_where(d_I, concat_where(d_J, a, b), b)
+```
+
+**Verified**: This decomposition is correct for all tested cases including 2D and 3D
+masks, different field dimensionalities, and mixed finite/semi-infinite masks. The IR
+transform (canonicalize_domain_argument.py) already uses this strategy.
+
+#### B. Broadcasting with infinite domains — the central implementation challenge
+
+When a field is broadcast (missing a dimension that gets added via broadcasting), the
+broadcast dimension has infinite extent `(-∞, +∞)`. This creates problems when the
+mask or its complement intersects with the infinite dimension, producing infinite-domain
+slices that cannot be materialized as numpy arrays.
+
+**Systematic analysis of which cases work/fail (1D masks):**
+
+| Mask type | True broadcasts in mask dim | False broadcasts in mask dim |
+|---|---|---|
+| Finite (`I==k`) | OK (mask∩infinite = finite) | FAIL (complement∩infinite = infinite) |
+| Semi-infinite (`I<k`) | FAIL (mask∩infinite = infinite) | FAIL (complement∩infinite = infinite) |
+
+**Root cause**: `_concat` calls `broadcast_to(f.ndarray, f.domain.shape)` which fails
+when the domain has infinite extent.
+
+**Solution — "clip infinite slices"**: After computing all true/false slices, determine
+the *effective finite range* in the mask dimension from the original fields' domains.
+Then clip any infinite-extent slices to this range. This is correct because:
+
+1. A broadcast field has identical values for all positions in the broadcast dimension —
+   clipping doesn't lose unique data.
+2. The effective range is bounded by the finite field's extent — positions outside this
+   range have no data from the finite field, so the output domain can't extend beyond it.
+3. When **both** fields are broadcast in the mask dim (both missing it), neither provides
+   a finite bound → the output would be infinite → error.
+
+**Algorithm**:
 ```python
-if any(m.ndim for m in masks) != 1:
-    raise NotImplementedError(...)
+def _effective_mask_range(t_domain, f_domain, mask_dim):
+    """Compute finite bounds from the two fields' mask-dim ranges."""
+    t_range = t_domain[mask_dim].unit_range
+    f_range = f_domain[mask_dim].unit_range
+    starts = [r.start for r in [t_range, f_range] if r.start is not Infinity.NEGATIVE]
+    stops = [r.stop for r in [t_range, f_range] if r.stop is not Infinity.POSITIVE]
+    if not starts or not stops:
+        return None  # Both infinite → error
+    return UnitRange(min(starts), max(stops))
 ```
 
-A multi-dimensional domain like `(I == 0) & (J == 0)` defines a single point in the
-I×J plane. The "true region" is that point; the "false region" is the complement, which
-is **not a hyper-rectangle** — it's the entire plane minus a point.
-
-**Problem**: `concat_where` semantics require the output to be a single contiguous
-hyper-rectangular field. For a multi-dimensional mask, the true/false partition may not
-decompose into hyper-rectangles that can be reassembled.
-
-**Current workaround in the backend** (canonicalize_domain_argument.py): The IR transform
-decomposes multi-dimensional `&` into nested 1D concat_where expressions:
-```
-concat_where(d1 & d2, a, b)  →  concat_where(d1, concat_where(d2, a, b), b)
-```
-Similarly for `|`:
-```
-concat_where(d1 | d2, a, b)  →  concat_where(d1, a, concat_where(d2, a, b))
+Then clip each infinite-extent slice by replacing its domain (the ndarray stays as-is
+since it's shape-1 in the broadcast dim):
+```python
+clipped_domain = s.domain.replace(mask_dim, NamedRange(mask_dim, clipped_range))
+NdArrayField.from_array(s.ndarray, domain=clipped_domain)  # shape-1 dim is still valid
 ```
 
-This decomposition is correct and always yields hyper-rectangular intermediates. The
-embedded implementation should follow the same strategy rather than trying to handle
-multi-dimensional masks natively.
+**Important**: We must NOT use `_intersect_fields` without `ignore_dims` for the mask
+dim. That would intersect both fields' mask-dim ranges, losing data when they have
+different but overlapping finite ranges (e.g., true: I:[0,4), false: I:[2,6) → we'd
+lose I:[0,2) and I:[4,6)). The `ignore_dims` approach preserves each field's full
+mask-dim extent; we only clip the broadcast (infinite) ones.
 
-**Decision**: For multi-dimensional domain arguments in the embedded backend, recursively
-decompose into nested 1D `concat_where` calls (mirroring the IR canonicalization), OR
-simply call the dimension-wise decomposition upfront before dispatching. This avoids the
-hyper-cube assembly problem entirely.
+**Verified working with this approach:**
+- Finite mask + false broadcasts: `concat_where(J==1, IJ_field, I_field)` ✓
+- Semi-infinite mask + true broadcasts: `concat_where(J<2, I_field, IJ_field)` ✓
+- Semi-infinite mask + false broadcasts: `concat_where(J<2, IJ_field, I_field)` ✓
+- 2D mask + I-only true + I×J false ✓
+- 2D mask + I-only true + J-only false (cross-dimensional) ✓
+- Both broadcast in mask dim → correctly needs error ✓
 
-#### B. `Domain.__or__` returning a tuple
+#### C. `Domain.__or__` returning a tuple
 
-`Domain.__or__` currently returns `Domain | tuple[Domain, Domain]` when the two domains
-are disjoint. This is a problematic API — callers must always check the return type. The
-embedded `_concat_where` already accepts `tuple[Domain, ...]` as its first argument to
-handle this, but it makes the code fragile.
+`Domain.__or__` returns `Domain | tuple[Domain, Domain]` when domains are disjoint.
+The `_concat_where` function already handles `tuple[Domain, ...]` as the mask argument —
+multiple 1D masks along the same dimension are processed together.
 
-#### C. `Dimension.__ne__` returning a tuple
+#### D. `Dimension.__ne__` returning a tuple
 
-`I != 0` returns `(Domain(..., [-∞, 0)), Domain(..., [1, +∞)))` — a tuple of two
-domains, not a single domain. This is passed directly to `_concat_where` which handles
-it. However, this is inconsistent with the other operators which return a single `Domain`.
-
-#### D. Broadcasting with infinite domains
-
-When `false_field` is a scalar (0-dimensional), its domain is empty `Domain()`. After
-broadcasting, its extent is infinite in all dimensions. When the mask's complement
-includes an infinite range (e.g., mask is `I == 0`, complement is `(-∞, 0) ∪ [1, +∞)`),
-we cannot materialize the field since it would require infinite memory.
-
-**Current handling**: The `_intersect_fields` function intersects the fields first,
-restricting to the finite domain of the other field. This works when at least one field
-has a finite domain. If both fields have infinite extent (e.g., both scalars), the result
-is only meaningful when the output domain is later restricted by the caller (program
-output domain).
+`I != 0` returns a tuple of two 1D domains. This is handled by `_concat_where`
+accepting `tuple[Domain, ...]`.
 
 #### E. Bug in `_invert_domain`
 
@@ -125,26 +150,15 @@ in non-sorted order, this produces incorrect results.
 
 #### F. Bug in `_concat_where` mask validation
 
-Line 994: `if any(m.ndim for m in masks) != 1:` — this is semantically wrong.
-`any(m.ndim for m in masks)` returns a **bool** (`True`/`False`), not an int. For 1D
-masks (ndim=1, truthy), `any(...)` returns `True`, and `True != 1` is `False` in Python
-(since `True == 1`), so the check passes. For 2D masks (ndim=2, also truthy),
-`any(...)` also returns `True`, and `True != 1` is still `False` — so **2D masks
-silently pass the validation**. Only 0D masks (ndim=0, falsy) would be rejected.
+Line 994: `if any(m.ndim for m in masks) != 1:` — `any()` returns bool, and since
+`True == 1` in Python, `True != 1` is `False`. So 2D masks silently pass validation.
 Should be: `if not all(m.ndim == 1 for m in masks):`
 
 #### G. Bug in `Dimension.__ne__` — broken Domain construction
 
-`Dimension.__ne__` (common.py:139-141) constructs domains as:
-```python
-Domain(self, UnitRange(Infinity.NEGATIVE, value))
-```
-But the `Domain` constructor expects `NamedRange` instances (or keyword `dims`/`ranges`).
-Passing `(Dimension, UnitRange)` positionally raises `ValueError`. This means `I != 0`
-is completely broken at runtime. Should use:
-```python
-Domain(dims=(self,), ranges=(UnitRange(Infinity.NEGATIVE, value),))
-```
+`Dimension.__ne__` (common.py:139-141) constructs `Domain(self, UnitRange(...))` but
+the Domain constructor expects NamedRange instances. `I != 0` raises ValueError at
+runtime. Should use `Domain(dims=(self,), ranges=(...))`.
 
 ---
 
@@ -161,84 +175,76 @@ Domain(dims=(self,), ranges=(UnitRange(Infinity.NEGATIVE, value),))
 3. **Fix `Dimension.__ne__`** (`common.py:139-141`):
    Use `Domain(dims=(self,), ranges=(...))` instead of `Domain(self, UnitRange(...))`.
 
-### Phase 2: Support multi-dimensional domains in embedded
+### Phase 2: Handle broadcast infinite domains in `_concat_where`
 
-3. **Implement recursive decomposition for multi-dim masks**:
-   When the mask domain has >1 dimension, decompose it dimension-by-dimension into
-   nested `_concat_where` calls. For a mask `Domain(I: r_I, J: r_J)`:
-   - Extract the first dimension's range as `mask_1d = Domain(I: r_I)`
-   - Create the remaining mask `mask_rest = Domain(J: r_J)`
-   - Rewrite as: `_concat_where(mask_1d, _concat_where(mask_rest, true_f, false_f), false_f)`
+4. **Add `_effective_mask_range` helper**: Computes the finite bounding range in the
+   mask dimension from the two fields' domains. Returns `None` if both are infinite
+   (error case).
 
-   This mirrors the IR canonicalization strategy and guarantees that each level
-   operates on a 1D mask.
+5. **Add `_clip_infinite_slices` helper**: After computing true/false slices, clips
+   any infinite-extent slice domains to the effective range. The ndarray is unchanged
+   (broadcast dim stays size-1); only the domain metadata is updated.
 
-4. **Handle `Domain.__or__` returning tuples in multi-dim context**:
-   When `d1 | d2` produces a tuple (disjoint union), the embedded `_concat_where`
-   already handles tuple-of-domains as the mask argument. We need to handle the `|`
-   decomposition similarly to `&`:
-   - `_concat_where((d1, d2), true_f, false_f)` decomposes to
-     `_concat_where(d1, true_f, _concat_where(d2, true_f, false_f))`
+6. **Integrate into `_concat_where`**: After computing slices, before calling `_concat`,
+   call `_clip_infinite_slices`. Raise an error if `_effective_mask_range` returns
+   `None` (both fields broadcast in mask dim — output would be infinite).
 
-   This is already partially supported since the function accepts `tuple[Domain, ...]`.
+### Phase 3: Support multi-dimensional domains via recursive decomposition
 
-### Phase 3: Handle `__ne__` properly
+7. **Add multi-dim decomposition to `_concat_where`**: When a mask has ndim > 1,
+   extract the first dimension as a 1D mask, recursively call `_concat_where` with the
+   remaining dimensions, then call `_concat_where` with the 1D mask on the result.
+   ```python
+   if m.ndim > 1:
+       mask_1d = Domain(m[0])
+       rest = Domain(*[m[i] for i in range(1, m.ndim)])
+       inner = _concat_where(rest, true_field, false_field)
+       return _concat_where(mask_1d, inner, false_field)
+   ```
 
-5. **Support `!=` domain construction**:
-   `I != k` produces a tuple of two 1D domains. This is already handled by `_concat_where`
-   accepting `tuple[Domain, ...]`. Ensure test coverage for this case.
+8. **Handle tuple-of-multi-dim-domains**: When `_concat_where` receives a tuple of
+   domains and some are multi-dimensional, decompose each multi-dim domain before
+   processing.
 
-### Phase 4: Improve Domain operations
+### Phase 4: Enable and add tests
 
-6. **Add `Domain.__or__` for multi-dimensional domains** (optional/incremental):
-   Currently raises `NotImplementedError` for ndim > 1. For the embedded case, this
-   isn't strictly needed if we decompose at the `_concat_where` level. But for a
-   cleaner API, consider supporting it.
+9. **Add unit tests for broadcast cases** (`test_nd_array_field.py`):
+   - Finite mask + false broadcasts in mask dim
+   - Semi-infinite mask + true broadcasts in mask dim
+   - Semi-infinite mask + false broadcasts in mask dim
+   - Both broadcast in mask dim → expect error
+   - Cross-dimensional: I-only true + J-only false with I×J mask
 
-7. **Type annotation cleanup**: `Domain.__or__` returns `Domain | tuple[Domain, Domain]`
-   which is confusing. Consider always returning a tuple or introducing a `DomainUnion`
-   type.
+10. **Add unit tests for multi-dim masks**:
+    - 2D mask with same-dim fields
+    - 2D mask with I-only true + I×J false
+    - 3D mask with same-dim fields
+    - Enable existing 2D test (line 1049-1054)
 
-### Phase 5: Enable commented-out tests
+11. **Add unit tests for `Dimension.__ne__`**: Verify `I != 0` creates correct domains.
 
-8. **Enable the 2D test in unit tests** (`test_nd_array_field.py:1049-1054`):
-   The test `(D0 == 0) & (D1 == 0)` with 2D fields is already present but may need
-   the multi-dim decomposition from Phase 2.
+12. **Remove commented-out legacy tests**: The old boolean-mask-based tests
+    (lines 1055-1118) are from the legacy `concat_where` and should be removed.
 
-9. **Enable scalar broadcasting test** (`test_nd_array_field.py:1034-1040`):
-   `concat_where(D0 == 0, field, scalar)` — requires handling infinite domains from
-   scalar broadcast. Mark with `embedded_concat_where_infinite_domain` marker as noted
-   in the commented-out code.
+### Phase 5: Cleanup
 
-10. **Enable remaining commented-out tests** and understand which are still relevant
-    (the old mask-based tests are from the legacy implementation and should be removed).
+13. **Update docstring** of `concat_where` in `experimental.py`.
 
-### Phase 6: Tests & documentation
-
-11. **Add tests for `Dimension.__le__` and `Dimension.__ne__`** (marked as TODO in common.py).
-
-12. **Add tests for `Domain.__or__`** (marked as TODO in common.py).
-
-13. **Update docstring** of `concat_where` in `experimental.py` — it still references
-    the old mask-field interface.
-
-14. **Remove the type-ignore comment** on the registration line
-    (`nd_array_field.py:1017`) which says "this is still the old concat_where".
+14. **Remove type-ignore comment** on registration line (`nd_array_field.py:1017`).
 
 ### Summary of files to modify
 
 | File | Changes |
 |---|---|
-| `src/gt4py/next/embedded/nd_array_field.py` | Fix bugs, add multi-dim decomposition |
-| `src/gt4py/next/common.py` | (Optional) improve `Domain.__or__` |
+| `src/gt4py/next/embedded/nd_array_field.py` | Fix bugs, add infinite-clip + multi-dim decomposition |
+| `src/gt4py/next/common.py` | Fix `Dimension.__ne__` |
 | `src/gt4py/next/ffront/experimental.py` | Update docstring |
-| `tests/.../test_nd_array_field.py` | Enable/add unit tests |
+| `tests/.../test_nd_array_field.py` | Enable/add unit tests, remove legacy tests |
 | `tests/.../test_concat_where.py` | Verify integration tests pass |
 
 ### Estimated complexity
 
-- Phase 1 (bug fixes): Small, straightforward
-- Phase 2 (multi-dim): Medium — the recursive decomposition is well-understood from
-  the IR transform; main challenge is handling the intersection/broadcast correctly
-  at each recursion level
-- Phase 3-6: Small to medium, mostly test additions
+- Phase 1 (bug fixes): Small — 3 targeted fixes
+- Phase 2 (infinite domain clipping): Medium — new helpers + integration, well-understood
+- Phase 3 (multi-dim decomposition): Small — straightforward recursion, verified working
+- Phase 4-5: Medium — test additions and cleanup
