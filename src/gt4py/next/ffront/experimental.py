@@ -20,7 +20,7 @@ def as_offset(offset_: FieldOffset, field: common.Field, /) -> common.Connectivi
 
 @WhereBuiltinFunction
 def concat_where(
-    mask: common.Domain | tuple[common.Domain, ...],
+    cond: common.Domain,
     true_field: common.Field | core_defs.ScalarT | Tuple,
     false_field: common.Field | core_defs.ScalarT | Tuple,
     /,
@@ -40,7 +40,7 @@ def concat_where(
       handles same-dim tuples directly and different-dim tuples via nesting.
 
     Args:
-        mask: Domain or tuple of Domains specifying the "true" region.
+        cond: Domain or tuple of Domains specifying the "true" region.
         true_field: Field (or scalar) providing values inside the mask region.
         false_field: Field (or scalar) providing values outside the mask region.
 
