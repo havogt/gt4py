@@ -211,15 +211,15 @@ def translate_concat_where(
     if isinstance(node.type, ts.TupleType):
         raise NotImplementedError("Unexpected 'concat_where' with tuple output in SDFG lowering.")
 
-    # First argument is a domain expression that defines the mask of the true branch:
+    # First argument is a domain expression that defines the region of the true branch:
     # we extract the dimension along which we need to concatenate the field arguments,
     # and determine whether the true branch argument should be on the lower or upper
     # range with respect to the boundary value.
-    mask_domain = domain_utils.SymbolicDomain.from_expr(node.args[0])
-    if len(mask_domain.ranges) != 1:
+    cond_domain = domain_utils.SymbolicDomain.from_expr(node.args[0])
+    if len(cond_domain.ranges) != 1:
         raise NotImplementedError("Expected `concat_where` along single axis.")
 
-    concat_dim = next(iter(mask_domain.ranges.keys()))
+    concat_dim = next(iter(cond_domain.ranges.keys()))
 
     # Expect unbound range in the concat domain expression on range start or end:
     #  - If the domain expression is unbound on range start (negative infinite),
@@ -228,14 +228,14 @@ def translate_concat_where(
     #  - Vice versa, if the domain expression is unbound on range stop (positive
     #    infinite), the true expression represents the input for the upper domain.
     infinity_literals = (gtir.InfinityLiteral.POSITIVE, gtir.InfinityLiteral.NEGATIVE)
-    if mask_domain.ranges[concat_dim].start in infinity_literals:
-        bound_expr = mask_domain.ranges[concat_dim].stop
+    if cond_domain.ranges[concat_dim].start in infinity_literals:
+        bound_expr = cond_domain.ranges[concat_dim].stop
         lower_expr, upper_expr = node.args[1:]
-    elif mask_domain.ranges[concat_dim].stop in infinity_literals:
-        bound_expr = mask_domain.ranges[concat_dim].start
+    elif cond_domain.ranges[concat_dim].stop in infinity_literals:
+        bound_expr = cond_domain.ranges[concat_dim].start
         upper_expr, lower_expr = node.args[1:]
     else:
-        raise ValueError(f"Unexpected concat mask {mask_domain} with finite domain.")
+        raise ValueError(f"Unexpected concat_where domain {cond_domain} with finite range.")
 
     # We use the concat domain, stored in the annex, as the domain of output field.
     output_domain = gtir_domain.get_field_domain(node.annex.domain)

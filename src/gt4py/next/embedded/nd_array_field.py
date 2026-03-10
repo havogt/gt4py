@@ -971,32 +971,32 @@ def _size0_field(
 
 
 def _concat_where(
-    masks: common.Domain | tuple[common.Domain, ...],
+    domains: common.Domain | tuple[common.Domain, ...],
     true_field: common.Field,
     false_field: common.Field,
 ) -> common.Field:
-    if not isinstance(masks, tuple):
-        masks = (masks,)
+    if not isinstance(domains, tuple):
+        domains = (domains,)
 
     # Multi-dim decomposition: peel off first dimension and recurse
     # concat_where(d_I & d_J, a, b) -> concat_where(d_I, concat_where(d_J, a, b), b)
-    for i, mask in enumerate(masks):
-        if mask.ndim > 1:
-            first_dim_mask = common.Domain(mask[0])
-            rest_mask = mask[1:]
-            remaining_masks = masks[:i] + masks[i + 1 :]
-            inner_masks = (rest_mask,) + remaining_masks if remaining_masks else (rest_mask,)
-            inner = _concat_where(inner_masks, true_field, false_field)
-            return _concat_where(first_dim_mask, inner, false_field)
+    for i, dom in enumerate(domains):
+        if dom.ndim > 1:
+            first_dim_domain = common.Domain(dom[0])
+            rest_domain = dom[1:]
+            remaining_domains = domains[:i] + domains[i + 1 :]
+            inner_domains = (rest_domain,) + remaining_domains if remaining_domains else (rest_domain,)
+            inner = _concat_where(inner_domains, true_field, false_field)
+            return _concat_where(first_dim_domain, inner, false_field)
 
     # Tuple decomposition for different-dim entries:
     # concat_where(d_I | d_J, a, b) -> concat_where(d_I, a, concat_where(d_J, a, b))
     # Group by dimension, process different-dim groups via nesting
     dims_seen: dict[common.Dimension, list[common.Domain]] = {}
-    for mask in masks:
-        assert mask.ndim == 1
-        dim = mask.dims[0]
-        dims_seen.setdefault(dim, []).append(mask)
+    for dom in domains:
+        assert dom.ndim == 1
+        dim = dom.dims[0]
+        dims_seen.setdefault(dim, []).append(dom)
 
     if len(dims_seen) > 1:
         dim_groups = list(dims_seen.values())
@@ -1007,24 +1007,24 @@ def _concat_where(
             result = _concat_where(tuple(group), true_field, result)
         return result
 
-    # All masks are 1D on the same dimension — the base case
-    mask_dim = masks[0].dims[0]
+    # All domains are 1D on the same dimension — the base case
+    concat_dim = domains[0].dims[0]
 
-    # intersect the field in dimensions orthogonal to the mask, then all slices in the mask field have same domain
-    t_broadcasted, f_broadcasted = _intersect_fields(true_field, false_field, ignore_dims=mask_dim)
+    # intersect the field in dimensions orthogonal to the domain, then all slices have same domain
+    t_broadcasted, f_broadcasted = _intersect_fields(true_field, false_field, ignore_dims=concat_dim)
 
-    true_domains = _intersect_multiple(t_broadcasted.domain, masks)
+    true_domains = _intersect_multiple(t_broadcasted.domain, domains)
     t_slices = tuple(t_broadcasted[d] for d in true_domains)
 
-    inverted_masks = _invert_domain(masks)
-    false_domains = _intersect_multiple(f_broadcasted.domain, inverted_masks)
+    inverted_domains = _invert_domain(domains)
+    false_domains = _intersect_multiple(f_broadcasted.domain, inverted_domains)
     f_slices = tuple(f_broadcasted[d] for d in false_domains)
 
     if len(t_slices) + len(f_slices) == 0:
         # no data to concatenate, return an empty field
         nd_array_class = _get_nd_array_class(true_field, false_field)
         return _size0_field(nd_array_class, dims=t_broadcasted.domain.dims, dtype=true_field.dtype)
-    return _concat(*f_slices, *t_slices, dim=mask_dim)
+    return _concat(*f_slices, *t_slices, dim=concat_dim)
 
 
 NdArrayField.register_builtin_func(experimental.concat_where, _concat_where)  # type: ignore[arg-type]
