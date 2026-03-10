@@ -19,6 +19,7 @@ from gt4py.next.common import (
     Dimension,
     DimensionKind,
     Domain,
+    DomainTuple,
     Infinity,
     UnitRange,
     domain,
@@ -855,3 +856,24 @@ class TestDomainOrOperator:
         result = t | d
         assert isinstance(result, tuple)
         assert d in result
+
+    def test_tuple_or_tuple(self):
+        """DomainTuple | DomainTuple concatenates."""
+        t1 = (D0).__ne__(0)  # DomainTuple of 2
+        t2 = (D1).__ne__(0)  # DomainTuple of 2
+        result = t1 | t2
+        assert isinstance(result, DomainTuple)
+        assert len(result) == 4
+
+    def test_returns_domain_tuple(self):
+        """Domain | Domain returning tuple should return DomainTuple."""
+        d1 = Domain(dims=(D0,), ranges=(UnitRange(0, 3),))
+        d2 = Domain(dims=(D0,), ranges=(UnitRange(5, 8),))
+        result = d1 | d2
+        assert isinstance(result, DomainTuple)
+
+    def test_ne_returns_domain_tuple(self):
+        """Dimension.__ne__ should return DomainTuple."""
+        result = (D0).__ne__(3)
+        assert isinstance(result, DomainTuple)
+        assert len(result) == 2
