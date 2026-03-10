@@ -78,6 +78,7 @@ def test_concat_where_empty_branch(cartesian_case):
     cases.verify(cartesian_case, testee, a, b, N, out=out, ref=a.asnumpy())
 
 
+@pytest.mark.embedded_concat_where_infinite_domain
 def test_concat_where_scalar_broadcast(cartesian_case):
     @gtx.field_operator
     def testee(a: np.int32, b: cases.IJKField, N: np.int32) -> cases.IJKField:
@@ -97,6 +98,7 @@ def test_concat_where_scalar_broadcast(cartesian_case):
     cases.verify(cartesian_case, testee, a, b, cartesian_case.default_sizes[KDim], out=out, ref=ref)
 
 
+@pytest.mark.embedded_concat_where_infinite_domain
 def test_concat_where_scalar_broadcast_on_empty_branch(cartesian_case):
     """Output domain such that the scalar branch is never active."""
 
