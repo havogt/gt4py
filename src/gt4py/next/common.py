@@ -118,7 +118,6 @@ class Dimension:
         return Domain(dims=(self,), ranges=(UnitRange(Infinity.NEGATIVE, value),))
 
     def __le__(self, value: core_defs.IntegralScalar) -> Domain:
-        # TODO add test
         return Domain(dims=(self,), ranges=(UnitRange(Infinity.NEGATIVE, value + 1),))
 
     def __eq__(self, value: Dimension | core_defs.IntegralScalar) -> bool | Domain:

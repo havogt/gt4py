@@ -676,3 +676,147 @@ class TestCartesianConnectivity:
         assert result.domain_dim == I_half
         assert result.codomain == I
         assert result.offset == 0
+
+
+D0 = Dimension("D0")
+D1 = Dimension("D1")
+
+
+class TestDimensionComparisonOperators:
+    """Test Dimension comparison operators return correct Domain objects."""
+
+    def test_gt(self):
+        result = D0 > 3
+        assert result == Domain(dims=(D0,), ranges=(UnitRange(4, Infinity.POSITIVE),))
+
+    def test_ge(self):
+        result = D0 >= 3
+        assert result == Domain(dims=(D0,), ranges=(UnitRange(3, Infinity.POSITIVE),))
+
+    def test_lt(self):
+        result = D0 < 3
+        assert result == Domain(dims=(D0,), ranges=(UnitRange(Infinity.NEGATIVE, 3),))
+
+    def test_le(self):
+        result = D0 <= 3
+        assert result == Domain(dims=(D0,), ranges=(UnitRange(Infinity.NEGATIVE, 4),))
+
+    def test_eq_int(self):
+        result = D0 == 3
+        assert result == Domain(dims=(D0,), ranges=(UnitRange(3, 4),))
+
+    def test_ne_int(self):
+        """Dimension.__ne__ with int returns tuple of two Domains."""
+        result = D0 != 3
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        assert result[0] == Domain(dims=(D0,), ranges=(UnitRange(Infinity.NEGATIVE, 3),))
+        assert result[1] == Domain(dims=(D0,), ranges=(UnitRange(4, Infinity.POSITIVE),))
+
+    def test_reverse_gt(self):
+        """5 > D0 is equivalent to D0 < 5 via Python comparison reflection."""
+        assert (5 > D0) == (D0 < 5)
+
+    def test_reverse_ge(self):
+        assert (5 >= D0) == (D0 <= 5)
+
+    def test_reverse_lt(self):
+        assert (5 < D0) == (D0 > 5)
+
+    def test_reverse_le(self):
+        assert (5 <= D0) == (D0 >= 5)
+
+    def test_reverse_eq(self):
+        assert (3 == D0) == (D0 == 3)
+
+    def test_reverse_ne(self):
+        assert (3 != D0) == (D0 != 3)
+
+
+class TestDomainAndOperator:
+    """Test Domain.__and__ (intersection)."""
+
+    def test_same_dim(self):
+        d1 = Domain(dims=(D0,), ranges=(UnitRange(0, 5),))
+        d2 = Domain(dims=(D0,), ranges=(UnitRange(3, 8),))
+        assert (d1 & d2) == Domain(dims=(D0,), ranges=(UnitRange(3, 5),))
+
+    def test_different_dims(self):
+        d1 = Domain(dims=(D0,), ranges=(UnitRange(0, 5),))
+        d2 = Domain(dims=(D1,), ranges=(UnitRange(2, 4),))
+        result = d1 & d2
+        assert result == Domain(dims=(D0, D1), ranges=(UnitRange(0, 5), UnitRange(2, 4)))
+
+    def test_and_with_tuple_rhs(self):
+        """Domain & tuple[Domain, ...] distributes over the tuple."""
+        d = Domain(dims=(D1,), ranges=(UnitRange(0, 5),))
+        t = (
+            Domain(dims=(D0,), ranges=(UnitRange(Infinity.NEGATIVE, 3),)),
+            Domain(dims=(D0,), ranges=(UnitRange(4, Infinity.POSITIVE),)),
+        )
+        result = d & t
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        assert result[0] == d & t[0]
+        assert result[1] == d & t[1]
+
+    def test_rand_tuple_and_domain(self):
+        """tuple[Domain, ...] & Domain uses __rand__."""
+        d = Domain(dims=(D1,), ranges=(UnitRange(0, 5),))
+        t = (
+            Domain(dims=(D0,), ranges=(UnitRange(Infinity.NEGATIVE, 3),)),
+            Domain(dims=(D0,), ranges=(UnitRange(4, Infinity.POSITIVE),)),
+        )
+        result = t & d
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        assert result[0] == t[0] & d
+        assert result[1] == t[1] & d
+
+
+class TestDomainOrOperator:
+    """Test Domain.__or__ (union)."""
+
+    def test_same_dim_overlapping(self):
+        d1 = Domain(dims=(D0,), ranges=(UnitRange(0, 5),))
+        d2 = Domain(dims=(D0,), ranges=(UnitRange(3, 8),))
+        result = d1 | d2
+        assert result == Domain(dims=(D0,), ranges=(UnitRange(0, 8),))
+
+    def test_same_dim_disjoint(self):
+        d1 = Domain(dims=(D0,), ranges=(UnitRange(0, 3),))
+        d2 = Domain(dims=(D0,), ranges=(UnitRange(5, 8),))
+        result = d1 | d2
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+
+    def test_different_dims_returns_tuple(self):
+        """Domain.__or__ with different dims must return tuple, not silently drop one."""
+        d1 = Domain(dims=(D0,), ranges=(UnitRange(0, 5),))
+        d2 = Domain(dims=(D1,), ranges=(UnitRange(2, 4),))
+        result = d1 | d2
+        assert isinstance(result, tuple)
+        assert d1 in result
+        assert d2 in result
+
+    def test_or_with_tuple_rhs(self):
+        """Domain | tuple[Domain, ...] appends/merges."""
+        d = Domain(dims=(D0,), ranges=(UnitRange(10, 15),))
+        t = (
+            Domain(dims=(D0,), ranges=(UnitRange(0, 3),)),
+            Domain(dims=(D0,), ranges=(UnitRange(5, 8),)),
+        )
+        result = d | t
+        assert isinstance(result, tuple)
+        assert d in result
+
+    def test_ror_tuple_or_domain(self):
+        """tuple[Domain, ...] | Domain uses __ror__."""
+        d = Domain(dims=(D0,), ranges=(UnitRange(10, 15),))
+        t = (
+            Domain(dims=(D0,), ranges=(UnitRange(0, 3),)),
+            Domain(dims=(D0,), ranges=(UnitRange(5, 8),)),
+        )
+        result = t | d
+        assert isinstance(result, tuple)
+        assert d in result
