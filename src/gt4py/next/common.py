@@ -556,13 +556,11 @@ class Domain(Sequence[NamedRange[_Rng]], Generic[_Rng]):
     ) -> Domain | tuple[Domain, ...]:
         if isinstance(other, tuple):
             return (*other, self)
-        if self.ndim > 1 or other.ndim > 1:
-            raise NotImplementedError("Union of multidimensional domains is not supported.")
         if self.ndim == 0:
             return other
         if other.ndim == 0:
             return self
-        if self.dims[0] != other.dims[0]:
+        if self.ndim > 1 or other.ndim > 1 or self.dims[0] != other.dims[0]:
             return (self, other)
         sorted_ = sorted((self, other), key=lambda x: x.ranges[0].start)
         if sorted_[0].ranges[0].stop >= sorted_[1].ranges[0].start:

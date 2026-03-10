@@ -825,6 +825,15 @@ class TestDomainOrOperator:
         assert d1 in result
         assert d2 in result
 
+    def test_multidim_returns_tuple(self):
+        """Domain.__or__ with multidimensional domains returns tuple."""
+        d1 = Domain(dims=(D0, D1), ranges=(UnitRange(0, 3), UnitRange(0, 3)))
+        d2 = Domain(dims=(D0, D1), ranges=(UnitRange(5, 8), UnitRange(5, 8)))
+        result = d1 | d2
+        assert isinstance(result, tuple)
+        assert d1 in result
+        assert d2 in result
+
     def test_or_with_tuple_rhs(self):
         """Domain | tuple[Domain, ...] appends/merges."""
         d = Domain(dims=(D0,), ranges=(UnitRange(10, 15),))
