@@ -560,18 +560,10 @@ class Domain(Sequence[NamedRange[_Rng]], Generic[_Rng]):
             return other
         if other.ndim == 0:
             return self
-        if (
-            self.ndim == 1
-            and other.ndim == 1
-            and self.dims[0] == other.dims[0]
-        ):
-            sorted_ = sorted((self, other), key=lambda x: x.ranges[0].start)
-            if sorted_[0].ranges[0].stop >= sorted_[1].ranges[0].start:
-                return Domain(
-                    dims=(self.dims[0],),
-                    ranges=(UnitRange(sorted_[0].ranges[0].start, sorted_[1].ranges[0].stop),),
-                )
-        return _DomainTuple((self, other))
+        result = _DomainTuple((self, other))
+        if len(result) == 1:
+            return result[0]
+        return result
 
     def __ror__(self, other: Domain | tuple[Domain, ...]) -> Domain | _DomainTuple:
         if isinstance(other, tuple):
@@ -664,8 +656,102 @@ class Domain(Sequence[NamedRange[_Rng]], Generic[_Rng]):
         return state
 
 
+def _try_merge(a: Domain, b: Domain) -> Domain | None:
+    """Try to merge two same-rank domains that differ in exactly one dimension."""
+    assert a.dims == b.dims
+    diff_idx = None
+    for i in range(len(a.dims)):
+        if a.ranges[i] != b.ranges[i]:
+            if diff_idx is not None:
+                return None  # differ in more than one dimension
+            diff_idx = i
+    if diff_idx is None:
+        return a  # identical domains
+    r1, r2 = a.ranges[diff_idx], b.ranges[diff_idx]
+    lo, hi = (r1, r2) if r1.start <= r2.start else (r2, r1)
+    if lo.stop >= hi.start:  # overlapping or adjacent
+        new_ranges = list(a.ranges)
+        new_ranges[diff_idx] = UnitRange(lo.start, max(lo.stop, hi.stop))
+        return Domain(dims=a.dims, ranges=tuple(new_ranges))
+    return None
+
+
+def _subtract_domain(a: Domain, b: Domain) -> list[Domain]:
+    """Compute ``a \\ b`` (set difference) as a list of non-overlapping domains."""
+    assert a.dims == b.dims
+    intersection = a & b
+    if intersection.is_empty():
+        return [a]
+    result: list[Domain] = []
+    remaining_ranges = list(a.ranges)
+    for i in range(len(a.dims)):
+        if remaining_ranges[i].start < intersection.ranges[i].start:
+            slab = list(remaining_ranges)
+            slab[i] = UnitRange(remaining_ranges[i].start, intersection.ranges[i].start)
+            result.append(Domain(dims=a.dims, ranges=tuple(slab)))
+            remaining_ranges[i] = UnitRange(intersection.ranges[i].start, remaining_ranges[i].stop)
+        if remaining_ranges[i].stop > intersection.ranges[i].stop:
+            slab = list(remaining_ranges)
+            slab[i] = UnitRange(intersection.ranges[i].stop, remaining_ranges[i].stop)
+            result.append(Domain(dims=a.dims, ranges=tuple(slab)))
+            remaining_ranges[i] = UnitRange(remaining_ranges[i].start, intersection.ranges[i].stop)
+    return result
+
+
+def _make_non_overlapping(domains: Sequence[Domain]) -> tuple[Domain, ...]:
+    """Make a sequence of same-rank domains non-overlapping, preserving priority order."""
+    result: list[Domain] = []
+    for d in domains:
+        fragments = [d]
+        for existing in result:
+            new_fragments: list[Domain] = []
+            for frag in fragments:
+                new_fragments.extend(_subtract_domain(frag, existing))
+            fragments = new_fragments
+        result.extend(fragments)
+    return tuple(result)
+
+
+def _merge_domains(domains: Sequence[Domain]) -> tuple[Domain, ...]:
+    """Greedily merge domains that differ in exactly one dimension."""
+    result = list(domains)
+    changed = True
+    while changed:
+        changed = False
+        for i in range(len(result)):
+            for j in range(i + 1, len(result)):
+                merged = _try_merge(result[i], result[j])
+                if merged is not None:
+                    result[i] = merged
+                    del result[j]
+                    changed = True
+                    break
+            if changed:
+                break
+    return tuple(result)
+
+
 class _DomainTuple(tuple):
-    """A tuple of Domains that supports ``&`` and ``|`` operators."""
+    """
+    A tuple of same-rank, non-overlapping Domains that supports ``&`` and ``|`` operators.
+
+    On construction, all domains are promoted to the same rank (missing dimensions
+    are filled with infinite ranges), overlapping regions are resolved, and
+    adjacent domains that differ in exactly one dimension are merged.
+    """
+
+    def __new__(cls, domains: Sequence[Domain]) -> _DomainTuple:
+        domains = tuple(d for d in domains if d.ndim > 0)
+        if not domains:
+            return super().__new__(cls, domains)
+        broadcast_dims = tuple(promote_dims(*(d.dims for d in domains)))
+        promoted = tuple(
+            Domain(dims=broadcast_dims, ranges=_broadcast_ranges(broadcast_dims, d.dims, d.ranges))
+            for d in domains
+        )
+        non_overlapping = _make_non_overlapping(promoted)
+        merged = _merge_domains(non_overlapping)
+        return super().__new__(cls, merged)
 
     def __and__(self, other: Domain | _DomainTuple) -> Domain | _DomainTuple:
         if isinstance(other, Domain):

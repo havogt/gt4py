@@ -816,14 +816,24 @@ class TestDomainOrOperator:
         assert isinstance(result, tuple)
         assert len(result) == 2
 
-    def test_different_dims_returns_tuple(self):
-        """Domain.__or__ with different dims must return tuple, not silently drop one."""
+    def test_different_dims_returns_promoted_tuple(self):
+        """Domain.__or__ with different dims promotes to same rank, non-overlapping."""
         d1 = Domain(dims=(D0,), ranges=(UnitRange(0, 5),))
         d2 = Domain(dims=(D1,), ranges=(UnitRange(2, 4),))
         result = d1 | d2
         assert isinstance(result, tuple)
-        assert d1 in result
-        assert d2 in result
+        assert all(r.dims == (D0, D1) for r in result)
+        # d1 promoted: D0:[0,5) x D1:(-inf,+inf) — kept as-is (first priority)
+        # d2 promoted: D0:(-inf,+inf) x D1:[2,4) — overlap with d1 subtracted
+        #   → D0:(-inf,0) x D1:[2,4) and D0:[5,+inf) x D1:[2,4)
+        assert len(result) == 3
+        assert result[0] == Domain(dims=(D0, D1), ranges=(UnitRange(0, 5), UnitRange.infinite()))
+        assert result[1] == Domain(
+            dims=(D0, D1), ranges=(UnitRange(Infinity.NEGATIVE, 0), UnitRange(2, 4))
+        )
+        assert result[2] == Domain(
+            dims=(D0, D1), ranges=(UnitRange(5, Infinity.POSITIVE), UnitRange(2, 4))
+        )
 
     def test_multidim_returns_tuple(self):
         """Domain.__or__ with multidimensional domains returns tuple."""

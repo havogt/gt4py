@@ -978,53 +978,77 @@ def _concat_where(
     if not isinstance(domains, tuple):
         domains = (domains,)
 
-    # Multi-dim decomposition: peel off first dimension and recurse
-    # concat_where(d_I & d_J, a, b) -> concat_where(d_I, concat_where(d_J, a, b), b)
-    for i, dom in enumerate(domains):
-        if dom.ndim > 1:
-            first_dim_domain = common.Domain(dom[0])
-            rest_domain = dom[1:]
-            remaining_domains = domains[:i] + domains[i + 1 :]
-            inner_domains = (rest_domain,) + remaining_domains if remaining_domains else (rest_domain,)
-            inner = _concat_where(inner_domains, true_field, false_field)
-            return _concat_where(first_dim_domain, inner, false_field)
+    if not domains:
+        return false_field
 
-    # Tuple decomposition for different-dim entries:
-    # concat_where(d_I | d_J, a, b) -> concat_where(d_I, a, concat_where(d_J, a, b))
-    # Group by dimension, process different-dim groups via nesting
-    dims_seen: dict[common.Dimension, list[common.Domain]] = {}
-    for dom in domains:
-        assert dom.ndim == 1
-        dim = dom.dims[0]
-        dims_seen.setdefault(dim, []).append(dom)
+    # 0D domain means "entire domain is true"
+    if domains[0].ndim == 0:
+        return true_field
 
-    if len(dims_seen) > 1:
-        dim_groups = list(dims_seen.values())
-        # Start from the last group as the innermost call
-        result = _concat_where(tuple(dim_groups[-1]), true_field, false_field)
-        # Wrap with remaining groups from second-to-last to first
-        for group in reversed(dim_groups[:-1]):
-            result = _concat_where(tuple(group), true_field, result)
-        return result
-
-    # All domains are 1D on the same dimension — the base case
     concat_dim = domains[0].dims[0]
 
-    # intersect the field in dimensions orthogonal to the domain, then all slices have same domain
-    t_broadcasted, f_broadcasted = _intersect_fields(true_field, false_field, ignore_dims=concat_dim)
+    if domains[0].ndim == 1:
+        # Base case: all 1D on the same dimension
+        t_broadcasted, f_broadcasted = _intersect_fields(
+            true_field, false_field, ignore_dims=concat_dim
+        )
 
-    true_domains = _intersect_multiple(t_broadcasted.domain, domains)
-    t_slices = tuple(t_broadcasted[d] for d in true_domains)
+        true_domains = _intersect_multiple(t_broadcasted.domain, domains)
+        t_slices = tuple(t_broadcasted[d] for d in true_domains)
 
-    inverted_domains = _invert_domain(domains)
-    false_domains = _intersect_multiple(f_broadcasted.domain, inverted_domains)
-    f_slices = tuple(f_broadcasted[d] for d in false_domains)
+        inverted_domains = _invert_domain(domains)
+        false_domains = _intersect_multiple(f_broadcasted.domain, inverted_domains)
+        f_slices = tuple(f_broadcasted[d] for d in false_domains)
 
-    if len(t_slices) + len(f_slices) == 0:
-        # no data to concatenate, return an empty field
+        if len(t_slices) + len(f_slices) == 0:
+            nd_array_class = _get_nd_array_class(true_field, false_field)
+            return _size0_field(nd_array_class, dims=t_broadcasted.domain.dims, dtype=true_field.dtype)
+        return _concat(*f_slices, *t_slices, dim=concat_dim)
+
+    # Multi-dim: decompose along first dimension using cut points
+    # Determine the field range along concat_dim from the input fields
+    field_ranges = [
+        f.domain[concat_dim].unit_range
+        for f in (true_field, false_field)
+        if isinstance(f, common.Field) and concat_dim in f.domain.dims
+    ]
+    if not field_ranges:
         nd_array_class = _get_nd_array_class(true_field, false_field)
-        return _size0_field(nd_array_class, dims=t_broadcasted.domain.dims, dtype=true_field.dtype)
-    return _concat(*f_slices, *t_slices, dim=concat_dim)
+        return _size0_field(
+            nd_array_class, dims=domains[0].dims, dtype=true_field.dtype
+        )
+    field_start = min(r.start for r in field_ranges)
+    field_stop = max(r.stop for r in field_ranges)
+
+    cuts: set[common.Infinity | core_defs.IntegralScalar] = {field_start, field_stop}
+    for d in domains:
+        r = d.ranges[0]
+        if field_start <= r.start <= field_stop:
+            cuts.add(r.start)
+        if field_start <= r.stop <= field_stop:
+            cuts.add(r.stop)
+    sorted_cuts = sorted(cuts)
+
+    slices: list[common.Field] = []
+    for lo, hi in zip(sorted_cuts, sorted_cuts[1:]):
+        interval = common.Domain(dims=(concat_dim,), ranges=(common.UnitRange(lo, hi),))
+        # Find domains covering this interval, drop first dim for recursion
+        inner_doms = tuple(
+            d[1:] for d in domains
+            if d.ranges[0].start <= lo and d.ranges[0].stop >= hi
+        )
+        if inner_doms:
+            inner = _concat_where(inner_doms, true_field, false_field)
+            slices.append(inner[interval])
+        else:
+            slices.append(false_field[interval])
+
+    if not slices:
+        nd_array_class = _get_nd_array_class(true_field, false_field)
+        return _size0_field(
+            nd_array_class, dims=domains[0].dims, dtype=true_field.dtype
+        )
+    return _concat(*slices, dim=concat_dim)
 
 
 NdArrayField.register_builtin_func(experimental.concat_where, _concat_where)  # type: ignore[arg-type]
