@@ -560,16 +560,18 @@ class Domain(Sequence[NamedRange[_Rng]], Generic[_Rng]):
             return other
         if other.ndim == 0:
             return self
-        if self.ndim > 1 or other.ndim > 1 or self.dims[0] != other.dims[0]:
-            return _DomainTuple((self, other))
-        sorted_ = sorted((self, other), key=lambda x: x.ranges[0].start)
-        if sorted_[0].ranges[0].stop >= sorted_[1].ranges[0].start:
-            return Domain(
-                dims=(self.dims[0],),
-                ranges=(UnitRange(sorted_[0].ranges[0].start, sorted_[1].ranges[0].stop),),
-            )
-        else:
-            return _DomainTuple((sorted_[0], sorted_[1]))
+        if (
+            self.ndim == 1
+            and other.ndim == 1
+            and self.dims[0] == other.dims[0]
+        ):
+            sorted_ = sorted((self, other), key=lambda x: x.ranges[0].start)
+            if sorted_[0].ranges[0].stop >= sorted_[1].ranges[0].start:
+                return Domain(
+                    dims=(self.dims[0],),
+                    ranges=(UnitRange(sorted_[0].ranges[0].start, sorted_[1].ranges[0].stop),),
+                )
+        return _DomainTuple((self, other))
 
     def __ror__(self, other: Domain | tuple[Domain, ...]) -> Domain | _DomainTuple:
         if isinstance(other, tuple):
