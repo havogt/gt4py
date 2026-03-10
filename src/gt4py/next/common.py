@@ -129,11 +129,11 @@ class Dimension:
         else:
             return False
 
-    def __ne__(self, value: Dimension | core_defs.IntegralScalar) -> bool | DomainTuple:
+    def __ne__(self, value: Dimension | core_defs.IntegralScalar) -> bool | _DomainTuple:
         if isinstance(value, Dimension):
             return self.value != value.value
         elif isinstance(value, core_defs.INTEGRAL_TYPES):
-            return DomainTuple((
+            return _DomainTuple((
                 Domain(dims=(self,), ranges=(UnitRange(Infinity.NEGATIVE, value),)),
                 Domain(dims=(self,), ranges=(UnitRange(value + 1, Infinity.POSITIVE),)),
             ))
@@ -507,7 +507,7 @@ class Domain(Sequence[NamedRange[_Rng]], Generic[_Rng]):
 
     def __and__(
         self, other: Domain | tuple[Domain, ...]
-    ) -> Domain | tuple[Domain, ...]:
+    ) -> Domain | _DomainTuple:
         """
         Intersect `Domain`s, missing `Dimension`s are considered infinite.
 
@@ -530,7 +530,7 @@ class Domain(Sequence[NamedRange[_Rng]], Generic[_Rng]):
             results = tuple(r for d in other if not (r := self & d).is_empty())
             if len(results) == 1:
                 return results[0]
-            return DomainTuple(results)
+            return _DomainTuple(results)
         broadcast_dims = tuple(promote_dims(self.dims, other.dims))
         intersected_ranges = tuple(
             rng1 & rng2
@@ -541,27 +541,27 @@ class Domain(Sequence[NamedRange[_Rng]], Generic[_Rng]):
         )
         return Domain(dims=broadcast_dims, ranges=intersected_ranges)
 
-    def __rand__(self, other: Domain | tuple[Domain, ...]) -> Domain | tuple[Domain, ...]:
+    def __rand__(self, other: Domain | tuple[Domain, ...]) -> Domain | _DomainTuple:
         if isinstance(other, tuple):
             results = tuple(r for d in other if not (r := d & self).is_empty())
             if len(results) == 1:
                 return results[0]
-            return DomainTuple(results)
+            return _DomainTuple(results)
         if isinstance(other, Domain):
             return other & self
         return NotImplemented
 
     def __or__(
         self, other: Domain | tuple[Domain, ...]
-    ) -> Domain | DomainTuple:
+    ) -> Domain | _DomainTuple:
         if isinstance(other, tuple):
-            return DomainTuple((*other, self))
+            return _DomainTuple((*other, self))
         if self.ndim == 0:
             return other
         if other.ndim == 0:
             return self
         if self.ndim > 1 or other.ndim > 1 or self.dims[0] != other.dims[0]:
-            return DomainTuple((self, other))
+            return _DomainTuple((self, other))
         sorted_ = sorted((self, other), key=lambda x: x.ranges[0].start)
         if sorted_[0].ranges[0].stop >= sorted_[1].ranges[0].start:
             return Domain(
@@ -569,11 +569,11 @@ class Domain(Sequence[NamedRange[_Rng]], Generic[_Rng]):
                 ranges=(UnitRange(sorted_[0].ranges[0].start, sorted_[1].ranges[0].stop),),
             )
         else:
-            return DomainTuple((sorted_[0], sorted_[1]))
+            return _DomainTuple((sorted_[0], sorted_[1]))
 
-    def __ror__(self, other: Domain | tuple[Domain, ...]) -> Domain | tuple[Domain, ...]:
+    def __ror__(self, other: Domain | tuple[Domain, ...]) -> Domain | _DomainTuple:
         if isinstance(other, tuple):
-            return DomainTuple((*other, self))
+            return _DomainTuple((*other, self))
         if isinstance(other, Domain):
             return other | self
         return NotImplemented
@@ -662,10 +662,10 @@ class Domain(Sequence[NamedRange[_Rng]], Generic[_Rng]):
         return state
 
 
-class DomainTuple(tuple):
+class _DomainTuple(tuple):
     """A tuple of Domains that supports ``&`` and ``|`` operators."""
 
-    def __and__(self, other: Domain | DomainTuple) -> Domain | DomainTuple:
+    def __and__(self, other: Domain | _DomainTuple) -> Domain | _DomainTuple:
         if isinstance(other, Domain):
             results = tuple(r for d in self if not (r := d & other).is_empty())
         elif isinstance(other, tuple):
@@ -676,9 +676,9 @@ class DomainTuple(tuple):
             return NotImplemented
         if len(results) == 1:
             return results[0]
-        return DomainTuple(results)
+        return _DomainTuple(results)
 
-    def __rand__(self, other: Domain | tuple[Domain, ...]) -> Domain | DomainTuple:
+    def __rand__(self, other: Domain | tuple[Domain, ...]) -> Domain | _DomainTuple:
         if isinstance(other, Domain):
             return other & self
         if isinstance(other, tuple):
@@ -687,21 +687,21 @@ class DomainTuple(tuple):
             )
             if len(results) == 1:
                 return results[0]
-            return DomainTuple(results)
+            return _DomainTuple(results)
         return NotImplemented
 
-    def __or__(self, other: Domain | tuple[Domain, ...]) -> DomainTuple:
+    def __or__(self, other: Domain | tuple[Domain, ...]) -> _DomainTuple:
         if isinstance(other, Domain):
-            return DomainTuple((*self, other))
+            return _DomainTuple((*self, other))
         if isinstance(other, tuple):
-            return DomainTuple((*self, *other))
+            return _DomainTuple((*self, *other))
         return NotImplemented
 
-    def __ror__(self, other: Domain | tuple[Domain, ...]) -> DomainTuple:
+    def __ror__(self, other: Domain | tuple[Domain, ...]) -> _DomainTuple:
         if isinstance(other, Domain):
-            return DomainTuple((other, *self))
+            return _DomainTuple((other, *self))
         if isinstance(other, tuple):
-            return DomainTuple((*other, *self))
+            return _DomainTuple((*other, *self))
         return NotImplemented
 
 
