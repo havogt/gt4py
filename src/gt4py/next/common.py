@@ -505,9 +505,14 @@ class Domain(Sequence[NamedRange[_Rng]], Generic[_Rng]):
 
         raise KeyError("Invalid index type, must be either int, slice, or Dimension.")
 
-    def __and__(self, other: Domain) -> Domain:
+    def __and__(
+        self, other: Domain | tuple[Domain, ...]
+    ) -> Domain | tuple[Domain, ...]:
         """
         Intersect `Domain`s, missing `Dimension`s are considered infinite.
+
+        When intersecting with a tuple, empty results are filtered out.
+        If only one non-empty result remains, a single `Domain` is returned.
 
         Examples:
             >>> I = Dimension("I")
@@ -522,7 +527,10 @@ class Domain(Sequence[NamedRange[_Rng]], Generic[_Rng]):
             Domain(dims=(Dimension(value='I', kind=<DimensionKind.HORIZONTAL: 'horizontal'>), Dimension(value='J', kind=<DimensionKind.HORIZONTAL: 'horizontal'>)), ranges=(UnitRange(1, 3), UnitRange(2, 4)))
         """
         if isinstance(other, tuple):
-            return tuple(self & d for d in other)
+            results = tuple(r for d in other if not (r := self & d).is_empty())
+            if len(results) == 1:
+                return results[0]
+            return results
         broadcast_dims = tuple(promote_dims(self.dims, other.dims))
         intersected_ranges = tuple(
             rng1 & rng2
@@ -533,12 +541,19 @@ class Domain(Sequence[NamedRange[_Rng]], Generic[_Rng]):
         )
         return Domain(dims=broadcast_dims, ranges=intersected_ranges)
 
-    def __rand__(self, other: tuple) -> tuple:
+    def __rand__(self, other: Domain | tuple[Domain, ...]) -> Domain | tuple[Domain, ...]:
         if isinstance(other, tuple):
-            return tuple(d & self for d in other)
+            results = tuple(r for d in other if not (r := d & self).is_empty())
+            if len(results) == 1:
+                return results[0]
+            return results
+        if isinstance(other, Domain):
+            return other & self
         return NotImplemented
 
-    def __or__(self, other: Domain | tuple) -> Domain | tuple[Domain, ...]:
+    def __or__(
+        self, other: Domain | tuple[Domain, ...]
+    ) -> Domain | tuple[Domain, ...]:
         if isinstance(other, tuple):
             return (*other, self)
         if self.ndim > 1 or other.ndim > 1:
@@ -558,9 +573,11 @@ class Domain(Sequence[NamedRange[_Rng]], Generic[_Rng]):
         else:
             return (sorted_[0], sorted_[1])
 
-    def __ror__(self, other: tuple) -> tuple:
+    def __ror__(self, other: Domain | tuple[Domain, ...]) -> Domain | tuple[Domain, ...]:
         if isinstance(other, tuple):
             return (*other, self)
+        if isinstance(other, Domain):
+            return other | self
         return NotImplemented
 
     @functools.cached_property

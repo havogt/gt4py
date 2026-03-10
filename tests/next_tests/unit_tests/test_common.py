@@ -760,6 +760,25 @@ class TestDomainAndOperator:
         assert result[0] == d & t[0]
         assert result[1] == d & t[1]
 
+    def test_and_with_tuple_filters_empty(self):
+        """Domain & tuple filters out empty intersections."""
+        d = D0 >= 0
+        ne = (D0).__ne__(0)  # (-inf, 0) and (1, +inf)
+        result = d & ne
+        # (-inf, 0) & [0, +inf) = [0, 0) which is empty → filtered out
+        assert result == Domain(dims=(D0,), ranges=(UnitRange(1, Infinity.POSITIVE),))
+
+    def test_and_with_tuple_all_empty(self):
+        """Domain & tuple where all intersections are empty returns empty tuple."""
+        d = Domain(dims=(D0,), ranges=(UnitRange(10, 20),))
+        t = (
+            Domain(dims=(D0,), ranges=(UnitRange(0, 5),)),
+            Domain(dims=(D0,), ranges=(UnitRange(25, 30),)),
+        )
+        result = d & t
+        assert isinstance(result, tuple)
+        assert len(result) == 0
+
     def test_rand_tuple_and_domain(self):
         """tuple[Domain, ...] & Domain uses __rand__."""
         d = Domain(dims=(D1,), ranges=(UnitRange(0, 5),))
@@ -772,6 +791,13 @@ class TestDomainAndOperator:
         assert len(result) == 2
         assert result[0] == t[0] & d
         assert result[1] == t[1] & d
+
+    def test_rand_filters_empty(self):
+        """tuple & Domain via __rand__ also filters empty intersections."""
+        ne = (D0).__ne__(0)  # (-inf, 0) and (1, +inf)
+        d = D0 >= 0
+        result = ne & d
+        assert result == Domain(dims=(D0,), ranges=(UnitRange(1, Infinity.POSITIVE),))
 
 
 class TestDomainOrOperator:
