@@ -1045,13 +1045,8 @@ def test_hyperslice(index_array, expected):
         #     ([1, 1], {D1: (0, 2)}),
         #     # TODO
         # ),
-        # 2D
-        (
-            ((D0 == 0) & (D1 == 0)),
-            ([[0, 0], [0, 0]], None),
-            ([[1, 1], [1, 1]], None),
-            ([[0, 1], [1, 1]], None),
-        ),
+        # tuple domain from != (D0 != 1 → two disjoint 1D domains)
+        (D0 != 1, ([10, 20, 30], None), ([1, 2, 3], None), ([10, 2, 30], None)),
         # (
         #     ([True, False, True, False, True], None),
         #     ([1, 2, 3, 4, 5], None),

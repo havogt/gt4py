@@ -131,14 +131,12 @@ class Dimension:
             return False
 
     def __ne__(self, value: Dimension | core_defs.IntegralScalar) -> bool | tuple[Domain, Domain]:
-        # TODO add test
         if isinstance(value, Dimension):
             return self.value != value.value
         elif isinstance(value, core_defs.INTEGRAL_TYPES):
-            # TODO probably only within valid embedded context?
             return (
-                Domain(self, UnitRange(Infinity.NEGATIVE, value)),
-                Domain(self, UnitRange(value + 1, Infinity.POSITIVE)),
+                Domain(dims=(self,), ranges=(UnitRange(Infinity.NEGATIVE, value),)),
+                Domain(dims=(self,), ranges=(UnitRange(value + 1, Infinity.POSITIVE),)),
             )
         else:
             return True

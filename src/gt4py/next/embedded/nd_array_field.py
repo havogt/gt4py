@@ -933,11 +933,11 @@ def _invert_domain(
     sorted_domains = sorted(domains, key=lambda d: d.ranges[0].start)
 
     result = []
-    if domains[0].ranges[0].start is not common.Infinity.NEGATIVE:
+    if sorted_domains[0].ranges[0].start is not common.Infinity.NEGATIVE:
         result.append(
             common.Domain(
                 dims=(dim,),
-                ranges=(common.UnitRange(common.Infinity.NEGATIVE, domains[0].ranges[0].start),),
+                ranges=(common.UnitRange(common.Infinity.NEGATIVE, sorted_domains[0].ranges[0].start),),
             )
         )
     for i in range(len(sorted_domains) - 1):
@@ -952,7 +952,7 @@ def _invert_domain(
                     ),
                 )
             )
-    if domains[-1].ranges[0].stop is not common.Infinity.POSITIVE:
+    if sorted_domains[-1].ranges[0].stop is not common.Infinity.POSITIVE:
         result.append(
             common.Domain(
                 dims=(dim,),
@@ -991,7 +991,7 @@ def _concat_where(
 ) -> common.Field:
     if not isinstance(masks, tuple):
         masks = (masks,)
-    if any(m.ndim for m in masks) != 1:
+    if not all(m.ndim == 1 for m in masks):
         raise NotImplementedError(
             "'concat_where': Can only concatenate fields with a 1-dimensional mask."
         )
