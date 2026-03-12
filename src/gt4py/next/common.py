@@ -118,14 +118,12 @@ class Dimension:
         return Domain(dims=(self,), ranges=(UnitRange(Infinity.NEGATIVE, value),))
 
     def __le__(self, value: core_defs.IntegralScalar) -> Domain:
-        # TODO add test
         return Domain(dims=(self,), ranges=(UnitRange(Infinity.NEGATIVE, value + 1),))
 
     def __eq__(self, value: Dimension | core_defs.IntegralScalar) -> bool | Domain:
         if isinstance(value, Dimension):
             return self.value == value.value
         elif isinstance(value, core_defs.INTEGRAL_TYPES):
-            # TODO probably only within valid embedded context?
             return Domain(dims=(self,), ranges=(UnitRange(value, value + 1),))
         else:
             return False
@@ -532,23 +530,26 @@ class Domain(Sequence[NamedRange[_Rng]], Generic[_Rng]):
         )
         return Domain(dims=broadcast_dims, ranges=intersected_ranges)
 
-    def __or__(self, other: Domain) -> Domain:
-        # TODO support arbitrary union of domains
-        # TODO add tests
+    def __or__(self, other: Domain) -> Domain | tuple[Domain, Domain]:
+        """
+        Union of 1D `Domain`s.
+
+        Returns a single `Domain` if the ranges overlap or are adjacent,
+        otherwise returns a tuple of two disjoint `Domain`s (sorted by start).
+        """
         if self.ndim > 1 or other.ndim > 1:
             raise NotImplementedError("Union of multidimensional domains is not supported.")
         if self.ndim == 0:
             return other
         if other.ndim == 0:
             return self
-        sorted_ = sorted((self, other), key=lambda x: x.ranges[0].start)
-        if sorted_[0].ranges[0].stop >= sorted_[1].ranges[0].start:
+        first, second = sorted((self, other), key=lambda x: x.ranges[0].start)
+        if first.ranges[0].stop >= second.ranges[0].start:
             return Domain(
                 dims=(self.dims[0],),
-                ranges=(UnitRange(sorted_[0].ranges[0].start, sorted_[1].ranges[0].stop),),
+                ranges=(UnitRange(first.ranges[0].start, second.ranges[0].stop),),
             )
-        else:
-            return (sorted_[0], sorted_[1])
+        return (first, second)
 
     @functools.cached_property
     def slice_at(self) -> utils.IndexerCallable[slice, Domain]:
