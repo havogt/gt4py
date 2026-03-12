@@ -129,6 +129,8 @@ class Dimension:
             return False
 
     def __ne__(self, value: Dimension | core_defs.IntegralScalar) -> bool | tuple[Domain, Domain]:
+        # TODO(havogt): Non-consecutive domains are represented as tuples, limited to
+        #  simple cases that produce at most a tuple of 2 domains. See ADR 0022.
         if isinstance(value, Dimension):
             return self.value != value.value
         elif isinstance(value, core_defs.INTEGRAL_TYPES):
@@ -536,7 +538,10 @@ class Domain(Sequence[NamedRange[_Rng]], Generic[_Rng]):
 
         Returns a single `Domain` if the ranges overlap or are adjacent,
         otherwise returns a tuple of two disjoint `Domain`s (sorted by start).
+
+        See ADR 0022 for limitations of non-consecutive domain representation.
         """
+        # TODO(havogt): Domain union only works for 1D domains.
         if self.ndim > 1 or other.ndim > 1:
             raise NotImplementedError("Union of multidimensional domains is not supported.")
         if self.ndim == 0:
