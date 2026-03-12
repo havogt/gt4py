@@ -34,6 +34,26 @@ This is sufficient for the `concat_where` use case (`K != i` splits a dimension 
 
 ## Alternatives considered
 
+### General `concat_where` with multi-dimensional domain conditions
+
+A previous implementation supported multi-dimensional domain conditions (e.g. `(I != 2) | (K != 5)`) in `concat_where`. This required:
+
+1. **A `_DomainTuple` class** with full algebra: a `tuple` subclass carrying `__and__`, `__or__`, `__rand__`, `__ror__` operators so that expressions like `tuple & Domain`, `Domain & tuple`, and `tuple | tuple` all work. `Domain.__and__` and `Domain.__or__` had to handle tuple operands (distributing intersection over tuple elements, filtering empty results).
+
+2. **Normalization of domain tuples**: to ensure correctness, `_DomainTuple` construction required three invariants:
+   - All domains promoted to the same rank (missing dimensions filled with infinite ranges).
+   - Overlapping domains made non-overlapping via box subtraction (`_subtract_domain`), preserving priority order.
+   - Adjacent domains differing in exactly one dimension merged greedily (`_try_merge`, `_merge_domains`).
+
+   This alone introduced ~100 lines of geometric algorithms (box subtraction producing slab decompositions, greedy merge with O(n^2) passes).
+
+3. **Cut-point decomposition in `concat_where`**: for multi-dimensional masks, `_concat_where` could no longer simply concatenate along a single dimension. It required collecting all cut points along the first mask dimension, slicing the field into intervals, determining which mask domains cover each interval, stripping the first dimension, and recursing. This replaced the straightforward 1D concatenation with a recursive decomposition that was harder to reason about and test.
+
+- Bad, because the domain algebra is complex (box subtraction, merge, normalization) and fragile — each operation must maintain the same-rank, non-overlapping, merged invariants.
+- Bad, because `concat_where` becomes a recursive decomposition algorithm instead of a simple 1D concatenation, making correctness harder to verify.
+- Bad, because supporting multi-dimensional non-consecutive domains raises the fundamental question of how to represent fields on non-hypercubic domains — the `_DomainTuple` only describes the *condition* but does not address how the resulting field is stored or indexed.
+- Bad, because the use case is narrow: the primary need is vertical level exclusion (`K != i`), which is 1D.
+
 ### Dedicated non-consecutive domain type
 
 Introduce a `DomainUnion` class that stores an arbitrary collection of `Domain` objects.
