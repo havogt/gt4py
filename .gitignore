@@ -161,3 +161,4 @@ venv.bak/
 .obsidian
 coverage.json
 .caches
+.gt4py_cache/
