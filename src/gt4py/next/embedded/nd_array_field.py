@@ -301,14 +301,21 @@ class NdArrayField(
         if not (conn_fields[0].kind & common.ConnectivityKind.ALTER_STRUCT):
             return _domain_premap(self, *conn_fields)
 
-        if any(c.kind & common.ConnectivityKind.ALTER_DIMS for c in conn_fields) and any(
-            (~c.kind & common.ConnectivityKind.ALTER_DIMS) for c in conn_fields
-        ):
+        # Determine reshuffling vs remapping based on whether any connectivity
+        # introduces dimensions that are not already in the field's domain.
+        # This is a property of the (connectivity, field) pair, not the connectivity alone.
+        def _introduces_new_dims(c: common.Connectivity) -> bool:
+            new_dims = {*c.domain.dims} - {c.codomain}
+            return bool(new_dims - {*self.domain.dims})
+
+        has_new_dims = [_introduces_new_dims(c) for c in conn_fields]
+
+        if any(has_new_dims) and not all(has_new_dims):
             raise ValueError(
-                "Mixing connectivities that change the dimensions in the domain with connectivities that do not is not allowed."
+                "Mixing connectivities that introduce new dimensions with connectivities that do not is not allowed."
             )
 
-        if not (conn_fields[0].kind & common.ConnectivityKind.ALTER_DIMS):
+        if not any(has_new_dims):
             assert all(isinstance(c, NdArrayConnectivityField) for c in conn_fields)
             return _reshuffling_premap(self, *cast(list[NdArrayConnectivityField], conn_fields))
 
@@ -467,9 +474,7 @@ class NdArrayConnectivityField(  # type: ignore[misc] # for __ne__, __eq__
     _kind: Optional[common.ConnectivityKind] = None
 
     def __post_init__(self) -> None:
-        assert self._kind is None or bool(self._kind & common.ConnectivityKind.ALTER_DIMS) == (
-            self.domain.dim_index(self.codomain) is not None
-        )
+        pass
 
     @functools.cached_property
     def _cache(self) -> dict:
@@ -491,15 +496,13 @@ class NdArrayConnectivityField(  # type: ignore[misc] # for __ne__, __eq__
     @property
     def kind(self) -> common.ConnectivityKind:
         if self._kind is None:
+            # NdArrayConnectivityField always rearranges data (ALTER_STRUCT).
+            # Whether dimensions change (ALTER_DIMS) depends on the field being
+            # premapped, so it is determined in premap() dispatch, not here.
             object.__setattr__(
                 self,
                 "_kind",
-                common.ConnectivityKind.ALTER_STRUCT
-                | (
-                    common.ConnectivityKind.ALTER_DIMS
-                    if any(dim.kind == common.DimensionKind.LOCAL for dim in self.domain.dims)
-                    else common.ConnectivityKind(0)
-                ),
+                common.ConnectivityKind.ALTER_STRUCT,
             )
             assert self._kind is not None
 
