@@ -120,26 +120,56 @@ class Dimension:
     def __le__(self, value: core_defs.IntegralScalar) -> Domain:
         return Domain(dims=(self,), ranges=(UnitRange(Infinity.NEGATIVE, value + 1),))
 
+    @overload  # type: ignore[override]  # incompatible with supertype `object.__eq__` which returns `bool`.
+    def __eq__(self, value: Dimension) -> bool: ...
+    @overload
+    def __eq__(self, value: core_defs.IntegralScalar) -> Domain: ...
     def __eq__(self, value: Dimension | core_defs.IntegralScalar) -> bool | Domain:
         if isinstance(value, Dimension):
             return self.value == value.value
-        elif isinstance(value, core_defs.INTEGRAL_TYPES):
-            return Domain(dims=(self,), ranges=(UnitRange(value, value + 1),))
-        else:
-            return False
+        if isinstance(value, core_defs.INTEGRAL_TYPES):
+            int_value = cast(core_defs.IntegralScalar, value)
+            return Domain(dims=(self,), ranges=(UnitRange(int_value, int_value + 1),))
+        # This will fallback to default identity comparison if reflection also returns `NotImplemented`,
+        # which does identity comparison, see https://docs.python.org/3/reference/datamodel.html#object.__eq__.
+        return NotImplemented
 
-    def __ne__(self, value: Dimension | core_defs.IntegralScalar) -> bool | tuple[Domain, Domain]:
-        # TODO(havogt): Non-consecutive domains are represented as tuples, limited to
-        #  simple cases that produce at most a tuple of 2 domains. See ADR 0022.
+    @overload  # type: ignore[override]  # incompatible with supertype `object.__ne__` which returns `bool`.
+    def __ne__(self, value: Dimension) -> bool: ...
+    @overload
+    def __ne__(self, value: core_defs.IntegralScalar) -> Domain: ...
+    def __ne__(self, value: Dimension | core_defs.IntegralScalar) -> bool | Domain:
         if isinstance(value, Dimension):
             return self.value != value.value
-        elif isinstance(value, core_defs.INTEGRAL_TYPES):
-            return (
-                Domain(dims=(self,), ranges=(UnitRange(Infinity.NEGATIVE, value),)),
-                Domain(dims=(self,), ranges=(UnitRange(value + 1, Infinity.POSITIVE),)),
+        if isinstance(value, core_defs.INTEGRAL_TYPES):
+            raise NotImplementedError(
+                "'Dimension.__ne__' with an integer value produces two disjoint domains, "
+                "which is not supported. Use 'concat_where(dim < value, ...) "
+                "concat_where(dim > value, ...)' to express the condition, see ADR 22."
             )
-        else:
-            return True
+        return NotImplemented
+
+
+if TYPE_CHECKING:
+    # These exist as on-the fly replacements for Dimension instances
+    # (which are not types) during typechecking (with mypy). We can
+    # track up to four distinct dimensions at a time, everything beyond
+    # becomes AnyDim
+
+    @dataclasses.dataclass(frozen=True)
+    class _DimA(Dimension): ...
+
+    @dataclasses.dataclass(frozen=True)
+    class _DimB(Dimension): ...
+
+    @dataclasses.dataclass(frozen=True)
+    class _DimC(Dimension): ...
+
+    @dataclasses.dataclass(frozen=True)
+    class _DimD(Dimension): ...
+
+    @dataclasses.dataclass(frozen=True)
+    class _AnyDim(Dimension): ...
 
 
 class Infinity(enum.Enum):
@@ -532,29 +562,35 @@ class Domain(Sequence[NamedRange[_Rng]], Generic[_Rng]):
         )
         return Domain(dims=broadcast_dims, ranges=intersected_ranges)
 
-    def __or__(self, other: Domain) -> Domain | tuple[Domain, Domain]:
+    def __or__(self, other: Domain) -> Domain:
         """
-        Union of 1D `Domain`s.
+        Union of `Domain`s, currently limited to 1D overlapping or adjacent domains.
 
-        Returns a single `Domain` if the ranges overlap or are adjacent,
-        otherwise returns a tuple of two disjoint `Domain`s (sorted by start).
-
-        See ADR 0022 for limitations of non-consecutive domain representation.
+        Raises `NotImplementedError` for multidimensional domains or disjoint 1D domains.
+        See ADR 22.
         """
-        # TODO(havogt): Domain union only works for 1D domains.
         if self.ndim > 1 or other.ndim > 1:
-            raise NotImplementedError("Union of multidimensional domains is not supported.")
+            raise NotImplementedError(
+                "Union of multidimensional domains is not supported, see ADR 22."
+            )
         if self.ndim == 0:
             return other
         if other.ndim == 0:
             return self
+        if self.dims[0] != other.dims[0]:
+            raise NotImplementedError(
+                f"Union of 1D domains with different dimensions '{self.dims[0]}' and '{other.dims[0]}' is not supported."
+            )
         first, second = sorted((self, other), key=lambda x: x.ranges[0].start)
         if first.ranges[0].stop >= second.ranges[0].start:
             return Domain(
                 dims=(self.dims[0],),
                 ranges=(UnitRange(first.ranges[0].start, second.ranges[0].stop),),
             )
-        return (first, second)
+        raise NotImplementedError(
+            f"Union of disjoint domains '{first}' and '{second}' is not supported. "
+            f"Use nested 'concat_where' to express non-contiguous conditions, see ADR 22."
+        )
 
     @functools.cached_property
     def slice_at(self) -> utils.IndexerCallable[slice, Domain]:
@@ -830,6 +866,18 @@ class Field(GTFieldInterface, Protocol[DimsT, core_defs.ScalarT]):
     def __pow__(self, other: Field | core_defs.ScalarT) -> Field: ...
 
     @abc.abstractmethod
+    def __lt__(self, other: Field | core_defs.ScalarT) -> Field[Any, bool]: ...
+
+    @abc.abstractmethod
+    def __le__(self, other: Field | core_defs.ScalarT) -> Field[Any, bool]: ...
+
+    @abc.abstractmethod
+    def __gt__(self, other: Field | core_defs.ScalarT) -> Field[Any, bool]: ...
+
+    @abc.abstractmethod
+    def __ge__(self, other: Field | core_defs.ScalarT) -> Field[Any, bool]: ...
+
+    @abc.abstractmethod
     def __and__(self, other: Field | core_defs.ScalarT) -> Field:
         """Only defined for `Field` of value type `bool`."""
 
@@ -1051,34 +1099,46 @@ class Connectivity(Field[DimsT, core_defs.IntegralScalar], Protocol[DimsT, DimT_
     def __add__(self, other: Field | core_defs.IntegralScalar) -> Never:
         raise TypeError("'Connectivity' does not support this operation.")
 
-    def __radd__(self, other: Field | core_defs.IntegralScalar) -> Never:  # type: ignore[misc] # Forward operator not callalbe
+    def __radd__(self, other: Field | core_defs.IntegralScalar) -> Never:
         raise TypeError("'Connectivity' does not support this operation.")
 
     def __sub__(self, other: Field | core_defs.IntegralScalar) -> Never:
         raise TypeError("'Connectivity' does not support this operation.")
 
-    def __rsub__(self, other: Field | core_defs.IntegralScalar) -> Never:  # type: ignore[misc] # Forward operator not callalbe
+    def __rsub__(self, other: Field | core_defs.IntegralScalar) -> Never:
         raise TypeError("'Connectivity' does not support this operation.")
 
     def __mul__(self, other: Field | core_defs.IntegralScalar) -> Never:
         raise TypeError("'Connectivity' does not support this operation.")
 
-    def __rmul__(self, other: Field | core_defs.IntegralScalar) -> Never:  # type: ignore[misc] # Forward operator not callalbe
+    def __rmul__(self, other: Field | core_defs.IntegralScalar) -> Never:
         raise TypeError("'Connectivity' does not support this operation.")
 
     def __truediv__(self, other: Field | core_defs.IntegralScalar) -> Never:
         raise TypeError("'Connectivity' does not support this operation.")
 
-    def __rtruediv__(self, other: Field | core_defs.IntegralScalar) -> Never:  # type: ignore[misc] # Forward operator not callalbe
+    def __rtruediv__(self, other: Field | core_defs.IntegralScalar) -> Never:
         raise TypeError("'Connectivity' does not support this operation.")
 
     def __floordiv__(self, other: Field | core_defs.IntegralScalar) -> Never:
         raise TypeError("'Connectivity' does not support this operation.")
 
-    def __rfloordiv__(self, other: Field | core_defs.IntegralScalar) -> Never:  # type: ignore[misc] # Forward operator not callalbe
+    def __rfloordiv__(self, other: Field | core_defs.IntegralScalar) -> Never:
         raise TypeError("'Connectivity' does not support this operation.")
 
     def __pow__(self, other: Field | core_defs.IntegralScalar) -> Never:
+        raise TypeError("'Connectivity' does not support this operation.")
+
+    def __lt__(self, other: Field | core_defs.IntegralScalar) -> Never:
+        raise TypeError("'Connectivity' does not support this operation.")
+
+    def __le__(self, other: Field | core_defs.IntegralScalar) -> Never:
+        raise TypeError("'Connectivity' does not support this operation.")
+
+    def __gt__(self, other: Field | core_defs.IntegralScalar) -> Never:
+        raise TypeError("'Connectivity' does not support this operation.")
+
+    def __ge__(self, other: Field | core_defs.IntegralScalar) -> Never:
         raise TypeError("'Connectivity' does not support this operation.")
 
     def __and__(self, other: Field | core_defs.IntegralScalar) -> Never:
@@ -1262,7 +1322,7 @@ class CartesianConnectivity(Connectivity[Dims[DomainDimT], DimT]):
 
     @property
     def dtype(self) -> core_defs.DType[core_defs.IntegralScalar]:
-        return core_defs.Int32DType()  # type: ignore[return-value]
+        return core_defs.Int32DType()
 
     # This is a workaround to make this class concrete, since `codomain` is an
     # abstract property of the `Connectivity` Protocol.
