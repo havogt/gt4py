@@ -1135,7 +1135,8 @@ def test_hyperslice(index_array, expected):
         #     # TODO
         # ),
         # tuple domain from != (D0 != 1 → two disjoint 1D domains)
-        (D0 != 1, ([10, 20, 30], None), ([1, 2, 3], None), ([10, 2, 30], None)),
+        # TODO: change back to `D0 != 1` once Dimension.__ne__ with int is supported again
+        ((D0 < 1, D0 > 1), ([10, 20, 30], None), ([1, 2, 3], None), ([10, 2, 30], None)),
         # (
         #     ([True, False, True, False, True], None),
         #     ([1, 2, 3, 4, 5], None),
