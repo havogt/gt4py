@@ -820,19 +820,6 @@ NdArrayField.register_builtin_func(
 NdArrayField.register_builtin_func(fbuiltins.where, _make_builtin("where", "where"))
 
 
-def _trim_empty_domains(
-    lst: Iterable[tuple[bool, common.Domain]],
-) -> list[tuple[bool, common.Domain]]:
-    """Remove empty domains from beginning and end of the list."""
-    lst = list(lst)
-    if not lst:
-        return lst
-    if lst[0][1].is_empty():
-        return _trim_empty_domains(lst[1:])
-    if lst[-1][1].is_empty():
-        return _trim_empty_domains(lst[:-1])
-    return lst
-
 
 def _to_field(
     value: common.Field | core_defs.Scalar, nd_array_field_type: type[NdArrayField]
@@ -946,7 +933,7 @@ def _invert_domain(
         result.append(
             common.Domain(
                 dims=(dim,),
-                ranges=(common.UnitRange(domains[-1].ranges[0].stop, common.Infinity.POSITIVE),),
+                ranges=(common.UnitRange(sorted_domains[-1].ranges[0].stop, common.Infinity.POSITIVE),),
             )
         )
     return tuple(result)
@@ -1004,7 +991,7 @@ def _concat_where(
     return _concat(*f_slices, *t_slices, dim=mask_dim)
 
 
-NdArrayField.register_builtin_func(experimental.concat_where, _concat_where)  # type: ignore[arg-type] # TODO(havogt): this is still the "old" concat_where, needs to be replaced in a next PR
+NdArrayField.register_builtin_func(experimental.concat_where, _concat_where)  # type: ignore[arg-type]
 
 
 def _make_reduction(
