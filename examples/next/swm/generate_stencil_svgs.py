@@ -5,12 +5,13 @@ Generate SVG stencil diagrams for the Shallow Water Model (SWM) operators.
 Illustrates the Arakawa C-grid staggering and the stencil patterns for:
   Phase 1 — intermediate quantities: cu, cv, z, h
   Phase 2 — time-step updates:       ũ, ṽ, p̃
+  Composite — full dependency from initial (p, u, v) to final (ũ, ṽ, p̃)
 
 Shapes encode grid location — matching WHERE on the C-grid they live:
-  ● circle         → vertex        (z)       — sits at grid intersections
-  ━ horizontal bar → x-edge        (u, cu)   — straddles vertical cell boundary
-  ┃ vertical bar   → y-edge        (v, cv)   — straddles horizontal cell boundary
-  (text only)      → cell center   (p, h)    — floats inside the cell
+  ● circle (filled)  → vertex        (z)       — sits at grid intersections
+  ━ horizontal bar   → x-edge        (u, cu)   — straddles vertical cell boundary
+  ┃ vertical bar     → y-edge        (v, cv)   — straddles horizontal cell boundary
+  (text only)        → cell center   (p, h)    — floats inside the cell
 
 The background grid shows cell boundaries (dashed lines). Vertices sit at
 intersections, edges sit on boundaries, and cell-center quantities sit
@@ -19,6 +20,7 @@ between boundaries — making the staggering immediately visible.
 Output SVGs use the CSCS Reveal.js color palette.
 """
 
+import argparse
 import math
 import os
 
@@ -29,7 +31,6 @@ CIRCLE_R = 14      # vertex circle radius
 BAR_LONG = 42      # edge bar long axis (px) — elongated along edge direction
 BAR_SHORT = 14     # edge bar short axis (px)
 BAR_RX = 3         # edge bar corner radius
-SMALL_SCALE = 0.65 # scale for same-position input shapes
 FONT = 12          # label font size
 FONT_BAR = 11      # label font inside bars
 FONT_CENTER = 13   # label font for cell-center text
@@ -38,7 +39,7 @@ STROKE_OUT = 2.2
 ARROW_W = 1.1
 PAD = 52           # padding around each sub-diagram
 TITLE_H = 24       # space for title above diagram
-ANIM_DT = 0.13     # seconds between animation steps
+ANIM_DT = 0.13     # seconds between animation steps (configurable via --anim-dt)
 GAP = 16           # gap between sub-diagrams in combined SVGs
 
 OUTPUT_DIR = os.path.join(
@@ -88,7 +89,6 @@ STENCILS = {
     'cu': {
         'formula': 'cu = ⟨p⟩ₓ · u',
         'out_label': 'cu', 'out_var': 'u',
-        'same': ('u', 'u'),
         'inputs': [
             (-1, 0, 'p', 'p'),
             ( 1, 0, 'p', 'p'),
@@ -97,7 +97,6 @@ STENCILS = {
     'cv': {
         'formula': 'cv = ⟨p⟩ᵧ · v',
         'out_label': 'cv', 'out_var': 'v',
-        'same': ('v', 'v'),
         'inputs': [
             (0, -1, 'p', 'p'),
             (0,  1, 'p', 'p'),
@@ -116,7 +115,6 @@ STENCILS = {
     'h': {
         'formula': 'h (Bernoulli)',
         'out_label': 'h', 'out_var': 'h',
-        'same': ('p', 'p'),
         'inputs': [
             (-1, 0, 'u', 'u'), (1, 0, 'u', 'u'),
             (0, -1, 'v', 'v'), (0, 1, 'v', 'v'),
@@ -126,7 +124,6 @@ STENCILS = {
     'unew': {
         'formula': 'ũ (u update)',
         'out_label': 'ũ', 'out_var': 'u',
-        'same': ('U', 'u'),
         'inputs': [
             ( 0, -1, 'z', 'z'), ( 0,  1, 'z', 'z'),
             (-1,  0, 'h', 'h'), ( 1,  0, 'h', 'h'),
@@ -137,7 +134,6 @@ STENCILS = {
     'vnew': {
         'formula': 'ṽ (v update)',
         'out_label': 'ṽ', 'out_var': 'v',
-        'same': ('V', 'v'),
         'inputs': [
             (-1,  0, 'z', 'z'), ( 1,  0, 'z', 'z'),
             ( 0, -1, 'h', 'h'), ( 0,  1, 'h', 'h'),
@@ -148,10 +144,57 @@ STENCILS = {
     'pnew': {
         'formula': 'p\u0303 (p update)',
         'out_label': 'p\u0303', 'out_var': 'p',
-        'same': ('p', 'p'),
         'inputs': [
             (-1, 0, 'U', 'u'), (1, 0, 'U', 'u'),
             (0, -1, 'V', 'v'), (0, 1, 'V', 'v'),
+        ],
+    },
+    # ── Composite stencils: final quantities from initial (p, u, v) ──
+    # These trace the full dependency chain Phase1→Phase2, showing only
+    # original field values. The self-read at (0,0) is omitted (implied).
+    'u_composite': {
+        'formula': 'ũ from (p, u, v)',
+        'out_label': 'ũ', 'out_var': 'u',
+        'inputs': [
+            # p inputs (6) — from z, h, cv, cu expansions
+            (-1, -2, 'p', 'p'), ( 1, -2, 'p', 'p'),
+            (-1,  0, 'p', 'p'), ( 1,  0, 'p', 'p'),
+            (-1,  2, 'p', 'p'), ( 1,  2, 'p', 'p'),
+            # u inputs (4, excluding self at 0,0) — from z, h expansions
+            ( 0, -2, 'u', 'u'), ( 0,  2, 'u', 'u'),
+            (-2,  0, 'u', 'u'), ( 2,  0, 'u', 'u'),
+            # v inputs (4) — from z, h expansions
+            (-1, -1, 'v', 'v'), ( 1, -1, 'v', 'v'),
+            (-1,  1, 'v', 'v'), ( 1,  1, 'v', 'v'),
+        ],
+    },
+    'v_composite': {
+        'formula': 'ṽ from (p, u, v)',
+        'out_label': 'ṽ', 'out_var': 'v',
+        'inputs': [
+            # p inputs (6)
+            (-2, -1, 'p', 'p'), (-2,  1, 'p', 'p'),
+            ( 0, -1, 'p', 'p'), ( 0,  1, 'p', 'p'),
+            ( 2, -1, 'p', 'p'), ( 2,  1, 'p', 'p'),
+            # v inputs (4, excluding self at 0,0)
+            (-2,  0, 'v', 'v'), ( 2,  0, 'v', 'v'),
+            ( 0, -2, 'v', 'v'), ( 0,  2, 'v', 'v'),
+            # u inputs (4)
+            (-1, -1, 'u', 'u'), (-1,  1, 'u', 'u'),
+            ( 1, -1, 'u', 'u'), ( 1,  1, 'u', 'u'),
+        ],
+    },
+    'p_composite': {
+        'formula': 'p\u0303 from (p, u, v)',
+        'out_label': 'p\u0303', 'out_var': 'p',
+        'inputs': [
+            # p inputs (4, excluding self at 0,0) — from cu, cv expansions
+            (-2,  0, 'p', 'p'), ( 2,  0, 'p', 'p'),
+            ( 0, -2, 'p', 'p'), ( 0,  2, 'p', 'p'),
+            # u inputs (2)
+            (-1,  0, 'u', 'u'), ( 1,  0, 'u', 'u'),
+            # v inputs (2)
+            ( 0, -1, 'v', 'v'), ( 0,  1, 'v', 'v'),
         ],
     },
 }
@@ -187,11 +230,10 @@ def _shape_margin(var, dx, dy):
     return min(hw / ndx, hh / ndy) + 3
 
 
-def shape_svg(cx, cy, label, var, is_output=False, small=False, cls=''):
+def shape_svg(cx, cy, label, var, is_output=False, cls=''):
     """Generate SVG group for a shape with label."""
     color = VC.get(var, TEXT_C)
     stype = SHAPE_TYPE.get(var, 'text')
-    scale = SMALL_SCALE if small else 1.0
     sw = STROKE_OUT if is_output else STROKE
     fw = '700' if is_output else '500'
     cls_attr = f' class="{cls}"' if cls else ''
@@ -199,32 +241,29 @@ def shape_svg(cx, cy, label, var, is_output=False, small=False, cls=''):
     s = f'<g{cls_attr}>\n'
 
     if stype == 'circle':
-        r = CIRCLE_R * scale
-        fill = f'{color}" fill-opacity="0.15' if is_output else '#ffffff'
-        s += f'  <circle cx="{cx}" cy="{cy}" r="{r}" fill="{fill}" stroke="{color}" stroke-width="{sw}"/>\n'
-        fs = FONT * scale
+        r = CIRCLE_R
+        opacity = '0.82' if is_output else '0.62'
+        s += f'  <circle cx="{cx}" cy="{cy}" r="{r}" fill="{color}" fill-opacity="{opacity}" stroke="none"/>\n'
         s += (f'  <text x="{cx}" y="{cy}" text-anchor="middle" dominant-baseline="central" '
-              f'font-family="Arial,sans-serif" font-size="{fs:.0f}" font-weight="{fw}" '
-              f'fill="{color}">{label}</text>\n')
+              f'font-family="Arial,sans-serif" font-size="{FONT}" font-weight="{fw}" '
+              f'fill="#ffffff">{label}</text>\n')
 
     elif stype in ('bar_x', 'bar_y'):
         if stype == 'bar_x':
-            bw, bh = BAR_LONG * scale, BAR_SHORT * scale
+            bw, bh = BAR_LONG, BAR_SHORT
         else:
-            bw, bh = BAR_SHORT * scale, BAR_LONG * scale
-        rx = BAR_RX * scale
+            bw, bh = BAR_SHORT, BAR_LONG
+        rx = BAR_RX
         opacity = '0.82' if is_output else '0.62'
         s += (f'  <rect x="{cx - bw/2}" y="{cy - bh/2}" width="{bw}" height="{bh}" '
               f'rx="{rx}" fill="{color}" fill-opacity="{opacity}" stroke="none"/>\n')
-        fs = FONT_BAR * scale
         s += (f'  <text x="{cx}" y="{cy}" text-anchor="middle" dominant-baseline="central" '
-              f'font-family="Arial,sans-serif" font-size="{fs:.0f}" font-weight="{fw}" '
+              f'font-family="Arial,sans-serif" font-size="{FONT_BAR}" font-weight="{fw}" '
               f'fill="#ffffff">{label}</text>\n')
 
     else:  # text — cell center, no shape
-        fs = FONT_CENTER * scale
         s += (f'  <text x="{cx}" y="{cy}" text-anchor="middle" dominant-baseline="central" '
-              f'font-family="Arial,sans-serif" font-size="{fs:.0f}" font-weight="{fw}" '
+              f'font-family="Arial,sans-serif" font-size="{FONT_CENTER}" font-weight="{fw}" '
               f'fill="{color}">{label}</text>\n')
 
     s += '</g>\n'
@@ -260,7 +299,7 @@ def grid_lines_svg(cx, cy, out_var, inputs):
 
     lines = ''
     # Vertical cell boundaries
-    for n in range(-5, 6):
+    for n in range(-6, 7):
         if abs(n) > max_x + 1.5:
             continue
         if n % 2 == xp:  # matches the parity for cell boundaries
@@ -271,7 +310,7 @@ def grid_lines_svg(cx, cy, out_var, inputs):
                       f'stroke="{GRID_C}" stroke-width="0.9" stroke-dasharray="4,3"/>\n')
 
     # Horizontal cell boundaries
-    for n in range(-5, 6):
+    for n in range(-6, 7):
         if abs(n) > max_y + 1.5:
             continue
         if n % 2 == yp:
@@ -293,15 +332,20 @@ def render_stencil(name, ox=0, oy=0, animate=True, id_prefix=''):
     """
     st = STENCILS[name]
     inputs = st['inputs']
-    same = st.get('same')
+
+    # Compute extent dynamically from inputs
+    extent_x = max((abs(inp[0]) for inp in inputs), default=1)
+    extent_y = max((abs(inp[1]) for inp in inputs), default=1)
+    extent_x = max(extent_x, 1)
+    extent_y = max(extent_y, 1)
 
     # Sub-diagram dimensions
-    w = 2 * PAD + 2 * CELL
-    h = 2 * PAD + 2 * CELL + TITLE_H
+    w = 2 * PAD + 2 * extent_x * CELL
+    h = 2 * PAD + 2 * extent_y * CELL + TITLE_H
 
     # Center of the stencil pattern
-    cx = PAD + CELL
-    cy = PAD + CELL + TITLE_H
+    cx = PAD + extent_x * CELL
+    cy = PAD + extent_y * CELL + TITLE_H
 
     pfx = id_prefix or name
     svg = f'<g transform="translate({ox},{oy})" id="stencil-{pfx}">\n'
@@ -332,22 +376,6 @@ def render_stencil(name, ox=0, oy=0, animate=True, id_prefix=''):
         svg += shape_svg(ix, iy, inp[2], inp[3], cls=cls)
         step += 1
 
-    # Same-position input (small, offset)
-    if same:
-        cls = f'a-{pfx}-{step}' if animate else ''
-        # Offset direction depends on output shape type
-        stype = SHAPE_TYPE.get(st['out_var'], 'text')
-        if stype == 'bar_x':
-            off_x, off_y = 20, 12
-        elif stype == 'bar_y':
-            off_x, off_y = 12, 20
-        elif stype == 'circle':
-            off_x, off_y = 16, 12
-        else:
-            off_x, off_y = 15, 12
-        svg += shape_svg(cx + off_x, cy + off_y, same[0], same[1], small=True, cls=cls)
-        step += 1
-
     # Output shape (drawn last, on top)
     cls = f'a-{pfx}-out' if animate else ''
     svg += shape_svg(cx, cy, st['out_label'], st['out_var'], is_output=True, cls=cls)
@@ -368,17 +396,12 @@ def animation_css(stencil_names, id_prefixes=None):
     for name, pfx in zip(stencil_names, id_prefixes):
         st = STENCILS[name]
         n_inputs = len(st['inputs'])
-        has_same = st.get('same') is not None
 
         for i in range(n_inputs):
             delay = i * ANIM_DT
             css += f'.a-{pfx}-{i} {{ opacity:0; animation: fadeIn 0.25s ease-out {delay:.2f}s both; }}\n'
 
-        if has_same:
-            delay = n_inputs * ANIM_DT
-            css += f'.a-{pfx}-{n_inputs} {{ opacity:0; animation: fadeIn 0.25s ease-out {delay:.2f}s both; }}\n'
-
-        out_delay = (n_inputs + (1 if has_same else 0)) * ANIM_DT + 0.1
+        out_delay = n_inputs * ANIM_DT + 0.1
         css += (f'.a-{pfx}-out {{ opacity:0; animation: popIn 0.35s ease-out {out_delay:.2f}s both; '
                 f'transform-box: fill-box; transform-origin: center; }}\n')
 
@@ -423,19 +446,19 @@ def legend_svg(ox, oy, show_intermediates=False):
         sc = 0.7
         if stype == 'circle':
             r = CIRCLE_R * sc
-            svg += f'  <circle cx="{x + r}" cy="0" r="{r}" fill="#ffffff" stroke="{color}" stroke-width="{STROKE}"/>\n'
+            svg += f'  <circle cx="{x + r}" cy="0" r="{r}" fill="{color}" fill-opacity="0.62" stroke="none"/>\n'
             svg += (f'  <text x="{x + 2*r + 6}" y="0" dominant-baseline="central" '
                     f'font-family="Arial,sans-serif" font-size="11" fill="{TEXT_MUTED}">{desc}</text>\n')
         elif stype == 'bar_x':
             bw, bh = BAR_LONG * sc, BAR_SHORT * sc
             svg += (f'  <rect x="{x}" y="{-bh/2}" width="{bw}" height="{bh}" rx="{BAR_RX*sc}" '
-                    f'fill="#ffffff" stroke="{color}" stroke-width="{STROKE}"/>\n')
+                    f'fill="{color}" fill-opacity="0.62" stroke="none"/>\n')
             svg += (f'  <text x="{x + bw + 6}" y="0" dominant-baseline="central" '
                     f'font-family="Arial,sans-serif" font-size="11" fill="{TEXT_MUTED}">{desc}</text>\n')
         elif stype == 'bar_y':
             bw, bh = BAR_SHORT * sc, BAR_LONG * sc
             svg += (f'  <rect x="{x}" y="{-bh/2}" width="{bw}" height="{bh}" rx="{BAR_RX*sc}" '
-                    f'fill="#ffffff" stroke="{color}" stroke-width="{STROKE}"/>\n')
+                    f'fill="{color}" fill-opacity="0.62" stroke="none"/>\n')
             svg += (f'  <text x="{x + bw + 6}" y="0" dominant-baseline="central" '
                     f'font-family="Arial,sans-serif" font-size="11" fill="{TEXT_MUTED}">{desc}</text>\n')
         else:  # text
@@ -451,11 +474,20 @@ def legend_svg(ox, oy, show_intermediates=False):
 
 # ─── Combined SVG generators ─────────────────────────────────────────────────
 
+def _stencil_dims(name):
+    """Return (width, height) for a stencil sub-diagram."""
+    st = STENCILS[name]
+    inputs = st['inputs']
+    ex = max((abs(inp[0]) for inp in inputs), default=1)
+    ey = max((abs(inp[1]) for inp in inputs), default=1)
+    ex, ey = max(ex, 1), max(ey, 1)
+    return 2 * PAD + 2 * ex * CELL, 2 * PAD + 2 * ey * CELL + TITLE_H
+
+
 def generate_phase1_svg():
     """Generate combined SVG for Phase 1 intermediates (cu, cv, z, h)."""
     names = ['cu', 'cv', 'z', 'h']
-    sub_w = 2 * PAD + 2 * CELL
-    sub_h = 2 * PAD + 2 * CELL + TITLE_H
+    sub_w, sub_h = _stencil_dims(names[0])  # all same size
 
     cols, rows = 2, 2
     total_w = cols * sub_w + (cols - 1) * GAP
@@ -479,8 +511,7 @@ def generate_phase1_svg():
 def generate_phase2_svg():
     """Generate combined SVG for Phase 2 updates (ũ, ṽ, p̃)."""
     names = ['unew', 'vnew', 'pnew']
-    sub_w = 2 * PAD + 2 * CELL
-    sub_h = 2 * PAD + 2 * CELL + TITLE_H
+    sub_w, sub_h = _stencil_dims(names[0])
 
     cols = 3
     total_w = cols * sub_w + (cols - 1) * GAP
@@ -493,6 +524,27 @@ def generate_phase2_svg():
         content += svg_part
 
     content += legend_svg(20, total_h - 20, show_intermediates=True)
+
+    css = animation_css(names)
+    return wrap_svg(content, total_w, total_h, css)
+
+
+def generate_composite_svg():
+    """Generate combined SVG for composite stencils (ũ, ṽ, p̃ from initial)."""
+    names = ['u_composite', 'v_composite', 'p_composite']
+    sub_w, sub_h = _stencil_dims(names[0])  # all extent=2, same size
+
+    cols = 3
+    total_w = cols * sub_w + (cols - 1) * GAP
+    total_h = sub_h + 40
+
+    content = ''
+    for idx, name in enumerate(names):
+        ox = idx * (sub_w + GAP)
+        svg_part, _, _, _ = render_stencil(name, ox, 0)
+        content += svg_part
+
+    content += legend_svg(20, total_h - 20)
 
     css = animation_css(names)
     return wrap_svg(content, total_w, total_h, css)
@@ -511,6 +563,14 @@ def generate_individual_svgs():
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
+    global ANIM_DT
+
+    parser = argparse.ArgumentParser(description='Generate SWM stencil SVGs')
+    parser.add_argument('--anim-dt', type=float, default=ANIM_DT,
+                        help=f'Animation step delay in seconds (default: {ANIM_DT})')
+    args = parser.parse_args()
+    ANIM_DT = args.anim_dt
+
     out_dir = os.path.normpath(OUTPUT_DIR)
     os.makedirs(out_dir, exist_ok=True)
 
@@ -526,6 +586,12 @@ def main():
         f.write(phase2)
     print(f'  wrote {phase2_path}')
 
+    composite = generate_composite_svg()
+    composite_path = os.path.join(out_dir, 'swm_composite.svg')
+    with open(composite_path, 'w') as f:
+        f.write(composite)
+    print(f'  wrote {composite_path}')
+
     individuals = generate_individual_svgs()
     for name, svg in individuals.items():
         path = os.path.join(out_dir, f'swm_{name}.svg')
@@ -533,7 +599,7 @@ def main():
             f.write(svg)
         print(f'  wrote {path}')
 
-    print(f'\nDone — {2 + len(individuals)} SVGs written to {out_dir}/')
+    print(f'\nDone — {3 + len(individuals)} SVGs written to {out_dir}/')
 
 
 if __name__ == '__main__':
