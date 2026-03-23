@@ -26,9 +26,9 @@ import os
 
 CELL = 65          # px between adjacent staggered positions (= half a cell)
 CIRCLE_R = 14      # vertex circle radius
-BAR_LONG = 34      # edge bar long axis (px)
+BAR_LONG = 42      # edge bar long axis (px) — elongated along edge direction
 BAR_SHORT = 14     # edge bar short axis (px)
-BAR_RX = 4         # edge bar corner radius
+BAR_RX = 3         # edge bar corner radius
 SMALL_SCALE = 0.65 # scale for same-position input shapes
 FONT = 12          # label font size
 FONT_BAR = 11      # label font inside bars
@@ -207,37 +207,22 @@ def shape_svg(cx, cy, label, var, is_output=False, small=False, cls=''):
               f'font-family="Arial,sans-serif" font-size="{fs:.0f}" font-weight="{fw}" '
               f'fill="{color}">{label}</text>\n')
 
-    elif stype == 'bar_x':
-        bw = BAR_LONG * scale
-        bh = BAR_SHORT * scale
+    elif stype in ('bar_x', 'bar_y'):
+        if stype == 'bar_x':
+            bw, bh = BAR_LONG * scale, BAR_SHORT * scale
+        else:
+            bw, bh = BAR_SHORT * scale, BAR_LONG * scale
         rx = BAR_RX * scale
-        fill = f'{color}" fill-opacity="0.15' if is_output else '#ffffff'
+        opacity = '0.82' if is_output else '0.62'
         s += (f'  <rect x="{cx - bw/2}" y="{cy - bh/2}" width="{bw}" height="{bh}" '
-              f'rx="{rx}" fill="{fill}" stroke="{color}" stroke-width="{sw}"/>\n')
+              f'rx="{rx}" fill="{color}" fill-opacity="{opacity}" stroke="none"/>\n')
         fs = FONT_BAR * scale
         s += (f'  <text x="{cx}" y="{cy}" text-anchor="middle" dominant-baseline="central" '
               f'font-family="Arial,sans-serif" font-size="{fs:.0f}" font-weight="{fw}" '
-              f'fill="{color}">{label}</text>\n')
-
-    elif stype == 'bar_y':
-        bw = BAR_SHORT * scale
-        bh = BAR_LONG * scale
-        rx = BAR_RX * scale
-        fill = f'{color}" fill-opacity="0.15' if is_output else '#ffffff'
-        s += (f'  <rect x="{cx - bw/2}" y="{cy - bh/2}" width="{bw}" height="{bh}" '
-              f'rx="{rx}" fill="{fill}" stroke="{color}" stroke-width="{sw}"/>\n')
-        fs = FONT_BAR * scale
-        s += (f'  <text x="{cx}" y="{cy}" text-anchor="middle" dominant-baseline="central" '
-              f'font-family="Arial,sans-serif" font-size="{fs:.0f}" font-weight="{fw}" '
-              f'fill="{color}">{label}</text>\n')
+              f'fill="#ffffff">{label}</text>\n')
 
     else:  # text — cell center, no shape
         fs = FONT_CENTER * scale
-        if is_output:
-            # Subtle background highlight for output text
-            s += (f'  <rect x="{cx - 14 * scale}" y="{cy - 10 * scale}" '
-                  f'width="{28 * scale}" height="{20 * scale}" rx="3" '
-                  f'fill="{color}" fill-opacity="0.08" stroke="none"/>\n')
         s += (f'  <text x="{cx}" y="{cy}" text-anchor="middle" dominant-baseline="central" '
               f'font-family="Arial,sans-serif" font-size="{fs:.0f}" font-weight="{fw}" '
               f'fill="{color}">{label}</text>\n')
