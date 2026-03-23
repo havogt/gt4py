@@ -898,58 +898,21 @@ def _concat(*fields: common.Field, dim: common.Dimension) -> common.Field:
     )
 
 
-def _invert_domain(
-    domains: common.Domain | tuple[common.Domain],
-) -> common.Domain | tuple[common.Domain, ...]:
-    if not isinstance(domains, tuple):
-        domains = (domains,)
-
-    assert all(d.ndim == 1 for d in domains)
-    dim = domains[0].dims[0]
-    assert all(d.dims[0] == dim for d in domains)
-    sorted_domains = sorted(domains, key=lambda d: d.ranges[0].start)
+def _invert_domain(domain: common.Domain) -> tuple[common.Domain, ...]:
+    assert domain.ndim == 1
+    dim = domain.dims[0]
+    rng = domain.ranges[0]
 
     result = []
-    if sorted_domains[0].ranges[0].start is not common.Infinity.NEGATIVE:
+    if rng.start is not common.Infinity.NEGATIVE:
         result.append(
-            common.Domain(
-                dims=(dim,),
-                ranges=(common.UnitRange(common.Infinity.NEGATIVE, sorted_domains[0].ranges[0].start),),
-            )
+            common.Domain(dims=(dim,), ranges=(common.UnitRange(common.Infinity.NEGATIVE, rng.start),))
         )
-    for i in range(len(sorted_domains) - 1):
-        if sorted_domains[i].ranges[0].stop != sorted_domains[i + 1].ranges[0].start:
-            result.append(
-                common.Domain(
-                    dims=(dim,),
-                    ranges=(
-                        common.UnitRange(
-                            sorted_domains[i].ranges[0].stop, sorted_domains[i + 1].ranges[0].start
-                        ),
-                    ),
-                )
-            )
-    if sorted_domains[-1].ranges[0].stop is not common.Infinity.POSITIVE:
+    if rng.stop is not common.Infinity.POSITIVE:
         result.append(
-            common.Domain(
-                dims=(dim,),
-                ranges=(common.UnitRange(sorted_domains[-1].ranges[0].stop, common.Infinity.POSITIVE),),
-            )
+            common.Domain(dims=(dim,), ranges=(common.UnitRange(rng.stop, common.Infinity.POSITIVE),))
         )
     return tuple(result)
-
-
-def _intersect_multiple(
-    domain: common.Domain, domains: common.Domain | tuple[common.Domain]
-) -> tuple[common.Domain, ...]:
-    if not isinstance(domains, tuple):
-        domains = (domains,)
-
-    return tuple(
-        intersection
-        for d in domains
-        if not (intersection := embedded_common.domain_intersection(domain, d)).is_empty()
-    )
 
 
 def _size0_field(
@@ -962,26 +925,28 @@ def _size0_field(
 
 
 def _concat_where(
-    masks: common.Domain | tuple[common.Domain, ...],
+    mask: common.Domain,
     true_field: common.Field,
     false_field: common.Field,
 ) -> common.Field:
-    if not isinstance(masks, tuple):
-        masks = (masks,)
-    if not all(m.ndim == 1 for m in masks):
+    if mask.ndim != 1:
         raise NotImplementedError(
             "'concat_where': Can only concatenate fields with a 1-dimensional mask."
         )
-    mask_dim = masks[0].dims[0]
+    mask_dim = mask.dims[0]
 
     # intersect the field in dimensions orthogonal to the mask, then all slices in the mask field have same domain
     t_broadcasted, f_broadcasted = _intersect_fields(true_field, false_field, ignore_dims=mask_dim)
 
-    true_domains = _intersect_multiple(t_broadcasted.domain, masks)
-    t_slices = tuple(t_broadcasted[d] for d in true_domains)
+    true_domain = embedded_common.domain_intersection(t_broadcasted.domain, mask)
+    t_slices = () if true_domain.is_empty() else (t_broadcasted[true_domain],)
 
-    inverted_masks = _invert_domain(masks)
-    false_domains = _intersect_multiple(f_broadcasted.domain, inverted_masks)
+    inverted_masks = _invert_domain(mask)
+    false_domains = tuple(
+        intersection
+        for d in inverted_masks
+        if not (intersection := embedded_common.domain_intersection(f_broadcasted.domain, d)).is_empty()
+    )
     f_slices = tuple(f_broadcasted[d] for d in false_domains)
 
     if len(t_slices) + len(f_slices) == 0:

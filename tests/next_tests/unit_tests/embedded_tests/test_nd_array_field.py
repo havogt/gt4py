@@ -1130,18 +1130,6 @@ def test_hyperslice(index_array, expected):
                 pytest.mark.xfail(reason="requires infinite domain support"),
             ],
         ),
-        # tuple domain from != (D0 != 1 → two disjoint 1D domains)
-        # TODO: change back to `D0 != 1` once Dimension.__ne__ with int is supported again
-        ((D0 < 1, D0 > 1), ([10, 20, 30], None), ([1, 2, 3], None), ([10, 2, 30], None)),
-        # same as above but with reversed tuple order (regression test for _invert_domain sorting bug)
-        ((D0 > 1, D0 < 1), ([10, 20, 30], None), ([1, 2, 3], None), ([10, 2, 30], None)),
-        # reversed tuple order with finite domains that exposes the sorting bug in _invert_domain
-        (
-            ((D0 >= 5) & (D0 < 7), (D0 >= 0) & (D0 < 2)),
-            ([10, 20, 30, 40, 50, 60, 70], {D0: (0, 7)}),
-            ([1, 2, 3, 4, 5, 6, 7], {D0: (0, 7)}),
-            ([10, 20, 3, 4, 5, 60, 70], {D0: (0, 7)}),
-        ),
     ],
 )
 def test_concat_where(
