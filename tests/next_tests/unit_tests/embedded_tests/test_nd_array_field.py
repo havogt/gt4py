@@ -1130,12 +1130,6 @@ def test_hyperslice(index_array, expected):
                 pytest.mark.xfail(reason="requires infinite domain support"),
             ],
         ),
-        # TODO: different dimensions — semantics undefined
-        # (
-        #     D0 == 0,
-        #     ([0, 0], {D0: (0, 2)}),
-        #     ([1, 1], {D1: (0, 2)}),
-        # ),
         # tuple domain from != (D0 != 1 → two disjoint 1D domains)
         # TODO: change back to `D0 != 1` once Dimension.__ne__ with int is supported again
         ((D0 < 1, D0 > 1), ([10, 20, 30], None), ([1, 2, 3], None), ([10, 2, 30], None)),
