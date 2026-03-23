@@ -6,11 +6,15 @@ Illustrates the Arakawa C-grid staggering and the stencil patterns for:
   Phase 1 — intermediate quantities: cu, cv, z, h
   Phase 2 — time-step updates:       ũ, ṽ, p̃
 
-Shapes encode grid location:
-  ● circle    → cell center  (p, h)
-  ◆ diamond_x → x-edge       (u, cu)  — wider horizontally
-  ◆ diamond_y → y-edge       (v, cv)  — taller vertically
-  ■ square    → vertex        (z)
+Shapes encode grid location — matching WHERE on the C-grid they live:
+  ● circle         → vertex        (z)       — sits at grid intersections
+  ━ horizontal bar → x-edge        (u, cu)   — straddles vertical cell boundary
+  ┃ vertical bar   → y-edge        (v, cv)   — straddles horizontal cell boundary
+  (text only)      → cell center   (p, h)    — floats inside the cell
+
+The background grid shows cell boundaries (dashed lines). Vertices sit at
+intersections, edges sit on boundaries, and cell-center quantities sit
+between boundaries — making the staggering immediately visible.
 
 Output SVGs use the CSCS Reveal.js color palette.
 """
@@ -20,15 +24,15 @@ import os
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 
-CELL = 65          # px between adjacent staggered positions
-R = 17             # base shape radius
-R_LONG = 21        # diamond long axis
-R_SHORT = 13       # diamond short axis
-SMALL_R = 11       # same-position input shape radius
-SMALL_RL = 14
-SMALL_RS = 9
-FONT = 12
-FONT_SM = 10
+CELL = 65          # px between adjacent staggered positions (= half a cell)
+CIRCLE_R = 14      # vertex circle radius
+BAR_LONG = 34      # edge bar long axis (px)
+BAR_SHORT = 14     # edge bar short axis (px)
+BAR_RX = 4         # edge bar corner radius
+SMALL_SCALE = 0.65 # scale for same-position input shapes
+FONT = 12          # label font size
+FONT_BAR = 11      # label font inside bars
+FONT_CENTER = 13   # label font for cell-center text
 STROKE = 1.6
 STROKE_OUT = 2.2
 ARROW_W = 1.1
@@ -51,17 +55,27 @@ VC = {
     'h': '#800080',   # purple     — Bernoulli (cell center)
 }
 ARROW_C = '#b5b5b5'
-GRID_C = '#e4e6ea'
+GRID_C = '#d0d3d8'
 TEXT_C = '#2c2c2c'
 TEXT_MUTED = '#888888'
 
-# Shape type per variable
-SHAPE = {
-    'p': 'circle',
-    'u': 'diamond_x',
-    'v': 'diamond_y',
-    'z': 'square',
-    'h': 'circle',
+# Shape type per variable — determines visual representation
+SHAPE_TYPE = {
+    'p': 'text',       # cell center: text only
+    'u': 'bar_x',      # x-edge: horizontal bar
+    'v': 'bar_y',      # y-edge: vertical bar
+    'z': 'circle',     # vertex: circle
+    'h': 'text',       # Bernoulli at cell center: text only
+}
+
+# Grid parity: whether cell boundaries pass through even or odd CELL offsets
+# (0 = boundaries at 0, ±2, ±4 CELL; 1 = boundaries at ±1, ±3, ±5 CELL)
+GRID_PARITY = {
+    'z': (0, 0),   # vertex sits at boundary intersection
+    'p': (1, 1),   # cell center sits between boundaries
+    'h': (1, 1),
+    'u': (0, 1),   # x-edge on vertical boundary, between horizontal ones
+    'v': (1, 0),   # y-edge on horizontal boundary, between vertical ones
 }
 
 
@@ -145,85 +159,143 @@ STENCILS = {
 
 # ─── SVG element helpers ─────────────────────────────────────────────────────
 
-def _shape_path(cx, cy, stype, r=R, rl=R_LONG, rs=R_SHORT):
-    """Return SVG element (without closing) for a shape."""
+def _shape_margin(var, dx, dy):
+    """Compute arrow margin from a shape's center in direction (dx, dy).
+
+    Uses line–bounding-box intersection so arrows stop at the shape edge.
+    """
+    d = math.hypot(dx, dy)
+    if d < 0.01:
+        return 0
+    ndx, ndy = abs(dx / d), abs(dy / d)
+
+    stype = SHAPE_TYPE.get(var, 'text')
     if stype == 'circle':
-        return f'<circle cx="{cx}" cy="{cy}" r="{r}"'
-    elif stype == 'diamond_x':
-        pts = f'{cx - rl},{cy} {cx},{cy - rs} {cx + rl},{cy} {cx},{cy + rs}'
-        return f'<polygon points="{pts}"'
-    elif stype == 'diamond_y':
-        pts = f'{cx - rs},{cy} {cx},{cy - rl} {cx + rs},{cy} {cx},{cy + rl}'
-        return f'<polygon points="{pts}"'
-    elif stype == 'square':
-        s = r * 0.82
-        return f'<rect x="{cx - s}" y="{cy - s}" width="{2 * s}" height="{2 * s}"'
-    return ''
+        return CIRCLE_R + 3
+    elif stype == 'bar_x':
+        hw, hh = BAR_LONG / 2, BAR_SHORT / 2
+    elif stype == 'bar_y':
+        hw, hh = BAR_SHORT / 2, BAR_LONG / 2
+    else:  # text
+        hw, hh = 10, 8
+
+    # Line–rect intersection distance from center
+    if ndx < 0.01:
+        return hh + 3
+    if ndy < 0.01:
+        return hw + 3
+    return min(hw / ndx, hh / ndy) + 3
 
 
 def shape_svg(cx, cy, label, var, is_output=False, small=False, cls=''):
     """Generate SVG group for a shape with label."""
     color = VC.get(var, TEXT_C)
-    stype = SHAPE.get(var, 'circle')
-    if small:
-        r, rl, rs, fs, sw = SMALL_R, SMALL_RL, SMALL_RS, FONT_SM, STROKE
-    elif is_output:
-        r, rl, rs, fs, sw = R, R_LONG, R_SHORT, FONT, STROKE_OUT
-    else:
-        r, rl, rs, fs, sw = R, R_LONG, R_SHORT, FONT, STROKE
-
+    stype = SHAPE_TYPE.get(var, 'text')
+    scale = SMALL_SCALE if small else 1.0
+    sw = STROKE_OUT if is_output else STROKE
     fw = '700' if is_output else '500'
     cls_attr = f' class="{cls}"' if cls else ''
 
     s = f'<g{cls_attr}>\n'
-    if is_output:
-        s += f'  {_shape_path(cx, cy, stype, r, rl, rs)} fill="{color}" fill-opacity="0.12" stroke="{color}" stroke-width="{sw}"/>\n'
-    else:
-        s += f'  {_shape_path(cx, cy, stype, r, rl, rs)} fill="#ffffff" stroke="{color}" stroke-width="{sw}"/>\n'
-    s += (f'  <text x="{cx}" y="{cy}" text-anchor="middle" dominant-baseline="central" '
-          f'font-family="Arial,sans-serif" font-size="{fs}" font-weight="{fw}" '
-          f'fill="{color}">{label}</text>\n')
+
+    if stype == 'circle':
+        r = CIRCLE_R * scale
+        fill = f'{color}" fill-opacity="0.15' if is_output else '#ffffff'
+        s += f'  <circle cx="{cx}" cy="{cy}" r="{r}" fill="{fill}" stroke="{color}" stroke-width="{sw}"/>\n'
+        fs = FONT * scale
+        s += (f'  <text x="{cx}" y="{cy}" text-anchor="middle" dominant-baseline="central" '
+              f'font-family="Arial,sans-serif" font-size="{fs:.0f}" font-weight="{fw}" '
+              f'fill="{color}">{label}</text>\n')
+
+    elif stype == 'bar_x':
+        bw = BAR_LONG * scale
+        bh = BAR_SHORT * scale
+        rx = BAR_RX * scale
+        fill = f'{color}" fill-opacity="0.15' if is_output else '#ffffff'
+        s += (f'  <rect x="{cx - bw/2}" y="{cy - bh/2}" width="{bw}" height="{bh}" '
+              f'rx="{rx}" fill="{fill}" stroke="{color}" stroke-width="{sw}"/>\n')
+        fs = FONT_BAR * scale
+        s += (f'  <text x="{cx}" y="{cy}" text-anchor="middle" dominant-baseline="central" '
+              f'font-family="Arial,sans-serif" font-size="{fs:.0f}" font-weight="{fw}" '
+              f'fill="{color}">{label}</text>\n')
+
+    elif stype == 'bar_y':
+        bw = BAR_SHORT * scale
+        bh = BAR_LONG * scale
+        rx = BAR_RX * scale
+        fill = f'{color}" fill-opacity="0.15' if is_output else '#ffffff'
+        s += (f'  <rect x="{cx - bw/2}" y="{cy - bh/2}" width="{bw}" height="{bh}" '
+              f'rx="{rx}" fill="{fill}" stroke="{color}" stroke-width="{sw}"/>\n')
+        fs = FONT_BAR * scale
+        s += (f'  <text x="{cx}" y="{cy}" text-anchor="middle" dominant-baseline="central" '
+              f'font-family="Arial,sans-serif" font-size="{fs:.0f}" font-weight="{fw}" '
+              f'fill="{color}">{label}</text>\n')
+
+    else:  # text — cell center, no shape
+        fs = FONT_CENTER * scale
+        if is_output:
+            # Subtle background highlight for output text
+            s += (f'  <rect x="{cx - 14 * scale}" y="{cy - 10 * scale}" '
+                  f'width="{28 * scale}" height="{20 * scale}" rx="3" '
+                  f'fill="{color}" fill-opacity="0.08" stroke="none"/>\n')
+        s += (f'  <text x="{cx}" y="{cy}" text-anchor="middle" dominant-baseline="central" '
+              f'font-family="Arial,sans-serif" font-size="{fs:.0f}" font-weight="{fw}" '
+              f'fill="{color}">{label}</text>\n')
+
     s += '</g>\n'
     return s
 
 
-def arrow_svg(x1, y1, x2, y2, cls=''):
+def arrow_svg(x1, y1, x2, y2, var_from, var_to, cls=''):
     """Generate SVG arrow line from (x1,y1) toward (x2,y2)."""
     dx, dy = x2 - x1, y2 - y1
     d = math.hypot(dx, dy)
     if d < 1:
         return ''
-    margin = R + 5
-    f = margin / d
-    ax1 = x1 + dx * f
-    ay1 = y1 + dy * f
-    ax2 = x2 - dx * f
-    ay2 = y2 - dy * f
+    m1 = _shape_margin(var_from, dx, dy)
+    m2 = _shape_margin(var_to, -dx, -dy)
+    ax1 = x1 + dx * (m1 / d)
+    ay1 = y1 + dy * (m1 / d)
+    ax2 = x2 - dx * (m2 / d)
+    ay2 = y2 - dy * (m2 / d)
     cls_attr = f' class="{cls}"' if cls else ''
     return (f'<line{cls_attr} x1="{ax1:.1f}" y1="{ay1:.1f}" '
             f'x2="{ax2:.1f}" y2="{ay2:.1f}" '
             f'stroke="{ARROW_C}" stroke-width="{ARROW_W}" marker-end="url(#ah)"/>\n')
 
 
-def grid_lines_svg(cx, cy, inputs):
-    """Draw faint background grid lines based on actual stencil extent."""
-    # Determine which grid lines are needed from input positions
-    xs = sorted(set([0] + [inp[0] for inp in inputs]))
-    ys = sorted(set([0] + [inp[1] for inp in inputs]))
-    x_ext = max(abs(xs[0]), abs(xs[-1])) if xs else 1
-    y_ext = max(abs(ys[0]), abs(ys[-1])) if ys else 1
-    margin = 15
+def grid_lines_svg(cx, cy, out_var, inputs):
+    """Draw cell boundary grid lines. Only boundaries, not through cell centers."""
+    xp, yp = GRID_PARITY.get(out_var, (1, 1))
+
+    # Determine extent from inputs
+    max_x = max((abs(inp[0]) for inp in inputs), default=1)
+    max_y = max((abs(inp[1]) for inp in inputs), default=1)
+    margin = 18
+
     lines = ''
-    for nx in xs:
-        x = cx + nx * CELL
-        lines += (f'<line x1="{x}" y1="{cy - y_ext * CELL - margin}" '
-                  f'x2="{x}" y2="{cy + y_ext * CELL + margin}" '
-                  f'stroke="{GRID_C}" stroke-width="0.8" stroke-dasharray="3,4"/>\n')
-    for ny in ys:
-        y = cy + ny * CELL
-        lines += (f'<line x1="{cx - x_ext * CELL - margin}" y1="{y}" '
-                  f'x2="{cx + x_ext * CELL + margin}" y2="{y}" '
-                  f'stroke="{GRID_C}" stroke-width="0.8" stroke-dasharray="3,4"/>\n')
+    # Vertical cell boundaries
+    for n in range(-5, 6):
+        if abs(n) > max_x + 1.5:
+            continue
+        if n % 2 == xp:  # matches the parity for cell boundaries
+            x = cx + n * CELL
+            y_lo = cy - max_y * CELL - margin
+            y_hi = cy + max_y * CELL + margin
+            lines += (f'<line x1="{x}" y1="{y_lo}" x2="{x}" y2="{y_hi}" '
+                      f'stroke="{GRID_C}" stroke-width="0.9" stroke-dasharray="4,3"/>\n')
+
+    # Horizontal cell boundaries
+    for n in range(-5, 6):
+        if abs(n) > max_y + 1.5:
+            continue
+        if n % 2 == yp:
+            y = cy + n * CELL
+            x_lo = cx - max_x * CELL - margin
+            x_hi = cx + max_x * CELL + margin
+            lines += (f'<line x1="{x_lo}" y1="{y}" x2="{x_hi}" y2="{y}" '
+                      f'stroke="{GRID_C}" stroke-width="0.9" stroke-dasharray="4,3"/>\n')
+
     return lines
 
 
@@ -249,8 +321,8 @@ def render_stencil(name, ox=0, oy=0, animate=True, id_prefix=''):
     pfx = id_prefix or name
     svg = f'<g transform="translate({ox},{oy})" id="stencil-{pfx}">\n'
 
-    # Background grid
-    svg += grid_lines_svg(cx, cy, inputs)
+    # Background grid — cell boundaries only
+    svg += grid_lines_svg(cx, cy, st['out_var'], inputs)
 
     # Title
     svg += (f'<text x="{w / 2}" y="{TITLE_H - 4}" text-anchor="middle" '
@@ -263,7 +335,7 @@ def render_stencil(name, ox=0, oy=0, animate=True, id_prefix=''):
         ix = cx + inp[0] * CELL
         iy = cy + inp[1] * CELL
         cls = f'a-{pfx}-{step}' if animate else ''
-        svg += arrow_svg(ix, iy, cx, cy, cls)
+        svg += arrow_svg(ix, iy, cx, cy, inp[3], st['out_var'], cls)
         step += 1
 
     # Input shapes (on top of arrows)
@@ -278,7 +350,17 @@ def render_stencil(name, ox=0, oy=0, animate=True, id_prefix=''):
     # Same-position input (small, offset)
     if same:
         cls = f'a-{pfx}-{step}' if animate else ''
-        svg += shape_svg(cx + 15, cy + 14, same[0], same[1], small=True, cls=cls)
+        # Offset direction depends on output shape type
+        stype = SHAPE_TYPE.get(st['out_var'], 'text')
+        if stype == 'bar_x':
+            off_x, off_y = 20, 12
+        elif stype == 'bar_y':
+            off_x, off_y = 12, 20
+        elif stype == 'circle':
+            off_x, off_y = 16, 12
+        else:
+            off_x, off_y = 15, 12
+        svg += shape_svg(cx + off_x, cy + off_y, same[0], same[1], small=True, cls=cls)
         step += 1
 
     # Output shape (drawn last, on top)
@@ -341,22 +423,42 @@ def wrap_svg(content, width, height, css=''):
 def legend_svg(ox, oy, show_intermediates=False):
     """Draw a shape/color legend."""
     items = [
-        ('circle', 'p', 'p — cell center'),
-        ('diamond_x', 'u', 'u — x-edge'),
-        ('diamond_y', 'v', 'v — y-edge'),
-        ('square', 'z', 'z — vertex'),
+        ('text', 'p', 'p — cell center'),
+        ('bar_x', 'u', 'u — x-edge'),
+        ('bar_y', 'v', 'v — y-edge'),
+        ('circle', 'z', 'z — vertex'),
     ]
     if show_intermediates:
-        items.append(('circle', 'h', 'h — Bernoulli'))
+        items.append(('text', 'h', 'h — cell center'))
 
     svg = f'<g transform="translate({ox},{oy})">\n'
     x = 0
     for stype, var, desc in items:
         color = VC[var]
-        r, rl, rs = SMALL_R, SMALL_RL, SMALL_RS
-        svg += f'  {_shape_path(x + SMALL_R, 0, stype, r, rl, rs)} fill="#ffffff" stroke="{color}" stroke-width="{STROKE}"/>\n'
-        svg += (f'  <text x="{x + SMALL_R * 2 + 6}" y="0" dominant-baseline="central" '
-                f'font-family="Arial,sans-serif" font-size="11" fill="{TEXT_MUTED}">{desc}</text>\n')
+        sc = 0.7
+        if stype == 'circle':
+            r = CIRCLE_R * sc
+            svg += f'  <circle cx="{x + r}" cy="0" r="{r}" fill="#ffffff" stroke="{color}" stroke-width="{STROKE}"/>\n'
+            svg += (f'  <text x="{x + 2*r + 6}" y="0" dominant-baseline="central" '
+                    f'font-family="Arial,sans-serif" font-size="11" fill="{TEXT_MUTED}">{desc}</text>\n')
+        elif stype == 'bar_x':
+            bw, bh = BAR_LONG * sc, BAR_SHORT * sc
+            svg += (f'  <rect x="{x}" y="{-bh/2}" width="{bw}" height="{bh}" rx="{BAR_RX*sc}" '
+                    f'fill="#ffffff" stroke="{color}" stroke-width="{STROKE}"/>\n')
+            svg += (f'  <text x="{x + bw + 6}" y="0" dominant-baseline="central" '
+                    f'font-family="Arial,sans-serif" font-size="11" fill="{TEXT_MUTED}">{desc}</text>\n')
+        elif stype == 'bar_y':
+            bw, bh = BAR_SHORT * sc, BAR_LONG * sc
+            svg += (f'  <rect x="{x}" y="{-bh/2}" width="{bw}" height="{bh}" rx="{BAR_RX*sc}" '
+                    f'fill="#ffffff" stroke="{color}" stroke-width="{STROKE}"/>\n')
+            svg += (f'  <text x="{x + bw + 6}" y="0" dominant-baseline="central" '
+                    f'font-family="Arial,sans-serif" font-size="11" fill="{TEXT_MUTED}">{desc}</text>\n')
+        else:  # text
+            svg += (f'  <text x="{x}" y="0" dominant-baseline="central" '
+                    f'font-family="Arial,sans-serif" font-size="12" font-weight="600" '
+                    f'fill="{color}">{var}</text>\n')
+            svg += (f'  <text x="{x + 14}" y="0" dominant-baseline="central" '
+                    f'font-family="Arial,sans-serif" font-size="11" fill="{TEXT_MUTED}">— {desc.split("— ")[1]}</text>\n')
         x += 140
     svg += '</g>\n'
     return svg
@@ -367,13 +469,12 @@ def legend_svg(ox, oy, show_intermediates=False):
 def generate_phase1_svg():
     """Generate combined SVG for Phase 1 intermediates (cu, cv, z, h)."""
     names = ['cu', 'cv', 'z', 'h']
-    # 2x2 grid layout
     sub_w = 2 * PAD + 2 * CELL
     sub_h = 2 * PAD + 2 * CELL + TITLE_H
 
     cols, rows = 2, 2
     total_w = cols * sub_w + (cols - 1) * GAP
-    total_h = rows * sub_h + (rows - 1) * GAP + 40  # +40 for legend
+    total_h = rows * sub_h + (rows - 1) * GAP + 40
 
     content = ''
     for idx, name in enumerate(names):
@@ -384,7 +485,6 @@ def generate_phase1_svg():
         svg_part, _, _, _ = render_stencil(name, ox, oy)
         content += svg_part
 
-    # Legend at bottom
     content += legend_svg(20, total_h - 20)
 
     css = animation_css(names)
@@ -399,7 +499,7 @@ def generate_phase2_svg():
 
     cols = 3
     total_w = cols * sub_w + (cols - 1) * GAP
-    total_h = sub_h + 40  # +40 for legend
+    total_h = sub_h + 40
 
     content = ''
     for idx, name in enumerate(names):
@@ -429,7 +529,6 @@ def main():
     out_dir = os.path.normpath(OUTPUT_DIR)
     os.makedirs(out_dir, exist_ok=True)
 
-    # Combined SVGs
     phase1 = generate_phase1_svg()
     phase1_path = os.path.join(out_dir, 'swm_intermediates.svg')
     with open(phase1_path, 'w') as f:
@@ -442,7 +541,6 @@ def main():
         f.write(phase2)
     print(f'  wrote {phase2_path}')
 
-    # Individual SVGs
     individuals = generate_individual_svgs()
     for name, svg in individuals.items():
         path = os.path.join(out_dir, f'swm_{name}.svg')
