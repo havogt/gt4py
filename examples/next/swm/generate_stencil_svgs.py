@@ -9,8 +9,8 @@ Illustrates the Arakawa C-grid staggering and the stencil patterns for:
 
 Shapes encode grid location — matching WHERE on the C-grid they live:
   ● circle (filled)  → vertex        (z)       — sits at grid intersections
-  ━ horizontal bar   → x-edge        (u, cu)   — straddles vertical cell boundary
-  ┃ vertical bar     → y-edge        (v, cv)   — straddles horizontal cell boundary
+  ┃ vertical bar     → x-edge        (u, cu)   — straddles vertical cell boundary
+  ━ horizontal bar   → y-edge        (v, cv)   — straddles horizontal cell boundary
   (text only)        → cell center   (p, h)    — floats inside the cell
 
 Uses the drawsvg library for SVG generation and CSCS Reveal.js color palette.
@@ -56,7 +56,7 @@ TEXT_MUTED = '#888888'
 # ─── Grid staggering ─────────────────────────────────────────────────────────
 
 # shape type per variable
-SHAPE = {'p': 'text', 'u': 'bar_x', 'v': 'bar_y', 'z': 'circle', 'h': 'text'}
+SHAPE = {'p': 'text', 'u': 'bar_y', 'v': 'bar_x', 'z': 'circle', 'h': 'text'}
 
 # Grid parity: cell boundaries at even (0) or odd (1) CELL multiples
 GRID_PARITY = {
