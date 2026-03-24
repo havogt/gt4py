@@ -48,8 +48,6 @@ VAR_COLOR = {
     'p': '#1F407A', 'u': '#007A96', 'v': '#A60B16',
     'z': '#72791C', 'h': '#800080',
 }
-ARROW_C = '#b5b5b5'
-ARROW_THIN_C = '#cdcdcd'
 GRID_C = '#d0d3d8'
 TEXT_MUTED = '#888888'
 
@@ -200,19 +198,22 @@ def _shape_margin(var, dx, dy):
 
 
 def _add_arrow(g, x1, y1, x2, y2, var_from, var_to, css_class='', thin=False):
-    """Add an arrow line to group g, inset from shape edges."""
+    """Add an arrow line coloured by source variable."""
     dx, dy = x2 - x1, y2 - y1
     d = math.hypot(dx, dy)
     if d < 1:
         return
     m1, m2 = _shape_margin(var_from, dx, dy), _shape_margin(var_to, -dx, -dy)
-    color = ARROW_THIN_C if thin else ARROW_C
+    color = VAR_COLOR.get(var_from, '#888888')
     width = ARROW_W * 0.7 if thin else ARROW_W
-    marker = 'url(#ah-thin)' if thin else 'url(#ah)'
+    opacity = 0.4 if thin else 0.6
+    suffix = '-thin' if thin else ''
+    marker = f'url(#ah-{var_from}{suffix})'
     line = dw.Line(
         x1 + dx * m1 / d, y1 + dy * m1 / d,
         x2 - dx * m2 / d, y2 - dy * m2 / d,
-        stroke=color, stroke_width=width, marker_end=marker,
+        stroke=color, stroke_width=width, stroke_opacity=opacity,
+        marker_end=marker,
     )
     if css_class:
         line.args['class'] = css_class
@@ -347,18 +348,20 @@ def _animation_css(stencil_names):
 # ─── Marker defs ──────────────────────────────────────────────────────────────
 
 def _add_markers(d):
-    """Add arrowhead marker definitions."""
-    for mid, color, mw, mh, rx, ry in [
-        ('ah',      ARROW_C,      8, 6, 7, 3),
-        ('ah-thin', ARROW_THIN_C, 7, 5, 6, 2.5),
-    ]:
-        marker = dw.Marker(0, 0, mw, mh, id=mid, orient='auto',
-                           markerUnits='strokeWidth')
-        marker.args['refX'] = rx
-        marker.args['refY'] = ry
-        marker.append(dw.Lines(0, 0, mw, ry, 0, mh, mw * 0.25, ry,
-                               fill=color, close=True))
-        d.append_def(marker)
+    """Add arrowhead marker definitions for each variable colour."""
+    for var, color in VAR_COLOR.items():
+        for suffix, mw, mh, rx, ry, fo in [
+            ('', 8, 6, 7, 3, 0.6),
+            ('-thin', 7, 5, 6, 2.5, 0.4),
+        ]:
+            mid = f'ah-{var}{suffix}'
+            marker = dw.Marker(0, 0, mw, mh, id=mid, orient='auto',
+                               markerUnits='strokeWidth')
+            marker.args['refX'] = rx
+            marker.args['refY'] = ry
+            marker.append(dw.Lines(0, 0, mw, ry, 0, mh, mw * 0.25, ry,
+                                   fill=color, fill_opacity=fo, close=True))
+            d.append_def(marker)
 
 
 # ─── Stencil rendering ───────────────────────────────────────────────────────
