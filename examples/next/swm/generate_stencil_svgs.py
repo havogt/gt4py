@@ -591,19 +591,8 @@ def generate_composite():
 
     d = _make_drawing(total_w, total_h, _animation_css(names), names)
 
-    # Global vertical grid lines at cell-boundary positions
-    cy = PAD + ey * CELL + TITLE_H
-    u_cx = shifts[0] + PAD + ex * CELL  # first diagram centre x
-    y_top = cy - ey * CELL - 18
-    y_bot = cy + ey * CELL + 18
-    style = dict(stroke=GRID_C, stroke_width=0.9, stroke_dasharray='4,3')
-    for k in range(-1, 12):
-        x = u_cx + 2 * k * CELL
-        if 0 <= x <= total_w:
-            d.append(dw.Line(x, y_top, x, y_bot, **style))
-
     for i, name in enumerate(names):
-        render_stencil(name, d, shifts[i], 0, vertical_grid=False)
+        render_stencil(name, d, shifts[i], 0)
     _add_legend(d, 20, total_h - 20)
     return d
 
