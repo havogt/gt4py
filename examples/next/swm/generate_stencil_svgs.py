@@ -39,7 +39,8 @@ STROKE_OUT = 2.2
 ARROW_W = 1.1
 PAD = 52           # padding around each sub-diagram
 TITLE_H = 24       # space for title above diagram
-ANIM_DT = 0.13     # seconds between animation steps (configurable via --anim-dt)
+ANIM_DT = 0.13     # seconds between animation steps (stagger within a phase)
+PHASE_PAUSE = 0.6   # seconds between animation phases (configurable via --phase-pause)
 GAP = 16           # gap between sub-diagrams in combined SVGs
 
 OUTPUT_DIR = os.path.join(
@@ -546,7 +547,15 @@ def render_stencil(name, ox=0, oy=0, animate=True, id_prefix=''):
 
 
 def animation_css(stencil_names, id_prefixes=None):
-    """Generate CSS @keyframes for all stencils."""
+    """Generate CSS @keyframes for all stencils.
+
+    All elements within the same phase appear simultaneously, with PHASE_PAUSE
+    seconds between successive phases.
+
+    Non-composite: phase A (inputs) → phase B (output).
+    Composite:     phase A (initial inputs) → phase B (intermediates, inputs dim)
+                   → phase C (phase2 arrows) → phase D (output).
+    """
     css = '@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }\n'
     css += '@keyframes popIn { 0% { opacity:0; transform:scale(0.7); } 100% { opacity:1; transform:scale(1); } }\n'
     css += '@keyframes fadeDim { from { opacity: 1; } to { opacity: 0.25; } }\n'
@@ -558,56 +567,63 @@ def animation_css(stencil_names, id_prefixes=None):
         st = STENCILS[name]
 
         if st.get('composite'):
-            # 3-phase animation for composite stencils:
-            # Phase 1: initial inputs + thin arrows fade in
-            # Phase 2: intermediate shapes pop in
-            # Phase 3: phase2 arrows fade in + output pops
+            # Phase A: initial inputs + thin arrows (all at once)
+            t_a = 0.0
 
-            # Count unique initial inputs for phase 1 timing
+            # Count unique initial inputs for class numbering
             seen = set()
             n_phase1 = 0
             for inter in st['phase1']:
                 for inp in inter['inputs']:
-                    key = (inp[0], inp[1])
-                    if key not in seen:
-                        seen.add(key)
+                    if (inp[0], inp[1]) not in seen:
+                        seen.add((inp[0], inp[1]))
                         n_phase1 += 1
 
-            # Phase 2 timing (compute early so phase1 can reference it)
-            inter_delay = n_phase1 * ANIM_DT + 0.15
+            # Phase B: intermediates pop in, initial inputs dim
+            t_b = t_a + PHASE_PAUSE
 
-            # Phase 1: initial inputs fade in, then dim when intermediates appear
+            # Phase C: phase2 arrows
+            t_c = t_b + PHASE_PAUSE
+
+            # Phase D: output pops
+            t_d = t_c + PHASE_PAUSE
+
+            # Phase A classes: fade in together, dim at phase B
             for i in range(n_phase1):
-                delay = i * ANIM_DT
                 css += (f'.a-{pfx}-{i} {{ opacity:0; '
-                        f'animation: fadeIn 0.25s ease-out {delay:.2f}s both, '
-                        f'fadeDim 0.35s ease-out {inter_delay:.2f}s forwards; }}\n')
+                        f'animation: fadeIn 0.35s ease-out {t_a:.2f}s both, '
+                        f'fadeDim 0.4s ease-out {t_b:.2f}s forwards; }}\n')
 
-            # Phase 2: intermediates pop in after all phase1 inputs
+            # Phase B classes: intermediates pop in together
             for inter in st['phase1']:
                 pos_key = f'{inter["pos"][0]}_{inter["pos"][1]}'
-                css += (f'.a-{pfx}-inter-{pos_key} {{ opacity:0; animation: popIn 0.3s ease-out {inter_delay:.2f}s both; '
+                css += (f'.a-{pfx}-inter-{pos_key} {{ opacity:0; '
+                        f'animation: popIn 0.4s ease-out {t_b:.2f}s both; '
                         f'transform-box: fill-box; transform-origin: center; }}\n')
 
-            # Phase 3: phase2 arrows + output
-            p2_start = inter_delay + 0.35
-            step = n_phase1  # continuing step count from render_stencil
-            for i, inp in enumerate(st['phase2_inputs']):
-                delay = p2_start + i * ANIM_DT
-                css += f'.a-{pfx}-p2-{step + i} {{ opacity:0; animation: fadeIn 0.25s ease-out {delay:.2f}s both; }}\n'
+            # Phase C classes: phase2 arrows appear together
+            step = n_phase1
+            for i in range(len(st['phase2_inputs'])):
+                css += (f'.a-{pfx}-p2-{step + i} {{ opacity:0; '
+                        f'animation: fadeIn 0.35s ease-out {t_c:.2f}s both; }}\n')
 
-            out_delay = p2_start + len(st['phase2_inputs']) * ANIM_DT + 0.1
-            css += (f'.a-{pfx}-out {{ opacity:0; animation: popIn 0.35s ease-out {out_delay:.2f}s both; '
+            # Phase D: output
+            css += (f'.a-{pfx}-out {{ opacity:0; '
+                    f'animation: popIn 0.45s ease-out {t_d:.2f}s both; '
                     f'transform-box: fill-box; transform-origin: center; }}\n')
         else:
+            # Phase A: all inputs appear together
+            t_a = 0.0
+            # Phase B: output pops
+            t_b = t_a + PHASE_PAUSE
+
             n_inputs = len(st['inputs'])
-
             for i in range(n_inputs):
-                delay = i * ANIM_DT
-                css += f'.a-{pfx}-{i} {{ opacity:0; animation: fadeIn 0.25s ease-out {delay:.2f}s both; }}\n'
+                css += (f'.a-{pfx}-{i} {{ opacity:0; '
+                        f'animation: fadeIn 0.35s ease-out {t_a:.2f}s both; }}\n')
 
-            out_delay = n_inputs * ANIM_DT + 0.1
-            css += (f'.a-{pfx}-out {{ opacity:0; animation: popIn 0.35s ease-out {out_delay:.2f}s both; '
+            css += (f'.a-{pfx}-out {{ opacity:0; '
+                    f'animation: popIn 0.45s ease-out {t_b:.2f}s both; '
                     f'transform-box: fill-box; transform-origin: center; }}\n')
 
     return css
@@ -771,13 +787,16 @@ def generate_individual_svgs():
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
-    global ANIM_DT
+    global ANIM_DT, PHASE_PAUSE
 
     parser = argparse.ArgumentParser(description='Generate SWM stencil SVGs')
     parser.add_argument('--anim-dt', type=float, default=ANIM_DT,
                         help=f'Animation step delay in seconds (default: {ANIM_DT})')
+    parser.add_argument('--phase-pause', type=float, default=PHASE_PAUSE,
+                        help=f'Pause between animation phases in seconds (default: {PHASE_PAUSE})')
     args = parser.parse_args()
     ANIM_DT = args.anim_dt
+    PHASE_PAUSE = args.phase_pause
 
     out_dir = os.path.normpath(OUTPUT_DIR)
     os.makedirs(out_dir, exist_ok=True)
