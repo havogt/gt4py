@@ -577,22 +577,31 @@ def generate_phase2():
 
 
 def generate_composite():
-    names = ['u_composite', 'v_composite', 'p_composite']
+    names = ['p_composite', 'v_composite', 'u_composite']
     sub_w, sub_h = _stencil_dims(names[0])
-    ex, ey = 2, 2  # all composites share the same extents
 
-    # Align centres so vertical cell-boundary lines match globally.
-    # u sits on cell boundaries (xp=0); v and p sit between them (xp=1).
-    # u→v shift = 7·CELL (odd  → aligns even/odd parity grids).
-    # v→p shift = 6·CELL (even → preserves same parity).
-    shifts = [0, 7 * CELL, 7 * CELL + 6 * CELL]
-    total_w = shifts[-1] + sub_w
-    total_h = sub_h + 40
+    # Two-row layout: p top-left, v top-right, u centred below.
+    # Offsets chosen so cell-boundary grid lines align across diagrams:
+    #
+    #   p (xp=1,yp=1)   v (xp=1,yp=0)   u (xp=0,yp=1)
+    #
+    #   p↔v horizontal alignment: Δy = odd·CELL  → 1·CELL
+    #   p↔v vertical   alignment: Δx = even·CELL → 6·CELL
+    #   p↔u vertical   alignment: Δx = odd·CELL  → 3·CELL  (centres u)
+    #   p↔u horizontal alignment: Δy = even·CELL → 8·CELL
+    offsets = {
+        'p_composite': (0, 0),
+        'v_composite': (6 * CELL, CELL),
+        'u_composite': (3 * CELL, 8 * CELL),
+    }
+
+    total_w = max(ox + sub_w for ox, _ in offsets.values())
+    total_h = max(oy + sub_h for _, oy in offsets.values()) + 40
 
     d = _make_drawing(total_w, total_h, _animation_css(names), names)
-
-    for i, name in enumerate(names):
-        render_stencil(name, d, shifts[i], 0)
+    for name in names:
+        ox, oy = offsets[name]
+        render_stencil(name, d, ox, oy)
     _add_legend(d, 20, total_h - 20)
     return d
 
