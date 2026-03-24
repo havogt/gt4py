@@ -463,8 +463,8 @@ def render_stencil(name, parent, ox=0, oy=0):
 # ─── Legend ───────────────────────────────────────────────────────────────────
 
 def _add_legend(parent, ox, oy, show_intermediates=False):
-    items = [('text', 'p', 'p — cell center'), ('bar_x', 'u', 'u — x-edge'),
-             ('bar_y', 'v', 'v — y-edge'), ('circle', 'z', 'z — vertex')]
+    items = [('text', 'p', 'p — cell center'), ('bar_y', 'u', 'u — x-edge'),
+             ('bar_x', 'v', 'v — y-edge'), ('circle', 'z', 'z — vertex')]
     if show_intermediates:
         items.append(('text', 'h', 'h — cell center'))
 
