@@ -124,8 +124,8 @@ STENCILS = {
     },
     # Phase 2: time-step updates
     'unew': {
-        'formula': 'u_new (u update)',
-        'out_label': 'u', 'out_sub': 'new', 'out_var': 'u',
+        'formula': 'ũ (u update)',
+        'out_label': 'ũ', 'out_var': 'u',
         'inputs': [
             ( 0, -1, 'z', 'z'), ( 0,  1, 'z', 'z'),
             (-1,  0, 'h', 'h'), ( 1,  0, 'h', 'h'),
@@ -134,8 +134,8 @@ STENCILS = {
         ],
     },
     'vnew': {
-        'formula': 'v_new (v update)',
-        'out_label': 'v', 'out_sub': 'new', 'out_var': 'v',
+        'formula': 'ṽ (v update)',
+        'out_label': 'ṽ', 'out_var': 'v',
         'inputs': [
             (-1,  0, 'z', 'z'), ( 1,  0, 'z', 'z'),
             ( 0, -1, 'h', 'h'), ( 0,  1, 'h', 'h'),
@@ -144,8 +144,8 @@ STENCILS = {
         ],
     },
     'pnew': {
-        'formula': 'p_new (p update)',
-        'out_label': 'p', 'out_sub': 'new', 'out_var': 'p',
+        'formula': 'p\u0303 (p update)',
+        'out_label': 'p\u0303', 'out_var': 'p',
         'inputs': [
             (-1, 0, 'U', 'u'), (1, 0, 'U', 'u'),
             (0, -1, 'V', 'v'), (0, 1, 'V', 'v'),
@@ -155,8 +155,8 @@ STENCILS = {
     # Two-phase arrows: initial→intermediate (thin), intermediate→output (normal)
     # Animation: phase1 inputs → intermediates appear → phase2 arrows + output
     'u_composite': {
-        'formula': 'u_new from (p, u, v)',
-        'out_label': 'u', 'out_sub': 'new', 'out_var': 'u',
+        'formula': 'ũ from (p, u, v)',
+        'out_label': 'ũ', 'out_var': 'u',
         'composite': True,
         # Phase 1: initial inputs → intermediate quantities
         'phase1': [
@@ -186,8 +186,8 @@ STENCILS = {
         ],
     },
     'v_composite': {
-        'formula': 'v_new from (p, u, v)',
-        'out_label': 'v', 'out_sub': 'new', 'out_var': 'v',
+        'formula': 'ṽ from (p, u, v)',
+        'out_label': 'ṽ', 'out_var': 'v',
         'composite': True,
         'phase1': [
             # z at (-1,0): p at 4 corners + v above/below + u left/right
@@ -215,8 +215,8 @@ STENCILS = {
         ],
     },
     'p_composite': {
-        'formula': 'p_new from (p, u, v)',
-        'out_label': 'p', 'out_sub': 'new', 'out_var': 'p',
+        'formula': 'p\u0303 from (p, u, v)',
+        'out_label': 'p\u0303', 'out_var': 'p',
         'composite': True,
         'phase1': [
             # cu at (-1,0): cu = <p>_x * u, needs p(-2,0) and u(-1,0) [co-located]
