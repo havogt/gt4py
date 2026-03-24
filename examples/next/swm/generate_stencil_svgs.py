@@ -117,23 +117,27 @@ STENCILS = {
     'u_composite': {
         'formula': 'ũ from (p, u, v)', 'out_label': 'ũ', 'out_var': 'u',
         'composite': True,
-        'phase1': [
-            {'pos': (0, -1), 'label': 'z', 'var': 'z',
-             'inputs': [(-1, -2, 'p', 'p'), (1, -2, 'p', 'p'),
-                        (-1, 0, 'p', 'p'), (1, 0, 'p', 'p'),
-                        (0, -2, 'u', 'u'), (0, 0, 'u', 'u'),
-                        (-1, -1, 'v', 'v'), (1, -1, 'v', 'v')]},
-            {'pos': (0, 1), 'label': 'z', 'var': 'z',
-             'inputs': [(-1, 0, 'p', 'p'), (1, 0, 'p', 'p'),
-                        (-1, 2, 'p', 'p'), (1, 2, 'p', 'p'),
-                        (0, 0, 'u', 'u'), (0, 2, 'u', 'u'),
-                        (-1, 1, 'v', 'v'), (1, 1, 'v', 'v')]},
-            {'pos': (-1, 0), 'label': 'h', 'var': 'h',
-             'inputs': [(-2, 0, 'u', 'u'), (0, 0, 'u', 'u'),
-                        (-1, -1, 'v', 'v'), (-1, 1, 'v', 'v')]},
-            {'pos': (1, 0), 'label': 'h', 'var': 'h',
-             'inputs': [(0, 0, 'u', 'u'), (2, 0, 'u', 'u'),
-                        (1, -1, 'v', 'v'), (1, 1, 'v', 'v')]},
+        'phase1_groups': [
+            [   # Group 0: z (vorticity)
+                {'pos': (0, -1), 'label': 'z', 'var': 'z',
+                 'inputs': [(-1, -2, 'p', 'p'), (1, -2, 'p', 'p'),
+                            (-1, 0, 'p', 'p'), (1, 0, 'p', 'p'),
+                            (0, -2, 'u', 'u'), (0, 0, 'u', 'u'),
+                            (-1, -1, 'v', 'v'), (1, -1, 'v', 'v')]},
+                {'pos': (0, 1), 'label': 'z', 'var': 'z',
+                 'inputs': [(-1, 0, 'p', 'p'), (1, 0, 'p', 'p'),
+                            (-1, 2, 'p', 'p'), (1, 2, 'p', 'p'),
+                            (0, 0, 'u', 'u'), (0, 2, 'u', 'u'),
+                            (-1, 1, 'v', 'v'), (1, 1, 'v', 'v')]},
+            ],
+            [   # Group 1: h (Bernoulli)
+                {'pos': (-1, 0), 'label': 'h', 'var': 'h',
+                 'inputs': [(-2, 0, 'u', 'u'), (0, 0, 'u', 'u'),
+                            (-1, -1, 'v', 'v'), (-1, 1, 'v', 'v')]},
+                {'pos': (1, 0), 'label': 'h', 'var': 'h',
+                 'inputs': [(0, 0, 'u', 'u'), (2, 0, 'u', 'u'),
+                            (1, -1, 'v', 'v'), (1, 1, 'v', 'v')]},
+            ],
         ],
         'phase2_inputs': [(0, -1, 'z', 'z'), (0, 1, 'z', 'z'),
                           (-1, 0, 'h', 'h'), (1, 0, 'h', 'h')],
@@ -141,23 +145,27 @@ STENCILS = {
     'v_composite': {
         'formula': 'ṽ from (p, u, v)', 'out_label': 'ṽ', 'out_var': 'v',
         'composite': True,
-        'phase1': [
-            {'pos': (-1, 0), 'label': 'z', 'var': 'z',
-             'inputs': [(-2, -1, 'p', 'p'), (-2, 1, 'p', 'p'),
-                        (0, -1, 'p', 'p'), (0, 1, 'p', 'p'),
-                        (-1, -1, 'u', 'u'), (-1, 1, 'u', 'u'),
-                        (-2, 0, 'v', 'v'), (0, 0, 'v', 'v')]},
-            {'pos': (1, 0), 'label': 'z', 'var': 'z',
-             'inputs': [(0, -1, 'p', 'p'), (0, 1, 'p', 'p'),
-                        (2, -1, 'p', 'p'), (2, 1, 'p', 'p'),
-                        (1, -1, 'u', 'u'), (1, 1, 'u', 'u'),
-                        (0, 0, 'v', 'v'), (2, 0, 'v', 'v')]},
-            {'pos': (0, -1), 'label': 'h', 'var': 'h',
-             'inputs': [(-1, -1, 'u', 'u'), (1, -1, 'u', 'u'),
-                        (0, -2, 'v', 'v'), (0, 0, 'v', 'v')]},
-            {'pos': (0, 1), 'label': 'h', 'var': 'h',
-             'inputs': [(-1, 1, 'u', 'u'), (1, 1, 'u', 'u'),
-                        (0, 0, 'v', 'v'), (0, 2, 'v', 'v')]},
+        'phase1_groups': [
+            [   # Group 0: z (vorticity)
+                {'pos': (-1, 0), 'label': 'z', 'var': 'z',
+                 'inputs': [(-2, -1, 'p', 'p'), (-2, 1, 'p', 'p'),
+                            (0, -1, 'p', 'p'), (0, 1, 'p', 'p'),
+                            (-1, -1, 'u', 'u'), (-1, 1, 'u', 'u'),
+                            (-2, 0, 'v', 'v'), (0, 0, 'v', 'v')]},
+                {'pos': (1, 0), 'label': 'z', 'var': 'z',
+                 'inputs': [(0, -1, 'p', 'p'), (0, 1, 'p', 'p'),
+                            (2, -1, 'p', 'p'), (2, 1, 'p', 'p'),
+                            (1, -1, 'u', 'u'), (1, 1, 'u', 'u'),
+                            (0, 0, 'v', 'v'), (2, 0, 'v', 'v')]},
+            ],
+            [   # Group 1: h (Bernoulli)
+                {'pos': (0, -1), 'label': 'h', 'var': 'h',
+                 'inputs': [(-1, -1, 'u', 'u'), (1, -1, 'u', 'u'),
+                            (0, -2, 'v', 'v'), (0, 0, 'v', 'v')]},
+                {'pos': (0, 1), 'label': 'h', 'var': 'h',
+                 'inputs': [(-1, 1, 'u', 'u'), (1, 1, 'u', 'u'),
+                            (0, 0, 'v', 'v'), (0, 2, 'v', 'v')]},
+            ],
         ],
         'phase2_inputs': [(-1, 0, 'z', 'z'), (1, 0, 'z', 'z'),
                           (0, -1, 'h', 'h'), (0, 1, 'h', 'h')],
@@ -165,15 +173,17 @@ STENCILS = {
     'p_composite': {
         'formula': 'p\u0303 from (p, U, V)', 'out_label': 'p\u0303', 'out_var': 'p',
         'composite': True,
-        'phase1': [
-            {'pos': (-1, 0), 'label': 'U', 'var': 'u',
-             'inputs': [(-2, 0, 'p', 'p'), (0, 0, 'p', 'p')]},
-            {'pos': (1, 0), 'label': 'U', 'var': 'u',
-             'inputs': [(0, 0, 'p', 'p'), (2, 0, 'p', 'p')]},
-            {'pos': (0, -1), 'label': 'V', 'var': 'v',
-             'inputs': [(0, -2, 'p', 'p'), (0, 0, 'p', 'p')]},
-            {'pos': (0, 1), 'label': 'V', 'var': 'v',
-             'inputs': [(0, 0, 'p', 'p'), (0, 2, 'p', 'p')]},
+        'phase1_groups': [
+            [   # Group 0: U and V (simultaneous)
+                {'pos': (-1, 0), 'label': 'U', 'var': 'u',
+                 'inputs': [(-2, 0, 'p', 'p'), (0, 0, 'p', 'p')]},
+                {'pos': (1, 0), 'label': 'U', 'var': 'u',
+                 'inputs': [(0, 0, 'p', 'p'), (2, 0, 'p', 'p')]},
+                {'pos': (0, -1), 'label': 'V', 'var': 'v',
+                 'inputs': [(0, -2, 'p', 'p'), (0, 0, 'p', 'p')]},
+                {'pos': (0, 1), 'label': 'V', 'var': 'v',
+                 'inputs': [(0, 0, 'p', 'p'), (0, 2, 'p', 'p')]},
+            ],
         ],
         'phase2_inputs': [(-1, 0, 'U', 'u'), (1, 0, 'U', 'u'),
                           (0, -1, 'V', 'v'), (0, 1, 'V', 'v')],
@@ -302,8 +312,9 @@ def _animation_css(stencil_names):
     """Build CSS rules so each animation phase appears simultaneously.
 
     Non-composite:  shapes → arrows → output   (3 phases)
-    Composite:      shapes → thin arrows → intermediates (dim inputs) →
-                    phase-2 arrows → output    (5 phases)
+    Composite:      Per group: inputs → arrows → intermediates (dim inputs)
+                    then: phase-2 arrows → output
+                    Total phases = 3 × n_groups + 2
     """
     css = KEYFRAMES
     for name in stencil_names:
@@ -311,33 +322,59 @@ def _animation_css(stencil_names):
         pfx = name
 
         if st.get('composite'):
-            # Build index mapping to detect overlapping inputs
-            inter_positions = {tuple(i['pos']) for i in st['phase1']}
-            seen = {}
-            idx = 0
-            for inter in st['phase1']:
-                for inp in inter['inputs']:
-                    key = (inp[0], inp[1])
-                    if key not in seen:
-                        seen[key] = idx
-                        idx += 1
-            overlapping = {seen[k] for k in seen if k in inter_positions}
-            n_inp = len(seen)
-            t = [i * PHASE_PAUSE for i in range(5)]  # t0..t4
+            groups = st['phase1_groups']
+            n_groups = len(groups)
 
-            for i in range(n_inp):
-                dim = 'nudgeDim' if i in overlapping else 'fadeDim'
-                css += (f'.s-{pfx}-{i}{{opacity:0;animation:fadeIn .35s ease-out {t[0]:.2f}s both,'
-                        f'{dim} .4s ease-out {t[2]:.2f}s forwards}}\n')
-                css += (f'.ar-{pfx}-{i}{{opacity:0;animation:fadeIn .35s ease-out {t[1]:.2f}s both,'
-                        f'fadeDim .4s ease-out {t[2]:.2f}s forwards}}\n')
-            for inter in st['phase1']:
-                k = f'{inter["pos"][0]}_{inter["pos"][1]}'
-                css += (f'.a-{pfx}-inter-{k}{{opacity:0;animation:popIn .4s ease-out {t[2]:.2f}s both;'
+            # Deduplicate inputs globally, track first/last group usage
+            seen = {}  # (x,y) → {idx, first_group, last_group}
+            idx = 0
+            for g_idx, group in enumerate(groups):
+                for inter in group:
+                    for inp in inter['inputs']:
+                        key = (inp[0], inp[1])
+                        if key not in seen:
+                            seen[key] = {'idx': idx, 'fg': g_idx, 'lg': g_idx}
+                            idx += 1
+                        else:
+                            seen[key]['lg'] = g_idx
+
+            def t(phase):
+                return phase * PHASE_PAUSE
+
+            # Input shapes: appear at first group, dim at last group or output
+            output_pos = (0, 0)
+            for key, info in seen.items():
+                i = info['idx']
+                appear = 3 * info['fg']
+                if key == output_pos:
+                    dim = 3 * n_groups + 1  # nudge when output appears
+                    anim = 'nudgeDim'
+                else:
+                    dim = 3 * info['lg'] + 2  # fade when last consuming group done
+                    anim = 'fadeDim'
+                css += (f'.s-{pfx}-{i}{{opacity:0;animation:fadeIn .35s ease-out {t(appear):.2f}s both,'
+                        f'{anim} .4s ease-out {t(dim):.2f}s forwards}}\n')
+
+            # Thin arrows: one class per group (appear → dim together)
+            for g_idx in range(n_groups):
+                appear = 3 * g_idx + 1
+                dim = 3 * g_idx + 2
+                css += (f'.ar-{pfx}-g{g_idx}{{opacity:0;animation:fadeIn .35s ease-out {t(appear):.2f}s both,'
+                        f'fadeDim .4s ease-out {t(dim):.2f}s forwards}}\n')
+
+            # Intermediates: one class per group
+            for g_idx in range(n_groups):
+                appear = 3 * g_idx + 2
+                css += (f'.im-{pfx}-g{g_idx}{{opacity:0;animation:popIn .4s ease-out {t(appear):.2f}s both;'
                         f'transform-box:fill-box;transform-origin:center}}\n')
-            for i in range(len(st['phase2_inputs'])):
-                css += f'.ar-{pfx}-p2-{i}{{opacity:0;animation:fadeIn .35s ease-out {t[3]:.2f}s both}}\n'
-            css += (f'.a-{pfx}-out{{opacity:0;animation:popIn .45s ease-out {t[4]:.2f}s both;'
+
+            # Phase-2 arrows
+            appear = 3 * n_groups
+            css += f'.ar-{pfx}-p2{{opacity:0;animation:fadeIn .35s ease-out {t(appear):.2f}s both}}\n'
+
+            # Output
+            appear = 3 * n_groups + 1
+            css += (f'.a-{pfx}-out{{opacity:0;animation:popIn .45s ease-out {t(appear):.2f}s both;'
                     f'transform-box:fill-box;transform-origin:center}}\n')
         else:
             n_inp = len(st['inputs'])
@@ -375,9 +412,11 @@ def _add_markers(d):
 def _all_positions(st):
     """All input/intermediate positions for extent calculation."""
     if st.get('composite'):
-        pts = [inter['pos'] for inter in st['phase1']]
-        for inter in st['phase1']:
-            pts += [(i[0], i[1]) for i in inter['inputs']]
+        pts = []
+        for group in st['phase1_groups']:
+            for inter in group:
+                pts.append(inter['pos'])
+                pts += [(i[0], i[1]) for i in inter['inputs']]
         pts += [(i[0], i[1]) for i in st['phase2_inputs']]
         return pts
     return [(i[0], i[1]) for i in st['inputs']]
@@ -412,43 +451,47 @@ def render_stencil(name, parent, ox=0, oy=0, vertical_grid=True):
     g.append(_text(w / 2, TITLE_H - 4, st['formula'], 13, TEXT_MUTED, 600))
 
     if is_composite:
-        inter_positions = {tuple(i['pos']) for i in st['phase1']}
+        groups = st['phase1_groups']
 
-        # Deduplicate initial inputs
-        seen, info = {}, {}
+        # Deduplicate initial inputs across all groups
+        seen, info_map = {}, {}
         idx = 0
-        for inter in st['phase1']:
-            for inp in inter['inputs']:
-                key = (inp[0], inp[1])
-                if key not in seen:
-                    seen[key] = idx
-                    info[key] = (inp[2], inp[3])
-                    idx += 1
+        for group in groups:
+            for inter in group:
+                for inp in inter['inputs']:
+                    key = (inp[0], inp[1])
+                    if key not in seen:
+                        seen[key] = idx
+                        info_map[key] = (inp[2], inp[3])
+                        idx += 1
 
-        # Thin arrows (behind)
-        for inter in st['phase1']:
-            for inp in inter['inputs']:
-                _add_arrow(g, cx + inp[0] * CELL, cy + inp[1] * CELL,
-                           cx + inter['pos'][0] * CELL, cy + inter['pos'][1] * CELL,
-                           inp[3], inter['var'],
-                           css_class=f'ar-{pfx}-{seen[(inp[0], inp[1])]}', thin=True)
+        # Thin arrows (behind shapes), one CSS class per group
+        for g_idx, group in enumerate(groups):
+            for inter in group:
+                for inp in inter['inputs']:
+                    _add_arrow(g, cx + inp[0] * CELL, cy + inp[1] * CELL,
+                               cx + inter['pos'][0] * CELL, cy + inter['pos'][1] * CELL,
+                               inp[3], inter['var'],
+                               css_class=f'ar-{pfx}-g{g_idx}', thin=True)
 
-        # Initial input shapes (overlapping ones slide out via CSS)
+        # Initial input shapes
         for key, i in seen.items():
-            label, var = info[key]
+            label, var = info_map[key]
             _add_shape(g, cx + key[0] * CELL, cy + key[1] * CELL,
                        label, var, css_class=f's-{pfx}-{i}')
 
-        # Intermediate shapes
-        for inter in st['phase1']:
-            tx, ty = cx + inter['pos'][0] * CELL, cy + inter['pos'][1] * CELL
-            cls = f'a-{pfx}-inter-{inter["pos"][0]}_{inter["pos"][1]}'
-            _add_shape(g, tx, ty, inter['label'], inter['var'], css_class=cls)
+        # Intermediate shapes, one CSS class per group
+        for g_idx, group in enumerate(groups):
+            for inter in group:
+                tx = cx + inter['pos'][0] * CELL
+                ty = cy + inter['pos'][1] * CELL
+                _add_shape(g, tx, ty, inter['label'], inter['var'],
+                           css_class=f'im-{pfx}-g{g_idx}')
 
         # Phase-2 arrows
         for i, inp in enumerate(st['phase2_inputs']):
             _add_arrow(g, cx + inp[0] * CELL, cy + inp[1] * CELL, cx, cy,
-                       inp[3], st['out_var'], css_class=f'ar-{pfx}-p2-{i}')
+                       inp[3], st['out_var'], css_class=f'ar-{pfx}-p2')
     else:
         for i, inp in enumerate(st['inputs']):
             ix, iy = cx + inp[0] * CELL, cy + inp[1] * CELL
