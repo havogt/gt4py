@@ -511,31 +511,34 @@ def render_stencil(name, parent, ox=0, oy=0, vertical_grid=True):
 
 # ─── Legend ───────────────────────────────────────────────────────────────────
 
-def _add_legend(parent, ox, oy, show_intermediates=False):
+def _add_legend(parent, ox, oy, show_intermediates=False, vertical=False):
     items = [('text', 'p', 'p — cell center'), ('bar_y', 'u', 'u — x-edge'),
              ('bar_x', 'v', 'v — y-edge'), ('circle', 'z', 'z — vertex')]
     if show_intermediates:
         items.append(('text', 'h', 'h — cell center'))
 
     g = dw.Group(transform=f'translate({ox},{oy})')
-    x = 0
+    x, y = 0, 0
     sc = 0.7
     for stype, var, desc in items:
         color = VAR_COLOR[var]
         if stype == 'circle':
             r = CIRCLE_R * sc
-            g.append(dw.Circle(x + r, 0, r, fill=color, fill_opacity=0.62, stroke='none'))
-            g.append(_text(x + 2 * r + 6 + 40, 0, desc, 11, TEXT_MUTED))
+            g.append(dw.Circle(x + r, y, r, fill=color, fill_opacity=0.62, stroke='none'))
+            g.append(_text(x + 2 * r + 6 + 40, y, desc, 11, TEXT_MUTED))
         elif stype.startswith('bar'):
             bw = BAR[0] * sc if stype == 'bar_x' else BAR[1] * sc
             bh = BAR[1] * sc if stype == 'bar_x' else BAR[0] * sc
-            g.append(dw.Rectangle(x, -bh / 2, bw, bh, rx=BAR_RX * sc,
+            g.append(dw.Rectangle(x, y - bh / 2, bw, bh, rx=BAR_RX * sc,
                                   fill=color, fill_opacity=0.62, stroke='none'))
-            g.append(_text(x + bw + 6 + 40, 0, desc, 11, TEXT_MUTED))
+            g.append(_text(x + bw + 6 + 40, y, desc, 11, TEXT_MUTED))
         else:
-            g.append(_text(x, 0, var, 12, color, 600))
-            g.append(_text(x + 14 + 40, 0, f'— {desc.split("— ")[1]}', 11, TEXT_MUTED))
-        x += 140
+            g.append(_text(x, y, var, 12, color, 600))
+            g.append(_text(x + 14 + 40, y, f'— {desc.split("— ")[1]}', 11, TEXT_MUTED))
+        if vertical:
+            y += 28
+        else:
+            x += 140
     parent.append(g)
 
 
@@ -587,22 +590,24 @@ def generate_composite():
     #
     #   p↔v horizontal alignment: Δy = odd·CELL  → 1·CELL
     #   p↔v vertical   alignment: Δx = even·CELL → 6·CELL
-    #   p↔u vertical   alignment: Δx = odd·CELL  → 3·CELL  (centres u)
+    #   p↔u vertical   alignment: Δx = odd·CELL  → 1·CELL  (left-aligns grids)
     #   p↔u horizontal alignment: Δy = even·CELL → 8·CELL
     offsets = {
         'p_composite': (0, 0),
         'v_composite': (6 * CELL, CELL),
-        'u_composite': (3 * CELL, 8 * CELL),
+        'u_composite': (CELL, 8 * CELL),
     }
 
     total_w = max(ox + sub_w for ox, _ in offsets.values())
-    total_h = max(oy + sub_h for _, oy in offsets.values()) + 40
+    total_h = max(oy + sub_h for _, oy in offsets.values())
 
     d = _make_drawing(total_w, total_h, _animation_css(names), names)
     for name in names:
         ox, oy = offsets[name]
         render_stencil(name, d, ox, oy)
-    _add_legend(d, 20, total_h - 20)
+    # Vertical legend in the bottom-right empty area
+    _add_legend(d, offsets['v_composite'][0] + PAD,
+                offsets['u_composite'][1] + PAD + TITLE_H, vertical=True)
     return d
 
 
