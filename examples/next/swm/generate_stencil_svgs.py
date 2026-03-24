@@ -341,11 +341,11 @@ def _animation_css(stencil_names):
             def t(phase):
                 return phase * PHASE_PAUSE
 
-            # Input shapes: appear at first group, dim at last group or output
+            # Input shapes: ALL appear at phase 0, dim at last group or output
             output_pos = (0, 0)
             for key, info in seen.items():
                 i = info['idx']
-                appear = 3 * info['fg']
+                appear = 0
                 if key == output_pos:
                     dim = 3 * n_groups + 1  # nudge when output appears
                     anim = 'nudgeDim'
