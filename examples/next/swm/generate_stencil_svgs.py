@@ -279,11 +279,15 @@ def _add_grid(g, cx, cy, out_var, positions):
 
 # ─── Animation CSS ────────────────────────────────────────────────────────────
 
+NUDGE = 10  # px offset for overlapping shapes
+
 KEYFRAMES = (
     '@keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }\n'
     '@keyframes popIn { 0% { opacity:0; transform:scale(0.7) } '
     '100% { opacity:1; transform:scale(1) } }\n'
     '@keyframes fadeDim { from { opacity: 1 } to { opacity: 0.25 } }\n'
+    f'@keyframes nudgeDim {{ from {{ opacity:1; transform:translate(0,0) }} '
+    f'to {{ opacity:0.25; transform:translate({NUDGE}px,{NUDGE}px) }} }}\n'
 )
 
 
@@ -300,12 +304,24 @@ def _animation_css(stencil_names):
         pfx = name
 
         if st.get('composite'):
-            n_inp = len({(i[0], i[1]) for inter in st['phase1'] for i in inter['inputs']})
+            # Build index mapping to detect overlapping inputs
+            inter_positions = {tuple(i['pos']) for i in st['phase1']}
+            seen = {}
+            idx = 0
+            for inter in st['phase1']:
+                for inp in inter['inputs']:
+                    key = (inp[0], inp[1])
+                    if key not in seen:
+                        seen[key] = idx
+                        idx += 1
+            overlapping = {seen[k] for k in seen if k in inter_positions}
+            n_inp = len(seen)
             t = [i * PHASE_PAUSE for i in range(5)]  # t0..t4
 
             for i in range(n_inp):
+                dim = 'nudgeDim' if i in overlapping else 'fadeDim'
                 css += (f'.s-{pfx}-{i}{{opacity:0;animation:fadeIn .35s ease-out {t[0]:.2f}s both,'
-                        f'fadeDim .4s ease-out {t[2]:.2f}s forwards}}\n')
+                        f'{dim} .4s ease-out {t[2]:.2f}s forwards}}\n')
                 css += (f'.ar-{pfx}-{i}{{opacity:0;animation:fadeIn .35s ease-out {t[1]:.2f}s both,'
                         f'fadeDim .4s ease-out {t[2]:.2f}s forwards}}\n')
             for inter in st['phase1']:
@@ -408,13 +424,11 @@ def render_stencil(name, parent, ox=0, oy=0):
                            inp[3], inter['var'],
                            css_class=f'ar-{pfx}-{seen[(inp[0], inp[1])]}', thin=True)
 
-        # Initial input shapes (overlapping ones nudged bottom-right)
+        # Initial input shapes (overlapping ones slide out via CSS)
         for key, i in seen.items():
             label, var = info[key]
-            ix, iy = cx + key[0] * CELL, cy + key[1] * CELL
-            if key in inter_positions:
-                ix, iy = ix + 10, iy + 10
-            _add_shape(g, ix, iy, label, var, css_class=f's-{pfx}-{i}')
+            _add_shape(g, cx + key[0] * CELL, cy + key[1] * CELL,
+                       label, var, css_class=f's-{pfx}-{i}')
 
         # Intermediate shapes
         for inter in st['phase1']:
