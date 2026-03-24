@@ -525,30 +525,30 @@ def _add_legend(parent, ox, oy, show_intermediates=False, vertical=False,
     sc = 0.7
 
     if compact:
-        # Row 1: text labels, left-aligned; Row 2: symbols centered below
-        row_sp = 22
-        col_sp = 34
+        # Two-column: left column = labels (left-aligned),
+        #             right column = symbols (centered on a shared x)
+        row_sp = 24
+        sym_x = 80  # x position for symbol column center
         for i, (stype, var, label) in enumerate(items):
-            cx = i * col_sp
-            g.append(dw.Text(label, 9, cx, 0,
-                             text_anchor='middle', dominant_baseline='central',
+            y = i * row_sp
+            g.append(dw.Text(label, 10, 0, y,
+                             text_anchor='start', dominant_baseline='central',
                              font_family='Arial,sans-serif', fill=TEXT_MUTED))
             color = VAR_COLOR[var]
-            sy = row_sp
             if stype == 'circle':
                 r = CIRCLE_R * sc
-                g.append(dw.Circle(cx, sy, r, fill=color, fill_opacity=0.62,
+                g.append(dw.Circle(sym_x, y, r, fill=color, fill_opacity=0.62,
                                    stroke='none'))
-                g.append(_text(cx, sy, var, FONT * sc, '#ffffff', 500))
+                g.append(_text(sym_x, y, var, FONT * sc, '#ffffff', 500))
             elif stype.startswith('bar'):
                 bw = BAR[0] * sc if stype == 'bar_x' else BAR[1] * sc
                 bh = BAR[1] * sc if stype == 'bar_x' else BAR[0] * sc
-                g.append(dw.Rectangle(cx - bw / 2, sy - bh / 2, bw, bh,
+                g.append(dw.Rectangle(sym_x - bw / 2, y - bh / 2, bw, bh,
                                       rx=BAR_RX * sc, fill=color,
                                       fill_opacity=0.62, stroke='none'))
-                g.append(_text(cx, sy, var, FONT_BAR * sc, '#ffffff', 500))
+                g.append(_text(sym_x, y, var, FONT_BAR * sc, '#ffffff', 500))
             else:
-                g.append(_text(cx, sy, var, FONT_CENTER * sc, color, 600))
+                g.append(_text(sym_x, y, var, FONT_CENTER * sc, color, 600))
     else:
         x, y = 0, 0
         for stype, var, label in items:
@@ -641,8 +641,8 @@ def generate_composite():
     for name in names:
         ox, oy = offsets[name]
         render_stencil(name, d, ox, oy, show_title=False)
-    # Compact legend in the bottom-right empty area
-    _add_legend(d, total_w - 5 * 34 + 10, total_h - 52,
+    # Compact two-column legend in the bottom-right empty area
+    _add_legend(d, total_w - 110, total_h - 130,
                 show_intermediates=True, compact=True)
     return d
 
