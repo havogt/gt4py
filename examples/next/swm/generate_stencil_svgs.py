@@ -159,18 +159,22 @@ STENCILS = {
         'composite': True,
         # Phase 1: initial inputs → intermediate quantities
         'phase1': [
-            # z at (0,-1): inputs from p(-1,-2), p(1,-2), u(0,-2), v(-1,-1), v(1,-1)
+            # z at (0,-1): z needs p at 4 corners + u above/below + v left/right
             {'name': 'z', 'pos': (0, -1), 'label': 'z', 'var': 'z',
-             'inputs': [(-1, -2, 'p', 'p'), (1, -2, 'p', 'p'), (0, -2, 'u', 'u'),
+             'inputs': [(-1, -2, 'p', 'p'), (1, -2, 'p', 'p'),
+                        (-1, 0, 'p', 'p'), (1, 0, 'p', 'p'),
+                        (0, -2, 'u', 'u'),
                         (-1, -1, 'v', 'v'), (1, -1, 'v', 'v')]},
-            # z at (0,1): inputs from p(-1,2), p(1,2), u(0,2), v(-1,1), v(1,1)
+            # z at (0,1)
             {'name': 'z', 'pos': (0, 1), 'label': 'z', 'var': 'z',
-             'inputs': [(-1, 2, 'p', 'p'), (1, 2, 'p', 'p'), (0, 2, 'u', 'u'),
+             'inputs': [(-1, 0, 'p', 'p'), (1, 0, 'p', 'p'),
+                        (-1, 2, 'p', 'p'), (1, 2, 'p', 'p'),
+                        (0, 2, 'u', 'u'),
                         (-1, 1, 'v', 'v'), (1, 1, 'v', 'v')]},
-            # h at (-1,0): inputs from u(-2,0), u(0,0_skip), v(-1,-1), v(-1,1)
+            # h at (-1,0): h needs u left/right + v above/below (u(0,0) is self, skip)
             {'name': 'h', 'pos': (-1, 0), 'label': 'h', 'var': 'h',
              'inputs': [(-2, 0, 'u', 'u'), (-1, -1, 'v', 'v'), (-1, 1, 'v', 'v')]},
-            # h at (1,0): inputs from u(2,0), u(0,0_skip), v(1,-1), v(1,1)
+            # h at (1,0)
             {'name': 'h', 'pos': (1, 0), 'label': 'h', 'var': 'h',
              'inputs': [(2, 0, 'u', 'u'), (1, -1, 'v', 'v'), (1, 1, 'v', 'v')]},
         ],
@@ -185,15 +189,19 @@ STENCILS = {
         'out_label': 'v', 'out_sub': 'new', 'out_var': 'v',
         'composite': True,
         'phase1': [
-            # z at (-1,0)
+            # z at (-1,0): p at 4 corners + v above/below + u left/right
             {'name': 'z', 'pos': (-1, 0), 'label': 'z', 'var': 'z',
-             'inputs': [(-2, -1, 'p', 'p'), (-2, 1, 'p', 'p'), (-1, -1, 'u', 'u'),
-                        (-1, 1, 'u', 'u'), (-2, 0, 'v', 'v')]},
+             'inputs': [(-2, -1, 'p', 'p'), (-2, 1, 'p', 'p'),
+                        (0, -1, 'p', 'p'), (0, 1, 'p', 'p'),
+                        (-1, -1, 'u', 'u'), (-1, 1, 'u', 'u'),
+                        (-2, 0, 'v', 'v')]},
             # z at (1,0)
             {'name': 'z', 'pos': (1, 0), 'label': 'z', 'var': 'z',
-             'inputs': [(2, -1, 'p', 'p'), (2, 1, 'p', 'p'), (1, -1, 'u', 'u'),
-                        (1, 1, 'u', 'u'), (2, 0, 'v', 'v')]},
-            # h at (0,-1)
+             'inputs': [(0, -1, 'p', 'p'), (0, 1, 'p', 'p'),
+                        (2, -1, 'p', 'p'), (2, 1, 'p', 'p'),
+                        (1, -1, 'u', 'u'), (1, 1, 'u', 'u'),
+                        (2, 0, 'v', 'v')]},
+            # h at (0,-1): u left/right + v above/below (v(0,0) is self, skip)
             {'name': 'h', 'pos': (0, -1), 'label': 'h', 'var': 'h',
              'inputs': [(-1, -1, 'u', 'u'), (1, -1, 'u', 'u'), (0, -2, 'v', 'v')]},
             # h at (0,1)
@@ -541,6 +549,7 @@ def animation_css(stencil_names, id_prefixes=None):
     """Generate CSS @keyframes for all stencils."""
     css = '@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }\n'
     css += '@keyframes popIn { 0% { opacity:0; transform:scale(0.7); } 100% { opacity:1; transform:scale(1); } }\n'
+    css += '@keyframes fadeDim { from { opacity: 1; } to { opacity: 0.25; } }\n'
 
     if id_prefixes is None:
         id_prefixes = stencil_names
@@ -564,13 +573,17 @@ def animation_css(stencil_names, id_prefixes=None):
                         seen.add(key)
                         n_phase1 += 1
 
-            # Phase 1: initial inputs fade in
+            # Phase 2 timing (compute early so phase1 can reference it)
+            inter_delay = n_phase1 * ANIM_DT + 0.15
+
+            # Phase 1: initial inputs fade in, then dim when intermediates appear
             for i in range(n_phase1):
                 delay = i * ANIM_DT
-                css += f'.a-{pfx}-{i} {{ opacity:0; animation: fadeIn 0.25s ease-out {delay:.2f}s both; }}\n'
+                css += (f'.a-{pfx}-{i} {{ opacity:0; '
+                        f'animation: fadeIn 0.25s ease-out {delay:.2f}s both, '
+                        f'fadeDim 0.35s ease-out {inter_delay:.2f}s forwards; }}\n')
 
             # Phase 2: intermediates pop in after all phase1 inputs
-            inter_delay = n_phase1 * ANIM_DT + 0.15
             for inter in st['phase1']:
                 pos_key = f'{inter["pos"][0]}_{inter["pos"][1]}'
                 css += (f'.a-{pfx}-inter-{pos_key} {{ opacity:0; animation: popIn 0.3s ease-out {inter_delay:.2f}s both; '
