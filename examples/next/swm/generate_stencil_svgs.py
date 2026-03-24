@@ -616,20 +616,16 @@ def generate_phase2():
 def generate_composite():
     names = ['p_composite', 'v_composite', 'u_composite']
 
-    # Tight layout: v one grid cell closer to p (left), u one grid cell
-    # closer to p (up), so they share a full boundary row/column of p cells.
-    # Each sub-stencil center at (PAD + 2·CELL, PAD + 2·CELL) = (182, 182).
-    # sub_dim (no title) = 2·PAD + 4·CELL = 364.
+    # u moved one grid cell LEFT, v moved one grid cell UP relative to the
+    # original (4·CELL, CELL) / (CELL, 4·CELL) offsets, so they each consume
+    # from p's boundary column/row.  Normalised so all offsets stay ≥ 0.
     #
-    # v and p share 3 p-cells: (0,0), (2,0), (0,2) in p-local coords
-    # u and p share 3 p-cells: (0,0), (2,0), (0,2) in p-local coords
-    #
-    # Grid alignment: p↔v Δx=2·CELL(even,same xp=1✓) Δy=CELL(odd,yp differs✓)
-    #                 p↔u Δx=CELL(odd,xp differs✓) Δy=2·CELL(even,same yp=1✓)
+    # Grid alignment: p↔v Δx=4·CELL(even,same xp=1✓) Δy=-CELL(odd,yp differs✓)
+    #                 p↔u Δx=-CELL(odd,xp differs✓) Δy=4·CELL(even,same yp=1✓)
     offsets = {
-        'p_composite': (0, 0),
-        'v_composite': (2 * CELL, CELL),
-        'u_composite': (CELL, 2 * CELL),
+        'p_composite': (CELL, CELL),
+        'v_composite': (5 * CELL, 0),
+        'u_composite': (0, 5 * CELL),
     }
 
     sub_dim = 2 * PAD + 4 * CELL  # 364 (no title)
