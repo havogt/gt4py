@@ -616,21 +616,20 @@ def generate_phase2():
 def generate_composite():
     names = ['p_composite', 'v_composite', 'u_composite']
 
-    # Tight two-row layout: shared grid cells overlap exactly (no titles).
+    # Tight layout: v one grid cell closer to p (left), u one grid cell
+    # closer to p (up), so they share a full boundary row/column of p cells.
     # Each sub-stencil center at (PAD + 2·CELL, PAD + 2·CELL) = (182, 182).
     # sub_dim (no title) = 2·PAD + 4·CELL = 364.
     #
-    # p at (0,0):  rightmost p at (2,0) → pixel (312, 182)
-    # v at (4·CELL, CELL): p at (-2,-1) → pixel (260+52, 65+117) = (312, 182) ✓
-    # u at (CELL, 4·CELL): p at (-1,-2) → pixel (65+117, 260+52) = (182, 312) ✓
-    #   which matches p's p at (0,2) → (182, 312) ✓
+    # v and p share 3 p-cells: (0,0), (2,0), (0,2) in p-local coords
+    # u and p share 3 p-cells: (0,0), (2,0), (0,2) in p-local coords
     #
-    # Grid alignment: p↔v Δx=4·CELL(even,same xp=1✓) Δy=CELL(odd,yp differs✓)
-    #                 p↔u Δx=CELL(odd,xp differs✓) Δy=4·CELL(even,same yp=1✓)
+    # Grid alignment: p↔v Δx=2·CELL(even,same xp=1✓) Δy=CELL(odd,yp differs✓)
+    #                 p↔u Δx=CELL(odd,xp differs✓) Δy=2·CELL(even,same yp=1✓)
     offsets = {
         'p_composite': (0, 0),
-        'v_composite': (4 * CELL, CELL),
-        'u_composite': (CELL, 4 * CELL),
+        'v_composite': (2 * CELL, CELL),
+        'u_composite': (CELL, 2 * CELL),
     }
 
     sub_dim = 2 * PAD + 4 * CELL  # 364 (no title)
@@ -641,8 +640,8 @@ def generate_composite():
     for name in names:
         ox, oy = offsets[name]
         render_stencil(name, d, ox, oy, show_title=False)
-    # Compact two-column legend in the bottom-right empty area
-    _add_legend(d, total_w - 110, total_h - 130,
+    # Compact two-column legend in the bottom-right corner
+    _add_legend(d, total_w - 105, total_h - 128,
                 show_intermediates=True, compact=True)
     return d
 
