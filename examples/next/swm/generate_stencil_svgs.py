@@ -260,7 +260,7 @@ def _text(x, y, label, size, fill, weight=500):
 
 # ─── Grid lines ──────────────────────────────────────────────────────────────
 
-def _add_grid(g, cx, cy, out_var, positions):
+def _add_grid(g, cx, cy, out_var, positions, vertical=True, horizontal=True):
     """Add dashed cell-boundary grid lines."""
     xp, yp = GRID_PARITY.get(out_var, (1, 1))
     max_x = max((abs(p[0]) for p in positions), default=1)
@@ -270,16 +270,18 @@ def _add_grid(g, cx, cy, out_var, positions):
     y_lim = max_y * CELL + PAD - 2
     style = dict(stroke=GRID_C, stroke_width=0.9, stroke_dasharray='4,3')
 
-    for n in range(-6, 7):
-        if abs(n) > max_x + 1.5 or n % 2 != xp or abs(n * CELL) > x_lim:
-            continue
-        g.append(dw.Line(cx + n * CELL, cy - max_y * CELL - margin,
-                         cx + n * CELL, cy + max_y * CELL + margin, **style))
-    for n in range(-6, 7):
-        if abs(n) > max_y + 1.5 or n % 2 != yp or abs(n * CELL) > y_lim:
-            continue
-        g.append(dw.Line(cx - max_x * CELL - margin, cy + n * CELL,
-                         cx + max_x * CELL + margin, cy + n * CELL, **style))
+    if vertical:
+        for n in range(-6, 7):
+            if abs(n) > max_x + 1.5 or n % 2 != xp or abs(n * CELL) > x_lim:
+                continue
+            g.append(dw.Line(cx + n * CELL, cy - max_y * CELL - margin,
+                             cx + n * CELL, cy + max_y * CELL + margin, **style))
+    if horizontal:
+        for n in range(-6, 7):
+            if abs(n) > max_y + 1.5 or n % 2 != yp or abs(n * CELL) > y_lim:
+                continue
+            g.append(dw.Line(cx - max_x * CELL - margin, cy + n * CELL,
+                             cx + max_x * CELL + margin, cy + n * CELL, **style))
 
 
 # ─── Animation CSS ────────────────────────────────────────────────────────────
@@ -388,7 +390,7 @@ def _stencil_dims(name):
     return 2 * PAD + 2 * ex * CELL, 2 * PAD + 2 * ey * CELL + TITLE_H
 
 
-def render_stencil(name, parent, ox=0, oy=0):
+def render_stencil(name, parent, ox=0, oy=0, vertical_grid=True):
     """Render one stencil into parent drawing/group at offset (ox, oy)."""
     st = STENCILS[name]
     is_composite = st.get('composite', False)
@@ -404,7 +406,7 @@ def render_stencil(name, parent, ox=0, oy=0):
     g = dw.Group(transform=f'translate({ox},{oy})', id=f'stencil-{pfx}')
 
     # Grid
-    _add_grid(g, cx, cy, st['out_var'], pts)
+    _add_grid(g, cx, cy, st['out_var'], pts, vertical=vertical_grid)
 
     # Title
     g.append(_text(w / 2, TITLE_H - 4, st['formula'], 13, TEXT_MUTED, 600))
@@ -534,12 +536,31 @@ def generate_phase2():
 def generate_composite():
     names = ['u_composite', 'v_composite', 'p_composite']
     sub_w, sub_h = _stencil_dims(names[0])
-    total_w = 3 * sub_w + 2 * GAP
+    ex, ey = 2, 2  # all composites share the same extents
+
+    # Align centres so vertical cell-boundary lines match globally.
+    # u sits on cell boundaries (xp=0); v and p sit between them (xp=1).
+    # u→v shift = 7·CELL (odd  → aligns even/odd parity grids).
+    # v→p shift = 6·CELL (even → preserves same parity).
+    shifts = [0, 7 * CELL, 7 * CELL + 6 * CELL]
+    total_w = shifts[-1] + sub_w
     total_h = sub_h + 40
 
     d = _make_drawing(total_w, total_h, _animation_css(names), names)
+
+    # Global vertical grid lines at cell-boundary positions
+    cy = PAD + ey * CELL + TITLE_H
+    u_cx = shifts[0] + PAD + ex * CELL  # first diagram centre x
+    y_top = cy - ey * CELL - 18
+    y_bot = cy + ey * CELL + 18
+    style = dict(stroke=GRID_C, stroke_width=0.9, stroke_dasharray='4,3')
+    for k in range(-1, 12):
+        x = u_cx + 2 * k * CELL
+        if 0 <= x <= total_w:
+            d.append(dw.Line(x, y_top, x, y_bot, **style))
+
     for i, name in enumerate(names):
-        render_stencil(name, d, i * (sub_w + GAP), 0)
+        render_stencil(name, d, shifts[i], 0, vertical_grid=False)
     _add_legend(d, 20, total_h - 20)
     return d
 
