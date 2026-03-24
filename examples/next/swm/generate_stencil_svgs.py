@@ -429,7 +429,7 @@ def _stencil_dims(name):
     return 2 * PAD + 2 * ex * CELL, 2 * PAD + 2 * ey * CELL + TITLE_H
 
 
-def render_stencil(name, parent, ox=0, oy=0, vertical_grid=True):
+def render_stencil(name, parent, ox=0, oy=0, vertical_grid=True, show_title=True):
     """Render one stencil into parent drawing/group at offset (ox, oy)."""
     st = STENCILS[name]
     is_composite = st.get('composite', False)
@@ -438,9 +438,10 @@ def render_stencil(name, parent, ox=0, oy=0, vertical_grid=True):
     pts = _all_positions(st)
     ex = max(max((abs(p[0]) for p in pts), default=1), 1)
     ey = max(max((abs(p[1]) for p in pts), default=1), 1)
+    title_h = TITLE_H if show_title else 0
     w = 2 * PAD + 2 * ex * CELL
-    h = 2 * PAD + 2 * ey * CELL + TITLE_H
-    cx, cy = PAD + ex * CELL, PAD + ey * CELL + TITLE_H
+    h = 2 * PAD + 2 * ey * CELL + title_h
+    cx, cy = PAD + ex * CELL, PAD + ey * CELL + title_h
 
     g = dw.Group(transform=f'translate({ox},{oy})', id=f'stencil-{pfx}')
 
@@ -448,7 +449,8 @@ def render_stencil(name, parent, ox=0, oy=0, vertical_grid=True):
     _add_grid(g, cx, cy, st['out_var'], pts, vertical=vertical_grid)
 
     # Title
-    g.append(_text(w / 2, TITLE_H - 4, st['formula'], 13, TEXT_MUTED, 600))
+    if show_title:
+        g.append(_text(w / 2, TITLE_H - 4, st['formula'], 13, TEXT_MUTED, 600))
 
     if is_composite:
         groups = st['phase1_groups']
@@ -581,33 +583,35 @@ def generate_phase2():
 
 def generate_composite():
     names = ['p_composite', 'v_composite', 'u_composite']
-    sub_w, sub_h = _stencil_dims(names[0])
 
-    # Two-row layout: p top-left, v top-right, u centred below.
-    # Offsets chosen so cell-boundary grid lines align across diagrams:
+    # Tight two-row layout: shared grid cells overlap exactly (no titles).
+    # Each sub-stencil center at (PAD + 2·CELL, PAD + 2·CELL) = (182, 182).
+    # sub_dim (no title) = 2·PAD + 4·CELL = 364.
     #
-    #   p (xp=1,yp=1)   v (xp=1,yp=0)   u (xp=0,yp=1)
+    # p at (0,0):  rightmost p at (2,0) → pixel (312, 182)
+    # v at (4·CELL, CELL): p at (-2,-1) → pixel (260+52, 65+117) = (312, 182) ✓
+    # u at (CELL, 4·CELL): p at (-1,-2) → pixel (65+117, 260+52) = (182, 312) ✓
+    #   which matches p's p at (0,2) → (182, 312) ✓
     #
-    #   p↔v horizontal alignment: Δy = odd·CELL  → 1·CELL
-    #   p↔v vertical   alignment: Δx = even·CELL → 6·CELL
-    #   p↔u vertical   alignment: Δx = odd·CELL  → 1·CELL  (left-aligns grids)
-    #   p↔u horizontal alignment: Δy = even·CELL → 8·CELL
+    # Grid alignment: p↔v Δx=4·CELL(even,same xp=1✓) Δy=CELL(odd,yp differs✓)
+    #                 p↔u Δx=CELL(odd,xp differs✓) Δy=4·CELL(even,same yp=1✓)
     offsets = {
         'p_composite': (0, 0),
-        'v_composite': (6 * CELL, CELL),
-        'u_composite': (CELL, 8 * CELL),
+        'v_composite': (4 * CELL, CELL),
+        'u_composite': (CELL, 4 * CELL),
     }
 
-    total_w = max(ox + sub_w for ox, _ in offsets.values())
-    total_h = max(oy + sub_h for _, oy in offsets.values())
+    sub_dim = 2 * PAD + 4 * CELL  # 364 (no title)
+    total_w = max(ox + sub_dim for ox, _ in offsets.values())
+    total_h = max(oy + sub_dim for _, oy in offsets.values())
 
     d = _make_drawing(total_w, total_h, _animation_css(names), names)
     for name in names:
         ox, oy = offsets[name]
-        render_stencil(name, d, ox, oy)
+        render_stencil(name, d, ox, oy, show_title=False)
     # Vertical legend in the bottom-right empty area
-    _add_legend(d, offsets['v_composite'][0] + PAD,
-                offsets['u_composite'][1] + PAD + TITLE_H, vertical=True)
+    _add_legend(d, 4 * CELL + PAD, 4 * CELL + PAD,
+                show_intermediates=True, vertical=True)
     return d
 
 
