@@ -9,8 +9,8 @@ Illustrates the Arakawa C-grid staggering and the stencil patterns for:
 
 Shapes encode grid location — matching WHERE on the C-grid they live:
   ● circle (filled)  → vertex        (z)       — sits at grid intersections
-  ┃ vertical bar     → x-edge        (u, cu)   — straddles vertical cell boundary
-  ━ horizontal bar   → y-edge        (v, cv)   — straddles horizontal cell boundary
+  ━ horizontal bar   → x-edge        (u, cu)   — straddles horizontal cell boundary
+  ┃ vertical bar     → y-edge        (v, cv)   — straddles vertical cell boundary
   (text only)        → cell center   (p, h)    — floats inside the cell
 
 Uses the drawsvg library for SVG generation and CSCS Reveal.js color palette.
@@ -54,11 +54,11 @@ TEXT_MUTED = '#888888'
 # ─── Grid staggering ─────────────────────────────────────────────────────────
 
 # shape type per variable
-SHAPE = {'p': 'text', 'u': 'bar_y', 'v': 'bar_x', 'z': 'circle', 'h': 'text'}
+SHAPE = {'p': 'text', 'u': 'bar_x', 'v': 'bar_y', 'z': 'circle', 'h': 'text'}
 
 # Grid parity: cell boundaries at even (0) or odd (1) CELL multiples
 GRID_PARITY = {
-    'z': (0, 0), 'p': (1, 1), 'h': (1, 1), 'u': (0, 1), 'v': (1, 0),
+    'z': (0, 0), 'p': (1, 1), 'h': (1, 1), 'u': (1, 0), 'v': (0, 1),
 }
 
 
@@ -516,8 +516,8 @@ def render_stencil(name, parent, ox=0, oy=0, vertical_grid=True, show_title=True
 def _add_legend(parent, ox, oy, show_intermediates=False, vertical=False,
                 compact=False):
     """Add legend. compact=True uses two-row layout: labels then symbols."""
-    items = [('text', 'p', 'cell center'), ('bar_y', 'u', 'x-edge'),
-             ('bar_x', 'v', 'y-edge'), ('circle', 'z', 'vertex')]
+    items = [('text', 'p', 'cell center'), ('bar_x', 'u', 'x-edge'),
+             ('bar_y', 'v', 'y-edge'), ('circle', 'z', 'vertex')]
     if show_intermediates:
         items.append(('text', 'h', 'cell center'))
 
@@ -616,16 +616,15 @@ def generate_phase2():
 def generate_composite():
     names = ['p_composite', 'v_composite', 'u_composite']
 
-    # u moved one grid cell LEFT, v moved one grid cell UP relative to the
-    # original (4·CELL, CELL) / (CELL, 4·CELL) offsets, so they each consume
-    # from p's boundary column/row.  Normalised so all offsets stay ≥ 0.
+    # u to the right of p (shifted one cell up), v below p (shifted one cell
+    # left) — swapped vs before to match x=horizontal, y=vertical convention.
     #
-    # Grid alignment: p↔v Δx=4·CELL(even,same xp=1✓) Δy=-CELL(odd,yp differs✓)
-    #                 p↔u Δx=-CELL(odd,xp differs✓) Δy=4·CELL(even,same yp=1✓)
+    # Grid alignment: p↔u Δx=4·CELL(even,same xp=1✓) Δy=-CELL(odd,yp differs✓)
+    #                 p↔v Δx=-CELL(odd,xp differs✓) Δy=4·CELL(even,same yp=1✓)
     offsets = {
         'p_composite': (CELL, CELL),
-        'v_composite': (5 * CELL, 0),
-        'u_composite': (0, 5 * CELL),
+        'u_composite': (5 * CELL, 0),
+        'v_composite': (0, 5 * CELL),
     }
 
     sub_dim = 2 * PAD + 4 * CELL  # 364 (no title)
