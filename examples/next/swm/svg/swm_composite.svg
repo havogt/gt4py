@@ -14,9 +14,15 @@
 .a-u_composite-9 { opacity:0; animation: fadeIn 0.25s ease-out 1.17s both; }
 .a-u_composite-10 { opacity:0; animation: fadeIn 0.25s ease-out 1.30s both; }
 .a-u_composite-11 { opacity:0; animation: fadeIn 0.25s ease-out 1.43s both; }
-.a-u_composite-12 { opacity:0; animation: fadeIn 0.25s ease-out 1.56s both; }
-.a-u_composite-13 { opacity:0; animation: fadeIn 0.25s ease-out 1.69s both; }
-.a-u_composite-out { opacity:0; animation: popIn 0.35s ease-out 1.92s both; transform-box: fill-box; transform-origin: center; }
+.a-u_composite-inter-0_-1 { opacity:0; animation: popIn 0.3s ease-out 1.71s both; transform-box: fill-box; transform-origin: center; }
+.a-u_composite-inter-0_1 { opacity:0; animation: popIn 0.3s ease-out 1.71s both; transform-box: fill-box; transform-origin: center; }
+.a-u_composite-inter--1_0 { opacity:0; animation: popIn 0.3s ease-out 1.71s both; transform-box: fill-box; transform-origin: center; }
+.a-u_composite-inter-1_0 { opacity:0; animation: popIn 0.3s ease-out 1.71s both; transform-box: fill-box; transform-origin: center; }
+.a-u_composite-p2-12 { opacity:0; animation: fadeIn 0.25s ease-out 2.06s both; }
+.a-u_composite-p2-13 { opacity:0; animation: fadeIn 0.25s ease-out 2.19s both; }
+.a-u_composite-p2-14 { opacity:0; animation: fadeIn 0.25s ease-out 2.32s both; }
+.a-u_composite-p2-15 { opacity:0; animation: fadeIn 0.25s ease-out 2.45s both; }
+.a-u_composite-out { opacity:0; animation: popIn 0.35s ease-out 2.68s both; transform-box: fill-box; transform-origin: center; }
 .a-v_composite-0 { opacity:0; animation: fadeIn 0.25s ease-out 0.00s both; }
 .a-v_composite-1 { opacity:0; animation: fadeIn 0.25s ease-out 0.13s both; }
 .a-v_composite-2 { opacity:0; animation: fadeIn 0.25s ease-out 0.26s both; }
@@ -29,47 +35,60 @@
 .a-v_composite-9 { opacity:0; animation: fadeIn 0.25s ease-out 1.17s both; }
 .a-v_composite-10 { opacity:0; animation: fadeIn 0.25s ease-out 1.30s both; }
 .a-v_composite-11 { opacity:0; animation: fadeIn 0.25s ease-out 1.43s both; }
-.a-v_composite-12 { opacity:0; animation: fadeIn 0.25s ease-out 1.56s both; }
-.a-v_composite-13 { opacity:0; animation: fadeIn 0.25s ease-out 1.69s both; }
-.a-v_composite-out { opacity:0; animation: popIn 0.35s ease-out 1.92s both; transform-box: fill-box; transform-origin: center; }
+.a-v_composite-inter--1_0 { opacity:0; animation: popIn 0.3s ease-out 1.71s both; transform-box: fill-box; transform-origin: center; }
+.a-v_composite-inter-1_0 { opacity:0; animation: popIn 0.3s ease-out 1.71s both; transform-box: fill-box; transform-origin: center; }
+.a-v_composite-inter-0_-1 { opacity:0; animation: popIn 0.3s ease-out 1.71s both; transform-box: fill-box; transform-origin: center; }
+.a-v_composite-inter-0_1 { opacity:0; animation: popIn 0.3s ease-out 1.71s both; transform-box: fill-box; transform-origin: center; }
+.a-v_composite-p2-12 { opacity:0; animation: fadeIn 0.25s ease-out 2.06s both; }
+.a-v_composite-p2-13 { opacity:0; animation: fadeIn 0.25s ease-out 2.19s both; }
+.a-v_composite-p2-14 { opacity:0; animation: fadeIn 0.25s ease-out 2.32s both; }
+.a-v_composite-p2-15 { opacity:0; animation: fadeIn 0.25s ease-out 2.45s both; }
+.a-v_composite-out { opacity:0; animation: popIn 0.35s ease-out 2.68s both; transform-box: fill-box; transform-origin: center; }
 .a-p_composite-0 { opacity:0; animation: fadeIn 0.25s ease-out 0.00s both; }
 .a-p_composite-1 { opacity:0; animation: fadeIn 0.25s ease-out 0.13s both; }
 .a-p_composite-2 { opacity:0; animation: fadeIn 0.25s ease-out 0.26s both; }
 .a-p_composite-3 { opacity:0; animation: fadeIn 0.25s ease-out 0.39s both; }
-.a-p_composite-4 { opacity:0; animation: fadeIn 0.25s ease-out 0.52s both; }
-.a-p_composite-5 { opacity:0; animation: fadeIn 0.25s ease-out 0.65s both; }
-.a-p_composite-6 { opacity:0; animation: fadeIn 0.25s ease-out 0.78s both; }
-.a-p_composite-7 { opacity:0; animation: fadeIn 0.25s ease-out 0.91s both; }
-.a-p_composite-out { opacity:0; animation: popIn 0.35s ease-out 1.14s both; transform-box: fill-box; transform-origin: center; }
+.a-p_composite-inter--1_0 { opacity:0; animation: popIn 0.3s ease-out 0.67s both; transform-box: fill-box; transform-origin: center; }
+.a-p_composite-inter-1_0 { opacity:0; animation: popIn 0.3s ease-out 0.67s both; transform-box: fill-box; transform-origin: center; }
+.a-p_composite-inter-0_-1 { opacity:0; animation: popIn 0.3s ease-out 0.67s both; transform-box: fill-box; transform-origin: center; }
+.a-p_composite-inter-0_1 { opacity:0; animation: popIn 0.3s ease-out 0.67s both; transform-box: fill-box; transform-origin: center; }
+.a-p_composite-p2-4 { opacity:0; animation: fadeIn 0.25s ease-out 1.02s both; }
+.a-p_composite-p2-5 { opacity:0; animation: fadeIn 0.25s ease-out 1.15s both; }
+.a-p_composite-p2-6 { opacity:0; animation: fadeIn 0.25s ease-out 1.28s both; }
+.a-p_composite-p2-7 { opacity:0; animation: fadeIn 0.25s ease-out 1.41s both; }
+.a-p_composite-out { opacity:0; animation: popIn 0.35s ease-out 1.64s both; transform-box: fill-box; transform-origin: center; }
 </style>
 <defs>
   <marker id="ah" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
     <path d="M0,0 L8,3 L0,6 L2,3 Z" fill="#b5b5b5"/>
+  </marker>
+  <marker id="ah-thin" markerWidth="7" markerHeight="5" refX="6" refY="2.5" orient="auto" markerUnits="strokeWidth">
+    <path d="M0,0 L7,2.5 L0,5 L1.5,2.5 Z" fill="#cdcdcd"/>
   </marker>
 </defs>
 <g transform="translate(0,0)" id="stencil-u_composite">
 <line x1="52" y1="58" x2="52" y2="354" stroke="#d0d3d8" stroke-width="0.9" stroke-dasharray="4,3"/>
 <line x1="182" y1="58" x2="182" y2="354" stroke="#d0d3d8" stroke-width="0.9" stroke-dasharray="4,3"/>
 <line x1="312" y1="58" x2="312" y2="354" stroke="#d0d3d8" stroke-width="0.9" stroke-dasharray="4,3"/>
-<line x1="34" y1="11" x2="330" y2="11" stroke="#d0d3d8" stroke-width="0.9" stroke-dasharray="4,3"/>
 <line x1="34" y1="141" x2="330" y2="141" stroke="#d0d3d8" stroke-width="0.9" stroke-dasharray="4,3"/>
 <line x1="34" y1="271" x2="330" y2="271" stroke="#d0d3d8" stroke-width="0.9" stroke-dasharray="4,3"/>
-<line x1="34" y1="401" x2="330" y2="401" stroke="#d0d3d8" stroke-width="0.9" stroke-dasharray="4,3"/>
-<text x="182.0" y="20" text-anchor="middle" font-family="Arial,sans-serif" font-size="13" font-weight="600" fill="#888888">ũ from (p, u, v)</text>
-<line class="a-u_composite-0" x1="122.3" y1="86.7" x2="177.2" y2="196.3" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
-<line class="a-u_composite-1" x1="241.7" y1="86.7" x2="186.8" y2="196.3" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
-<line class="a-u_composite-2" x1="130.0" y1="206.0" x2="158.0" y2="206.0" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
-<line class="a-u_composite-3" x1="234.0" y1="206.0" x2="206.0" y2="206.0" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
-<line class="a-u_composite-4" x1="122.3" y1="325.3" x2="177.2" y2="215.7" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
-<line class="a-u_composite-5" x1="241.7" y1="325.3" x2="186.8" y2="215.7" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
-<line class="a-u_composite-6" x1="182.0" y1="86.0" x2="182.0" y2="196.0" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
-<line class="a-u_composite-7" x1="182.0" y1="326.0" x2="182.0" y2="216.0" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
-<line class="a-u_composite-8" x1="76.0" y1="206.0" x2="158.0" y2="206.0" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
-<line class="a-u_composite-9" x1="288.0" y1="206.0" x2="206.0" y2="206.0" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
-<line class="a-u_composite-10" x1="126.1" y1="150.1" x2="172.9" y2="196.9" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
-<line class="a-u_composite-11" x1="237.9" y1="150.1" x2="191.1" y2="196.9" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
-<line class="a-u_composite-12" x1="126.1" y1="261.9" x2="172.9" y2="215.1" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
-<line class="a-u_composite-13" x1="237.9" y1="261.9" x2="191.1" y2="215.1" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
+<text x="182.0" y="20" text-anchor="middle" font-family="Arial,sans-serif" font-size="13" font-weight="600" fill="#888888">u_new from (p, u, v)</text>
+<line class="a-u_composite-0" x1="127.1" y1="86.1" x2="170.0" y2="129.0" stroke="#cdcdcd" stroke-width="0.77" marker-end="url(#ah-thin)"/>
+<line class="a-u_composite-1" x1="236.9" y1="86.1" x2="194.0" y2="129.0" stroke="#cdcdcd" stroke-width="0.77" marker-end="url(#ah-thin)"/>
+<line class="a-u_composite-2" x1="182.0" y1="86.0" x2="182.0" y2="124.0" stroke="#cdcdcd" stroke-width="0.77" marker-end="url(#ah-thin)"/>
+<line class="a-u_composite-3" x1="127.0" y1="141.0" x2="165.0" y2="141.0" stroke="#cdcdcd" stroke-width="0.77" marker-end="url(#ah-thin)"/>
+<line class="a-u_composite-4" x1="237.0" y1="141.0" x2="199.0" y2="141.0" stroke="#cdcdcd" stroke-width="0.77" marker-end="url(#ah-thin)"/>
+<line class="a-u_composite-5" x1="127.1" y1="325.9" x2="170.0" y2="283.0" stroke="#cdcdcd" stroke-width="0.77" marker-end="url(#ah-thin)"/>
+<line class="a-u_composite-6" x1="236.9" y1="325.9" x2="194.0" y2="283.0" stroke="#cdcdcd" stroke-width="0.77" marker-end="url(#ah-thin)"/>
+<line class="a-u_composite-7" x1="182.0" y1="326.0" x2="182.0" y2="288.0" stroke="#cdcdcd" stroke-width="0.77" marker-end="url(#ah-thin)"/>
+<line class="a-u_composite-8" x1="127.0" y1="271.0" x2="165.0" y2="271.0" stroke="#cdcdcd" stroke-width="0.77" marker-end="url(#ah-thin)"/>
+<line class="a-u_composite-9" x1="237.0" y1="271.0" x2="199.0" y2="271.0" stroke="#cdcdcd" stroke-width="0.77" marker-end="url(#ah-thin)"/>
+<line class="a-u_composite-10" x1="76.0" y1="206.0" x2="104.0" y2="206.0" stroke="#cdcdcd" stroke-width="0.77" marker-end="url(#ah-thin)"/>
+<line class="a-u_composite-3" x1="117.0" y1="165.0" x2="117.0" y2="195.0" stroke="#cdcdcd" stroke-width="0.77" marker-end="url(#ah-thin)"/>
+<line class="a-u_composite-8" x1="117.0" y1="247.0" x2="117.0" y2="217.0" stroke="#cdcdcd" stroke-width="0.77" marker-end="url(#ah-thin)"/>
+<line class="a-u_composite-11" x1="288.0" y1="206.0" x2="260.0" y2="206.0" stroke="#cdcdcd" stroke-width="0.77" marker-end="url(#ah-thin)"/>
+<line class="a-u_composite-4" x1="247.0" y1="165.0" x2="247.0" y2="195.0" stroke="#cdcdcd" stroke-width="0.77" marker-end="url(#ah-thin)"/>
+<line class="a-u_composite-9" x1="247.0" y1="247.0" x2="247.0" y2="217.0" stroke="#cdcdcd" stroke-width="0.77" marker-end="url(#ah-thin)"/>
 <g class="a-u_composite-0">
   <text x="117" y="76" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="13" font-weight="500" fill="#1F407A">p</text>
 </g>
@@ -77,77 +96,89 @@
   <text x="247" y="76" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="13" font-weight="500" fill="#1F407A">p</text>
 </g>
 <g class="a-u_composite-2">
-  <text x="117" y="206" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="13" font-weight="500" fill="#1F407A">p</text>
-</g>
-<g class="a-u_composite-3">
-  <text x="247" y="206" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="13" font-weight="500" fill="#1F407A">p</text>
-</g>
-<g class="a-u_composite-4">
-  <text x="117" y="336" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="13" font-weight="500" fill="#1F407A">p</text>
-</g>
-<g class="a-u_composite-5">
-  <text x="247" y="336" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="13" font-weight="500" fill="#1F407A">p</text>
-</g>
-<g class="a-u_composite-6">
   <rect x="161.0" y="69.0" width="42" height="14" rx="3" fill="#007A96" fill-opacity="0.62" stroke="none"/>
   <text x="182" y="76" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="11" font-weight="500" fill="#ffffff">u</text>
+</g>
+<g class="a-u_composite-3">
+  <rect x="110.0" y="120.0" width="14" height="42" rx="3" fill="#A60B16" fill-opacity="0.62" stroke="none"/>
+  <text x="117" y="141" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="11" font-weight="500" fill="#ffffff">v</text>
+</g>
+<g class="a-u_composite-4">
+  <rect x="240.0" y="120.0" width="14" height="42" rx="3" fill="#A60B16" fill-opacity="0.62" stroke="none"/>
+  <text x="247" y="141" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="11" font-weight="500" fill="#ffffff">v</text>
+</g>
+<g class="a-u_composite-5">
+  <text x="117" y="336" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="13" font-weight="500" fill="#1F407A">p</text>
+</g>
+<g class="a-u_composite-6">
+  <text x="247" y="336" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="13" font-weight="500" fill="#1F407A">p</text>
 </g>
 <g class="a-u_composite-7">
   <rect x="161.0" y="329.0" width="42" height="14" rx="3" fill="#007A96" fill-opacity="0.62" stroke="none"/>
   <text x="182" y="336" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="11" font-weight="500" fill="#ffffff">u</text>
 </g>
 <g class="a-u_composite-8">
-  <rect x="31.0" y="199.0" width="42" height="14" rx="3" fill="#007A96" fill-opacity="0.62" stroke="none"/>
-  <text x="52" y="206" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="11" font-weight="500" fill="#ffffff">u</text>
-</g>
-<g class="a-u_composite-9">
-  <rect x="291.0" y="199.0" width="42" height="14" rx="3" fill="#007A96" fill-opacity="0.62" stroke="none"/>
-  <text x="312" y="206" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="11" font-weight="500" fill="#ffffff">u</text>
-</g>
-<g class="a-u_composite-10">
-  <rect x="110.0" y="120.0" width="14" height="42" rx="3" fill="#A60B16" fill-opacity="0.62" stroke="none"/>
-  <text x="117" y="141" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="11" font-weight="500" fill="#ffffff">v</text>
-</g>
-<g class="a-u_composite-11">
-  <rect x="240.0" y="120.0" width="14" height="42" rx="3" fill="#A60B16" fill-opacity="0.62" stroke="none"/>
-  <text x="247" y="141" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="11" font-weight="500" fill="#ffffff">v</text>
-</g>
-<g class="a-u_composite-12">
   <rect x="110.0" y="250.0" width="14" height="42" rx="3" fill="#A60B16" fill-opacity="0.62" stroke="none"/>
   <text x="117" y="271" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="11" font-weight="500" fill="#ffffff">v</text>
 </g>
-<g class="a-u_composite-13">
+<g class="a-u_composite-9">
   <rect x="240.0" y="250.0" width="14" height="42" rx="3" fill="#A60B16" fill-opacity="0.62" stroke="none"/>
   <text x="247" y="271" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="11" font-weight="500" fill="#ffffff">v</text>
 </g>
+<g class="a-u_composite-10">
+  <rect x="31.0" y="199.0" width="42" height="14" rx="3" fill="#007A96" fill-opacity="0.62" stroke="none"/>
+  <text x="52" y="206" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="11" font-weight="500" fill="#ffffff">u</text>
+</g>
+<g class="a-u_composite-11">
+  <rect x="291.0" y="199.0" width="42" height="14" rx="3" fill="#007A96" fill-opacity="0.62" stroke="none"/>
+  <text x="312" y="206" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="11" font-weight="500" fill="#ffffff">u</text>
+</g>
+<g class="a-u_composite-inter-0_-1">
+  <circle cx="182" cy="141" r="14" fill="#72791C" fill-opacity="0.62" stroke="none"/>
+  <text x="182" y="141" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="12" font-weight="500" fill="#ffffff">z</text>
+</g>
+<g class="a-u_composite-inter-0_1">
+  <circle cx="182" cy="271" r="14" fill="#72791C" fill-opacity="0.62" stroke="none"/>
+  <text x="182" y="271" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="12" font-weight="500" fill="#ffffff">z</text>
+</g>
+<g class="a-u_composite-inter--1_0">
+  <text x="117" y="206" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="13" font-weight="500" fill="#800080">h</text>
+</g>
+<g class="a-u_composite-inter-1_0">
+  <text x="247" y="206" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="13" font-weight="500" fill="#800080">h</text>
+</g>
+<line class="a-u_composite-p2-12" x1="182.0" y1="158.0" x2="182.0" y2="196.0" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
+<line class="a-u_composite-p2-13" x1="182.0" y1="254.0" x2="182.0" y2="216.0" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
+<line class="a-u_composite-p2-14" x1="130.0" y1="206.0" x2="158.0" y2="206.0" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
+<line class="a-u_composite-p2-15" x1="234.0" y1="206.0" x2="206.0" y2="206.0" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
 <g class="a-u_composite-out">
   <rect x="161.0" y="199.0" width="42" height="14" rx="3" fill="#007A96" fill-opacity="0.82" stroke="none"/>
-  <text x="182" y="206" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="11" font-weight="700" fill="#ffffff">ũ</text>
+  <text x="182" y="206" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="11" font-weight="700" fill="#ffffff">u<tspan font-size="7" baseline-shift="sub">new</tspan></text>
 </g>
 </g>
 <g transform="translate(380,0)" id="stencil-v_composite">
-<line x1="-13" y1="58" x2="-13" y2="354" stroke="#d0d3d8" stroke-width="0.9" stroke-dasharray="4,3"/>
 <line x1="117" y1="58" x2="117" y2="354" stroke="#d0d3d8" stroke-width="0.9" stroke-dasharray="4,3"/>
 <line x1="247" y1="58" x2="247" y2="354" stroke="#d0d3d8" stroke-width="0.9" stroke-dasharray="4,3"/>
-<line x1="377" y1="58" x2="377" y2="354" stroke="#d0d3d8" stroke-width="0.9" stroke-dasharray="4,3"/>
 <line x1="34" y1="76" x2="330" y2="76" stroke="#d0d3d8" stroke-width="0.9" stroke-dasharray="4,3"/>
 <line x1="34" y1="206" x2="330" y2="206" stroke="#d0d3d8" stroke-width="0.9" stroke-dasharray="4,3"/>
 <line x1="34" y1="336" x2="330" y2="336" stroke="#d0d3d8" stroke-width="0.9" stroke-dasharray="4,3"/>
-<text x="182.0" y="20" text-anchor="middle" font-family="Arial,sans-serif" font-size="13" font-weight="600" fill="#888888">ṽ from (p, u, v)</text>
-<line class="a-v_composite-0" x1="64.7" y1="147.3" x2="172.3" y2="201.2" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
-<line class="a-v_composite-1" x1="64.7" y1="264.7" x2="172.3" y2="210.8" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
-<line class="a-v_composite-2" x1="182.0" y1="152.0" x2="182.0" y2="182.0" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
-<line class="a-v_composite-3" x1="182.0" y1="260.0" x2="182.0" y2="230.0" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
-<line class="a-v_composite-4" x1="299.3" y1="147.3" x2="191.7" y2="201.2" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
-<line class="a-v_composite-5" x1="299.3" y1="264.7" x2="191.7" y2="210.8" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
-<line class="a-v_composite-6" x1="62.0" y1="206.0" x2="172.0" y2="206.0" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
-<line class="a-v_composite-7" x1="302.0" y1="206.0" x2="192.0" y2="206.0" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
-<line class="a-v_composite-8" x1="182.0" y1="100.0" x2="182.0" y2="182.0" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
-<line class="a-v_composite-9" x1="182.0" y1="312.0" x2="182.0" y2="230.0" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
-<line class="a-v_composite-10" x1="126.1" y1="150.1" x2="172.9" y2="196.9" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
-<line class="a-v_composite-11" x1="126.1" y1="261.9" x2="172.9" y2="215.1" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
-<line class="a-v_composite-12" x1="237.9" y1="150.1" x2="191.1" y2="196.9" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
-<line class="a-v_composite-13" x1="237.9" y1="261.9" x2="191.1" y2="215.1" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
+<text x="182.0" y="20" text-anchor="middle" font-family="Arial,sans-serif" font-size="13" font-weight="600" fill="#888888">v_new from (p, u, v)</text>
+<line class="a-v_composite-0" x1="62.1" y1="151.1" x2="105.0" y2="194.0" stroke="#cdcdcd" stroke-width="0.77" marker-end="url(#ah-thin)"/>
+<line class="a-v_composite-1" x1="62.1" y1="260.9" x2="105.0" y2="218.0" stroke="#cdcdcd" stroke-width="0.77" marker-end="url(#ah-thin)"/>
+<line class="a-v_composite-2" x1="117.0" y1="151.0" x2="117.0" y2="189.0" stroke="#cdcdcd" stroke-width="0.77" marker-end="url(#ah-thin)"/>
+<line class="a-v_composite-3" x1="117.0" y1="261.0" x2="117.0" y2="223.0" stroke="#cdcdcd" stroke-width="0.77" marker-end="url(#ah-thin)"/>
+<line class="a-v_composite-4" x1="62.0" y1="206.0" x2="100.0" y2="206.0" stroke="#cdcdcd" stroke-width="0.77" marker-end="url(#ah-thin)"/>
+<line class="a-v_composite-5" x1="301.9" y1="151.1" x2="259.0" y2="194.0" stroke="#cdcdcd" stroke-width="0.77" marker-end="url(#ah-thin)"/>
+<line class="a-v_composite-6" x1="301.9" y1="260.9" x2="259.0" y2="218.0" stroke="#cdcdcd" stroke-width="0.77" marker-end="url(#ah-thin)"/>
+<line class="a-v_composite-7" x1="247.0" y1="151.0" x2="247.0" y2="189.0" stroke="#cdcdcd" stroke-width="0.77" marker-end="url(#ah-thin)"/>
+<line class="a-v_composite-8" x1="247.0" y1="261.0" x2="247.0" y2="223.0" stroke="#cdcdcd" stroke-width="0.77" marker-end="url(#ah-thin)"/>
+<line class="a-v_composite-9" x1="302.0" y1="206.0" x2="264.0" y2="206.0" stroke="#cdcdcd" stroke-width="0.77" marker-end="url(#ah-thin)"/>
+<line class="a-v_composite-2" x1="141.0" y1="141.0" x2="169.0" y2="141.0" stroke="#cdcdcd" stroke-width="0.77" marker-end="url(#ah-thin)"/>
+<line class="a-v_composite-7" x1="223.0" y1="141.0" x2="195.0" y2="141.0" stroke="#cdcdcd" stroke-width="0.77" marker-end="url(#ah-thin)"/>
+<line class="a-v_composite-10" x1="182.0" y1="100.0" x2="182.0" y2="130.0" stroke="#cdcdcd" stroke-width="0.77" marker-end="url(#ah-thin)"/>
+<line class="a-v_composite-3" x1="141.0" y1="271.0" x2="169.0" y2="271.0" stroke="#cdcdcd" stroke-width="0.77" marker-end="url(#ah-thin)"/>
+<line class="a-v_composite-8" x1="223.0" y1="271.0" x2="195.0" y2="271.0" stroke="#cdcdcd" stroke-width="0.77" marker-end="url(#ah-thin)"/>
+<line class="a-v_composite-11" x1="182.0" y1="312.0" x2="182.0" y2="282.0" stroke="#cdcdcd" stroke-width="0.77" marker-end="url(#ah-thin)"/>
 <g class="a-v_composite-0">
   <text x="52" y="141" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="13" font-weight="500" fill="#1F407A">p</text>
 </g>
@@ -155,72 +186,76 @@
   <text x="52" y="271" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="13" font-weight="500" fill="#1F407A">p</text>
 </g>
 <g class="a-v_composite-2">
-  <text x="182" y="141" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="13" font-weight="500" fill="#1F407A">p</text>
-</g>
-<g class="a-v_composite-3">
-  <text x="182" y="271" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="13" font-weight="500" fill="#1F407A">p</text>
-</g>
-<g class="a-v_composite-4">
-  <text x="312" y="141" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="13" font-weight="500" fill="#1F407A">p</text>
-</g>
-<g class="a-v_composite-5">
-  <text x="312" y="271" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="13" font-weight="500" fill="#1F407A">p</text>
-</g>
-<g class="a-v_composite-6">
-  <rect x="45.0" y="185.0" width="14" height="42" rx="3" fill="#A60B16" fill-opacity="0.62" stroke="none"/>
-  <text x="52" y="206" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="11" font-weight="500" fill="#ffffff">v</text>
-</g>
-<g class="a-v_composite-7">
-  <rect x="305.0" y="185.0" width="14" height="42" rx="3" fill="#A60B16" fill-opacity="0.62" stroke="none"/>
-  <text x="312" y="206" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="11" font-weight="500" fill="#ffffff">v</text>
-</g>
-<g class="a-v_composite-8">
-  <rect x="175.0" y="55.0" width="14" height="42" rx="3" fill="#A60B16" fill-opacity="0.62" stroke="none"/>
-  <text x="182" y="76" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="11" font-weight="500" fill="#ffffff">v</text>
-</g>
-<g class="a-v_composite-9">
-  <rect x="175.0" y="315.0" width="14" height="42" rx="3" fill="#A60B16" fill-opacity="0.62" stroke="none"/>
-  <text x="182" y="336" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="11" font-weight="500" fill="#ffffff">v</text>
-</g>
-<g class="a-v_composite-10">
   <rect x="96.0" y="134.0" width="42" height="14" rx="3" fill="#007A96" fill-opacity="0.62" stroke="none"/>
   <text x="117" y="141" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="11" font-weight="500" fill="#ffffff">u</text>
 </g>
-<g class="a-v_composite-11">
+<g class="a-v_composite-3">
   <rect x="96.0" y="264.0" width="42" height="14" rx="3" fill="#007A96" fill-opacity="0.62" stroke="none"/>
   <text x="117" y="271" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="11" font-weight="500" fill="#ffffff">u</text>
 </g>
-<g class="a-v_composite-12">
+<g class="a-v_composite-4">
+  <rect x="45.0" y="185.0" width="14" height="42" rx="3" fill="#A60B16" fill-opacity="0.62" stroke="none"/>
+  <text x="52" y="206" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="11" font-weight="500" fill="#ffffff">v</text>
+</g>
+<g class="a-v_composite-5">
+  <text x="312" y="141" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="13" font-weight="500" fill="#1F407A">p</text>
+</g>
+<g class="a-v_composite-6">
+  <text x="312" y="271" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="13" font-weight="500" fill="#1F407A">p</text>
+</g>
+<g class="a-v_composite-7">
   <rect x="226.0" y="134.0" width="42" height="14" rx="3" fill="#007A96" fill-opacity="0.62" stroke="none"/>
   <text x="247" y="141" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="11" font-weight="500" fill="#ffffff">u</text>
 </g>
-<g class="a-v_composite-13">
+<g class="a-v_composite-8">
   <rect x="226.0" y="264.0" width="42" height="14" rx="3" fill="#007A96" fill-opacity="0.62" stroke="none"/>
   <text x="247" y="271" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="11" font-weight="500" fill="#ffffff">u</text>
 </g>
+<g class="a-v_composite-9">
+  <rect x="305.0" y="185.0" width="14" height="42" rx="3" fill="#A60B16" fill-opacity="0.62" stroke="none"/>
+  <text x="312" y="206" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="11" font-weight="500" fill="#ffffff">v</text>
+</g>
+<g class="a-v_composite-10">
+  <rect x="175.0" y="55.0" width="14" height="42" rx="3" fill="#A60B16" fill-opacity="0.62" stroke="none"/>
+  <text x="182" y="76" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="11" font-weight="500" fill="#ffffff">v</text>
+</g>
+<g class="a-v_composite-11">
+  <rect x="175.0" y="315.0" width="14" height="42" rx="3" fill="#A60B16" fill-opacity="0.62" stroke="none"/>
+  <text x="182" y="336" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="11" font-weight="500" fill="#ffffff">v</text>
+</g>
+<g class="a-v_composite-inter--1_0">
+  <circle cx="117" cy="206" r="14" fill="#72791C" fill-opacity="0.62" stroke="none"/>
+  <text x="117" y="206" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="12" font-weight="500" fill="#ffffff">z</text>
+</g>
+<g class="a-v_composite-inter-1_0">
+  <circle cx="247" cy="206" r="14" fill="#72791C" fill-opacity="0.62" stroke="none"/>
+  <text x="247" y="206" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="12" font-weight="500" fill="#ffffff">z</text>
+</g>
+<g class="a-v_composite-inter-0_-1">
+  <text x="182" y="141" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="13" font-weight="500" fill="#800080">h</text>
+</g>
+<g class="a-v_composite-inter-0_1">
+  <text x="182" y="271" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="13" font-weight="500" fill="#800080">h</text>
+</g>
+<line class="a-v_composite-p2-12" x1="134.0" y1="206.0" x2="172.0" y2="206.0" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
+<line class="a-v_composite-p2-13" x1="230.0" y1="206.0" x2="192.0" y2="206.0" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
+<line class="a-v_composite-p2-14" x1="182.0" y1="152.0" x2="182.0" y2="182.0" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
+<line class="a-v_composite-p2-15" x1="182.0" y1="260.0" x2="182.0" y2="230.0" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
 <g class="a-v_composite-out">
   <rect x="175.0" y="185.0" width="14" height="42" rx="3" fill="#A60B16" fill-opacity="0.82" stroke="none"/>
-  <text x="182" y="206" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="11" font-weight="700" fill="#ffffff">ṽ</text>
+  <text x="182" y="206" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="11" font-weight="700" fill="#ffffff">v<tspan font-size="7" baseline-shift="sub">new</tspan></text>
 </g>
 </g>
 <g transform="translate(760,0)" id="stencil-p_composite">
-<line x1="-13" y1="58" x2="-13" y2="354" stroke="#d0d3d8" stroke-width="0.9" stroke-dasharray="4,3"/>
 <line x1="117" y1="58" x2="117" y2="354" stroke="#d0d3d8" stroke-width="0.9" stroke-dasharray="4,3"/>
 <line x1="247" y1="58" x2="247" y2="354" stroke="#d0d3d8" stroke-width="0.9" stroke-dasharray="4,3"/>
-<line x1="377" y1="58" x2="377" y2="354" stroke="#d0d3d8" stroke-width="0.9" stroke-dasharray="4,3"/>
-<line x1="34" y1="11" x2="330" y2="11" stroke="#d0d3d8" stroke-width="0.9" stroke-dasharray="4,3"/>
 <line x1="34" y1="141" x2="330" y2="141" stroke="#d0d3d8" stroke-width="0.9" stroke-dasharray="4,3"/>
 <line x1="34" y1="271" x2="330" y2="271" stroke="#d0d3d8" stroke-width="0.9" stroke-dasharray="4,3"/>
-<line x1="34" y1="401" x2="330" y2="401" stroke="#d0d3d8" stroke-width="0.9" stroke-dasharray="4,3"/>
-<text x="182.0" y="20" text-anchor="middle" font-family="Arial,sans-serif" font-size="13" font-weight="600" fill="#888888">p̃ from (p, u, v)</text>
-<line class="a-p_composite-0" x1="65.0" y1="206.0" x2="169.0" y2="206.0" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
-<line class="a-p_composite-1" x1="299.0" y1="206.0" x2="195.0" y2="206.0" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
-<line class="a-p_composite-2" x1="182.0" y1="87.0" x2="182.0" y2="195.0" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
-<line class="a-p_composite-3" x1="182.0" y1="325.0" x2="182.0" y2="217.0" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
-<line class="a-p_composite-4" x1="141.0" y1="206.0" x2="169.0" y2="206.0" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
-<line class="a-p_composite-5" x1="223.0" y1="206.0" x2="195.0" y2="206.0" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
-<line class="a-p_composite-6" x1="182.0" y1="165.0" x2="182.0" y2="195.0" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
-<line class="a-p_composite-7" x1="182.0" y1="247.0" x2="182.0" y2="217.0" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
+<text x="182.0" y="20" text-anchor="middle" font-family="Arial,sans-serif" font-size="13" font-weight="600" fill="#888888">p_new from (p, u, v)</text>
+<line class="a-p_composite-0" x1="65.0" y1="206.0" x2="93.0" y2="206.0" stroke="#cdcdcd" stroke-width="0.77" marker-end="url(#ah-thin)"/>
+<line class="a-p_composite-1" x1="299.0" y1="206.0" x2="271.0" y2="206.0" stroke="#cdcdcd" stroke-width="0.77" marker-end="url(#ah-thin)"/>
+<line class="a-p_composite-2" x1="182.0" y1="87.0" x2="182.0" y2="117.0" stroke="#cdcdcd" stroke-width="0.77" marker-end="url(#ah-thin)"/>
+<line class="a-p_composite-3" x1="182.0" y1="325.0" x2="182.0" y2="295.0" stroke="#cdcdcd" stroke-width="0.77" marker-end="url(#ah-thin)"/>
 <g class="a-p_composite-0">
   <text x="52" y="206" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="13" font-weight="500" fill="#1F407A">p</text>
 </g>
@@ -233,24 +268,28 @@
 <g class="a-p_composite-3">
   <text x="182" y="336" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="13" font-weight="500" fill="#1F407A">p</text>
 </g>
-<g class="a-p_composite-4">
+<g class="a-p_composite-inter--1_0">
   <rect x="96.0" y="199.0" width="42" height="14" rx="3" fill="#007A96" fill-opacity="0.62" stroke="none"/>
-  <text x="117" y="206" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="11" font-weight="500" fill="#ffffff">u</text>
+  <text x="117" y="206" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="11" font-weight="500" fill="#ffffff">cu</text>
 </g>
-<g class="a-p_composite-5">
+<g class="a-p_composite-inter-1_0">
   <rect x="226.0" y="199.0" width="42" height="14" rx="3" fill="#007A96" fill-opacity="0.62" stroke="none"/>
-  <text x="247" y="206" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="11" font-weight="500" fill="#ffffff">u</text>
+  <text x="247" y="206" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="11" font-weight="500" fill="#ffffff">cu</text>
 </g>
-<g class="a-p_composite-6">
+<g class="a-p_composite-inter-0_-1">
   <rect x="175.0" y="120.0" width="14" height="42" rx="3" fill="#A60B16" fill-opacity="0.62" stroke="none"/>
-  <text x="182" y="141" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="11" font-weight="500" fill="#ffffff">v</text>
+  <text x="182" y="141" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="11" font-weight="500" fill="#ffffff">cv</text>
 </g>
-<g class="a-p_composite-7">
+<g class="a-p_composite-inter-0_1">
   <rect x="175.0" y="250.0" width="14" height="42" rx="3" fill="#A60B16" fill-opacity="0.62" stroke="none"/>
-  <text x="182" y="271" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="11" font-weight="500" fill="#ffffff">v</text>
+  <text x="182" y="271" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="11" font-weight="500" fill="#ffffff">cv</text>
 </g>
+<line class="a-p_composite-p2-4" x1="141.0" y1="206.0" x2="169.0" y2="206.0" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
+<line class="a-p_composite-p2-5" x1="223.0" y1="206.0" x2="195.0" y2="206.0" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
+<line class="a-p_composite-p2-6" x1="182.0" y1="165.0" x2="182.0" y2="195.0" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
+<line class="a-p_composite-p2-7" x1="182.0" y1="247.0" x2="182.0" y2="217.0" stroke="#b5b5b5" stroke-width="1.1" marker-end="url(#ah)"/>
 <g class="a-p_composite-out">
-  <text x="182" y="206" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="13" font-weight="700" fill="#1F407A">p̃</text>
+  <text x="182" y="206" text-anchor="middle" dominant-baseline="central" font-family="Arial,sans-serif" font-size="13" font-weight="700" fill="#1F407A">p<tspan font-size="7" baseline-shift="sub">new</tspan></text>
 </g>
 </g>
 <g transform="translate(20,408)">
