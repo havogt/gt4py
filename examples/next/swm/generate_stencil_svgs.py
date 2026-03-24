@@ -34,7 +34,7 @@ FONT_CENTER = 13    # label font for cell-center text
 ARROW_W = 1.1       # arrow stroke width
 PAD = 52            # padding around each sub-diagram
 TITLE_H = 24        # space for title above diagram
-PHASE_PAUSE = 0.6   # seconds between animation phases
+PHASE_PAUSE = 1.8   # seconds between animation phases
 GAP = 16            # gap between sub-diagrams in combined SVGs
 
 OUTPUT_DIR = os.path.join(
