@@ -413,7 +413,14 @@ def _collect_all_positions(st):
 def render_stencil(name, ox=0, oy=0, animate=True, id_prefix=''):
     """Render a stencil diagram as an SVG <g> group.
 
-    Returns (svg_string, width, height, num_anim_steps).
+    Animation class conventions (used by animation_css()):
+      's-{pfx}-{i}'     — input shape i       (phase: inputs)
+      'ar-{pfx}-{i}'    — arrow from input i   (phase: arrows)
+      'a-{pfx}-inter-…' — intermediate shape   (composite phase: intermediates)
+      'ar-{pfx}-p2-{i}' — phase-2 arrow        (composite phase: p2 arrows)
+      'a-{pfx}-out'     — output shape         (phase: output)
+
+    Returns (svg_string, width, height, n_unique_inputs).
     """
     st = STENCILS[name]
     is_composite = st.get('composite', False)
@@ -446,63 +453,51 @@ def render_stencil(name, ox=0, oy=0, animate=True, id_prefix=''):
             f'fill="{TEXT_MUTED}">{st["formula"]}</text>\n')
 
     out_sub = st.get('out_sub')
-    step = 0
 
     if is_composite:
-        # ── Phase 1: thin arrows from initial inputs → intermediate shapes ──
-        # Deduplicate initial inputs (same position may feed multiple intermediates)
-        seen_inputs = {}  # (dx,dy) → anim step
+        # Collect intermediate positions for overlap detection
+        inter_positions = set(tuple(inter['pos']) for inter in st['phase1'])
+
+        # ── Deduplicate initial inputs ──
+        seen_inputs = {}  # (dx,dy) → sequential index
+        input_info = {}   # (dx,dy) → (label, var_type)
+        idx = 0
         for inter in st['phase1']:
             for inp in inter['inputs']:
                 key = (inp[0], inp[1])
                 if key not in seen_inputs:
-                    seen_inputs[key] = step
-                    ix = cx + inp[0] * CELL
-                    iy = cy + inp[1] * CELL
-                    # Arrow to this intermediate
-                    tgt_x = cx + inter['pos'][0] * CELL
-                    tgt_y = cy + inter['pos'][1] * CELL
-                    cls = f'a-{pfx}-{step}' if animate else ''
-                    svg += arrow_svg(ix, iy, tgt_x, tgt_y, inp[3], inter['var'],
-                                     cls, thin=True)
-                    step += 1
-                else:
-                    # Still draw the arrow but reuse the same anim class
-                    ix = cx + inp[0] * CELL
-                    iy = cy + inp[1] * CELL
-                    tgt_x = cx + inter['pos'][0] * CELL
-                    tgt_y = cy + inter['pos'][1] * CELL
-                    existing_step = seen_inputs[key]
-                    cls = f'a-{pfx}-{existing_step}' if animate else ''
-                    svg += arrow_svg(ix, iy, tgt_x, tgt_y, inp[3], inter['var'],
-                                     cls, thin=True)
+                    seen_inputs[key] = idx
+                    input_info[key] = (inp[2], inp[3])
+                    idx += 1
+        n_unique = idx
 
-        # Draw initial input shapes (on top of thin arrows)
+        # ── Thin arrows (drawn first, behind everything) ──
+        for inter in st['phase1']:
+            for inp in inter['inputs']:
+                key = (inp[0], inp[1])
+                s_idx = seen_inputs[key]
+                ix = cx + inp[0] * CELL
+                iy = cy + inp[1] * CELL
+                tgt_x = cx + inter['pos'][0] * CELL
+                tgt_y = cy + inter['pos'][1] * CELL
+                cls = f'ar-{pfx}-{s_idx}' if animate else ''
+                svg += arrow_svg(ix, iy, tgt_x, tgt_y, inp[3], inter['var'],
+                                 cls, thin=True)
+
+        # ── Initial input shapes (on top of thin arrows) ──
+        # Inputs that overlap with an intermediate position get a small offset
+        OVERLAP_DX, OVERLAP_DY = 10, 10  # bottom-right nudge
         for key, s_idx in seen_inputs.items():
+            label, var_type = input_info[key]
             ix = cx + key[0] * CELL
             iy = cy + key[1] * CELL
-            # Find the var type for this input
-            var_type = None
-            for inter in st['phase1']:
-                for inp in inter['inputs']:
-                    if (inp[0], inp[1]) == key:
-                        var_type = inp[3]
-                        break
-                if var_type:
-                    break
-            label = None
-            for inter in st['phase1']:
-                for inp in inter['inputs']:
-                    if (inp[0], inp[1]) == key:
-                        label = inp[2]
-                        break
-                if label:
-                    break
-            cls = f'a-{pfx}-{s_idx}' if animate else ''
+            if key in inter_positions:
+                ix += OVERLAP_DX
+                iy += OVERLAP_DY
+            cls = f's-{pfx}-{s_idx}' if animate else ''
             svg += shape_svg(ix, iy, label, var_type, cls=cls)
 
         # ── Intermediate shapes ──
-        n_phase1 = step
         for inter in st['phase1']:
             tgt_x = cx + inter['pos'][0] * CELL
             tgt_y = cy + inter['pos'][1] * CELL
@@ -510,40 +505,37 @@ def render_stencil(name, ox=0, oy=0, animate=True, id_prefix=''):
             svg += shape_svg(tgt_x, tgt_y, inter['label'], inter['var'], cls=cls)
 
         # ── Phase 2: normal arrows from intermediates → output ──
-        for inp in st['phase2_inputs']:
+        for i, inp in enumerate(st['phase2_inputs']):
             ix = cx + inp[0] * CELL
             iy = cy + inp[1] * CELL
-            cls = f'a-{pfx}-p2-{step}' if animate else ''
+            cls = f'ar-{pfx}-p2-{i}' if animate else ''
             svg += arrow_svg(ix, iy, cx, cy, inp[3], st['out_var'], cls)
-            step += 1
 
     else:
         inputs = st['inputs']
+        n_unique = len(inputs)
+
         # Arrows first (drawn behind shapes)
-        for inp in inputs:
+        for i, inp in enumerate(inputs):
             ix = cx + inp[0] * CELL
             iy = cy + inp[1] * CELL
-            cls = f'a-{pfx}-{step}' if animate else ''
+            cls = f'ar-{pfx}-{i}' if animate else ''
             svg += arrow_svg(ix, iy, cx, cy, inp[3], st['out_var'], cls)
-            step += 1
 
         # Input shapes (on top of arrows)
-        step_s = 0
-        for inp in inputs:
+        for i, inp in enumerate(inputs):
             ix = cx + inp[0] * CELL
             iy = cy + inp[1] * CELL
-            cls = f'a-{pfx}-{step_s}' if animate else ''
+            cls = f's-{pfx}-{i}' if animate else ''
             svg += shape_svg(ix, iy, inp[2], inp[3], cls=cls)
-            step_s += 1
 
     # Output shape (drawn last, on top)
     cls = f'a-{pfx}-out' if animate else ''
     svg += shape_svg(cx, cy, st['out_label'], st['out_var'], is_output=True, cls=cls,
                      sub=out_sub)
-    step += 1
 
     svg += '</g>\n'
-    return svg, w, h, step
+    return svg, w, h, n_unique
 
 
 def animation_css(stencil_names, id_prefixes=None):
@@ -552,9 +544,17 @@ def animation_css(stencil_names, id_prefixes=None):
     All elements within the same phase appear simultaneously, with PHASE_PAUSE
     seconds between successive phases.
 
-    Non-composite: phase A (inputs) → phase B (output).
-    Composite:     phase A (initial inputs) → phase B (intermediates, inputs dim)
-                   → phase C (phase2 arrows) → phase D (output).
+    Non-composite phases:
+      1. Input shapes  (s-{pfx}-*)
+      2. Arrows        (ar-{pfx}-*)
+      3. Output        (a-{pfx}-out)
+
+    Composite phases:
+      1. Initial input shapes   (s-{pfx}-*)
+      2. Thin arrows            (ar-{pfx}-*)
+      3. Intermediates pop in   (a-{pfx}-inter-*), initial inputs dim
+      4. Phase-2 arrows         (ar-{pfx}-p2-*)
+      5. Output                 (a-{pfx}-out)
     """
     css = '@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }\n'
     css += '@keyframes popIn { 0% { opacity:0; transform:scale(0.7); } 100% { opacity:1; transform:scale(1); } }\n'
@@ -567,63 +567,68 @@ def animation_css(stencil_names, id_prefixes=None):
         st = STENCILS[name]
 
         if st.get('composite'):
-            # Phase A: initial inputs + thin arrows (all at once)
-            t_a = 0.0
-
-            # Count unique initial inputs for class numbering
+            # Count unique initial inputs
             seen = set()
-            n_phase1 = 0
+            n_inputs = 0
             for inter in st['phase1']:
                 for inp in inter['inputs']:
                     if (inp[0], inp[1]) not in seen:
                         seen.add((inp[0], inp[1]))
-                        n_phase1 += 1
+                        n_inputs += 1
 
-            # Phase B: intermediates pop in, initial inputs dim
-            t_b = t_a + PHASE_PAUSE
+            t1 = 0.0                    # input shapes
+            t2 = t1 + PHASE_PAUSE       # thin arrows
+            t3 = t2 + PHASE_PAUSE       # intermediates + dim inputs
+            t4 = t3 + PHASE_PAUSE       # phase-2 arrows
+            t5 = t4 + PHASE_PAUSE       # output
 
-            # Phase C: phase2 arrows
-            t_c = t_b + PHASE_PAUSE
+            # 1. Input shapes: appear, then dim at t3
+            for i in range(n_inputs):
+                css += (f'.s-{pfx}-{i} {{ opacity:0; '
+                        f'animation: fadeIn 0.35s ease-out {t1:.2f}s both, '
+                        f'fadeDim 0.4s ease-out {t3:.2f}s forwards; }}\n')
 
-            # Phase D: output pops
-            t_d = t_c + PHASE_PAUSE
+            # 2. Thin arrows: appear at t2, dim at t3
+            for i in range(n_inputs):
+                css += (f'.ar-{pfx}-{i} {{ opacity:0; '
+                        f'animation: fadeIn 0.35s ease-out {t2:.2f}s both, '
+                        f'fadeDim 0.4s ease-out {t3:.2f}s forwards; }}\n')
 
-            # Phase A classes: fade in together, dim at phase B
-            for i in range(n_phase1):
-                css += (f'.a-{pfx}-{i} {{ opacity:0; '
-                        f'animation: fadeIn 0.35s ease-out {t_a:.2f}s both, '
-                        f'fadeDim 0.4s ease-out {t_b:.2f}s forwards; }}\n')
-
-            # Phase B classes: intermediates pop in together
+            # 3. Intermediates pop in at t3
             for inter in st['phase1']:
                 pos_key = f'{inter["pos"][0]}_{inter["pos"][1]}'
                 css += (f'.a-{pfx}-inter-{pos_key} {{ opacity:0; '
-                        f'animation: popIn 0.4s ease-out {t_b:.2f}s both; '
+                        f'animation: popIn 0.4s ease-out {t3:.2f}s both; '
                         f'transform-box: fill-box; transform-origin: center; }}\n')
 
-            # Phase C classes: phase2 arrows appear together
-            step = n_phase1
+            # 4. Phase-2 arrows at t4
             for i in range(len(st['phase2_inputs'])):
-                css += (f'.a-{pfx}-p2-{step + i} {{ opacity:0; '
-                        f'animation: fadeIn 0.35s ease-out {t_c:.2f}s both; }}\n')
+                css += (f'.ar-{pfx}-p2-{i} {{ opacity:0; '
+                        f'animation: fadeIn 0.35s ease-out {t4:.2f}s both; }}\n')
 
-            # Phase D: output
+            # 5. Output at t5
             css += (f'.a-{pfx}-out {{ opacity:0; '
-                    f'animation: popIn 0.45s ease-out {t_d:.2f}s both; '
+                    f'animation: popIn 0.45s ease-out {t5:.2f}s both; '
                     f'transform-box: fill-box; transform-origin: center; }}\n')
         else:
-            # Phase A: all inputs appear together
-            t_a = 0.0
-            # Phase B: output pops
-            t_b = t_a + PHASE_PAUSE
-
             n_inputs = len(st['inputs'])
-            for i in range(n_inputs):
-                css += (f'.a-{pfx}-{i} {{ opacity:0; '
-                        f'animation: fadeIn 0.35s ease-out {t_a:.2f}s both; }}\n')
+            t1 = 0.0                    # input shapes
+            t2 = t1 + PHASE_PAUSE       # arrows
+            t3 = t2 + PHASE_PAUSE       # output
 
+            # 1. Input shapes
+            for i in range(n_inputs):
+                css += (f'.s-{pfx}-{i} {{ opacity:0; '
+                        f'animation: fadeIn 0.35s ease-out {t1:.2f}s both; }}\n')
+
+            # 2. Arrows
+            for i in range(n_inputs):
+                css += (f'.ar-{pfx}-{i} {{ opacity:0; '
+                        f'animation: fadeIn 0.35s ease-out {t2:.2f}s both; }}\n')
+
+            # 3. Output
             css += (f'.a-{pfx}-out {{ opacity:0; '
-                    f'animation: popIn 0.45s ease-out {t_b:.2f}s both; '
+                    f'animation: popIn 0.45s ease-out {t3:.2f}s both; '
                     f'transform-box: fill-box; transform-origin: center; }}\n')
 
     return css
