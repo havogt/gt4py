@@ -335,7 +335,11 @@ def arrow_svg(x1, y1, x2, y2, var_from, var_to, cls='', thin=False):
 
 
 def grid_lines_svg(cx, cy, out_var, inputs):
-    """Draw cell boundary grid lines. Only boundaries, not through cell centers."""
+    """Draw cell boundary grid lines. Only boundaries, not through cell centers.
+
+    Grid lines are clipped to one cell beyond the outermost inputs but not
+    beyond the viewBox padding boundary.
+    """
     xp, yp = GRID_PARITY.get(out_var, (1, 1))
 
     # Determine extent from inputs
@@ -343,12 +347,20 @@ def grid_lines_svg(cx, cy, out_var, inputs):
     max_y = max((abs(inp[1]) for inp in inputs), default=1)
     margin = 18
 
+    # Only draw grid lines that fall within the viewBox. The diagram extends
+    # PAD + extent*CELL from center in each direction, so any grid line beyond
+    # that would be partially or fully outside.
+    x_limit = max_x * CELL + PAD - 2   # allow tiny overlap but not stray lines
+    y_limit = max_y * CELL + PAD - 2
+
     lines = ''
     # Vertical cell boundaries
     for n in range(-6, 7):
         if abs(n) > max_x + 1.5:
             continue
         if n % 2 == xp:  # matches the parity for cell boundaries
+            if abs(n * CELL) > x_limit:
+                continue
             x = cx + n * CELL
             y_lo = cy - max_y * CELL - margin
             y_hi = cy + max_y * CELL + margin
@@ -360,6 +372,8 @@ def grid_lines_svg(cx, cy, out_var, inputs):
         if abs(n) > max_y + 1.5:
             continue
         if n % 2 == yp:
+            if abs(n * CELL) > y_limit:
+                continue
             y = cy + n * CELL
             x_lo = cx - max_x * CELL - margin
             x_hi = cx + max_x * CELL + margin
