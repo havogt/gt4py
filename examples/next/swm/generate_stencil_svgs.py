@@ -70,11 +70,11 @@ GRID_PARITY = {
 STENCILS = {
     # Phase 1: intermediate quantities
     'cu': {
-        'formula': 'cu = ⟨p⟩ₓ · u', 'out_label': 'cu', 'out_var': 'u',
+        'formula': 'U = ⟨p⟩ₓ · u', 'out_label': 'U', 'out_var': 'u',
         'inputs': [(-1, 0, 'p', 'p'), (1, 0, 'p', 'p')],
     },
     'cv': {
-        'formula': 'cv = ⟨p⟩ᵧ · v', 'out_label': 'cv', 'out_var': 'v',
+        'formula': 'V = ⟨p⟩ᵧ · v', 'out_label': 'V', 'out_var': 'v',
         'inputs': [(0, -1, 'p', 'p'), (0, 1, 'p', 'p')],
     },
     'z': {
@@ -161,20 +161,20 @@ STENCILS = {
                           (0, -1, 'h', 'h'), (0, 1, 'h', 'h')],
     },
     'p_composite': {
-        'formula': 'p\u0303 from (p, u, v)', 'out_label': 'p\u0303', 'out_var': 'p',
+        'formula': 'p\u0303 from (p, U, V)', 'out_label': 'p\u0303', 'out_var': 'p',
         'composite': True,
         'phase1': [
-            {'pos': (-1, 0), 'label': 'cu', 'var': 'u',
+            {'pos': (-1, 0), 'label': 'U', 'var': 'u',
              'inputs': [(-2, 0, 'p', 'p')]},
-            {'pos': (1, 0), 'label': 'cu', 'var': 'u',
+            {'pos': (1, 0), 'label': 'U', 'var': 'u',
              'inputs': [(2, 0, 'p', 'p')]},
-            {'pos': (0, -1), 'label': 'cv', 'var': 'v',
+            {'pos': (0, -1), 'label': 'V', 'var': 'v',
              'inputs': [(0, -2, 'p', 'p')]},
-            {'pos': (0, 1), 'label': 'cv', 'var': 'v',
+            {'pos': (0, 1), 'label': 'V', 'var': 'v',
              'inputs': [(0, 2, 'p', 'p')]},
         ],
-        'phase2_inputs': [(-1, 0, 'cu', 'u'), (1, 0, 'cu', 'u'),
-                          (0, -1, 'cv', 'v'), (0, 1, 'cv', 'v')],
+        'phase2_inputs': [(-1, 0, 'U', 'u'), (1, 0, 'U', 'u'),
+                          (0, -1, 'V', 'v'), (0, 1, 'V', 'v')],
     },
 }
 
