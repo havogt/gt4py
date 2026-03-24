@@ -513,34 +513,66 @@ def render_stencil(name, parent, ox=0, oy=0, vertical_grid=True, show_title=True
 
 # ─── Legend ───────────────────────────────────────────────────────────────────
 
-def _add_legend(parent, ox, oy, show_intermediates=False, vertical=False):
-    items = [('text', 'p', 'p — cell center'), ('bar_y', 'u', 'u — x-edge'),
-             ('bar_x', 'v', 'v — y-edge'), ('circle', 'z', 'z — vertex')]
+def _add_legend(parent, ox, oy, show_intermediates=False, vertical=False,
+                compact=False):
+    """Add legend. compact=True uses two-row layout: labels then symbols."""
+    items = [('text', 'p', 'cell center'), ('bar_y', 'u', 'x-edge'),
+             ('bar_x', 'v', 'y-edge'), ('circle', 'z', 'vertex')]
     if show_intermediates:
-        items.append(('text', 'h', 'h — cell center'))
+        items.append(('text', 'h', 'cell center'))
 
     g = dw.Group(transform=f'translate({ox},{oy})')
-    x, y = 0, 0
     sc = 0.7
-    for stype, var, desc in items:
-        color = VAR_COLOR[var]
-        if stype == 'circle':
-            r = CIRCLE_R * sc
-            g.append(dw.Circle(x + r, y, r, fill=color, fill_opacity=0.62, stroke='none'))
-            g.append(_text(x + 2 * r + 6 + 40, y, desc, 11, TEXT_MUTED))
-        elif stype.startswith('bar'):
-            bw = BAR[0] * sc if stype == 'bar_x' else BAR[1] * sc
-            bh = BAR[1] * sc if stype == 'bar_x' else BAR[0] * sc
-            g.append(dw.Rectangle(x, y - bh / 2, bw, bh, rx=BAR_RX * sc,
-                                  fill=color, fill_opacity=0.62, stroke='none'))
-            g.append(_text(x + bw + 6 + 40, y, desc, 11, TEXT_MUTED))
-        else:
-            g.append(_text(x, y, var, 12, color, 600))
-            g.append(_text(x + 14 + 40, y, f'— {desc.split("— ")[1]}', 11, TEXT_MUTED))
-        if vertical:
-            y += 28
-        else:
-            x += 140
+
+    if compact:
+        # Row 1: text labels, left-aligned; Row 2: symbols centered below
+        row_sp = 22
+        col_sp = 34
+        for i, (stype, var, label) in enumerate(items):
+            cx = i * col_sp
+            g.append(dw.Text(label, 9, cx, 0,
+                             text_anchor='middle', dominant_baseline='central',
+                             font_family='Arial,sans-serif', fill=TEXT_MUTED))
+            color = VAR_COLOR[var]
+            sy = row_sp
+            if stype == 'circle':
+                r = CIRCLE_R * sc
+                g.append(dw.Circle(cx, sy, r, fill=color, fill_opacity=0.62,
+                                   stroke='none'))
+                g.append(_text(cx, sy, var, FONT * sc, '#ffffff', 500))
+            elif stype.startswith('bar'):
+                bw = BAR[0] * sc if stype == 'bar_x' else BAR[1] * sc
+                bh = BAR[1] * sc if stype == 'bar_x' else BAR[0] * sc
+                g.append(dw.Rectangle(cx - bw / 2, sy - bh / 2, bw, bh,
+                                      rx=BAR_RX * sc, fill=color,
+                                      fill_opacity=0.62, stroke='none'))
+                g.append(_text(cx, sy, var, FONT_BAR * sc, '#ffffff', 500))
+            else:
+                g.append(_text(cx, sy, var, FONT_CENTER * sc, color, 600))
+    else:
+        x, y = 0, 0
+        for stype, var, label in items:
+            desc = f'{var} — {label}'
+            color = VAR_COLOR[var]
+            if stype == 'circle':
+                r = CIRCLE_R * sc
+                g.append(dw.Circle(x + r, y, r, fill=color, fill_opacity=0.62,
+                                   stroke='none'))
+                g.append(_text(x + 2 * r + 6 + 40, y, desc, 11, TEXT_MUTED))
+            elif stype.startswith('bar'):
+                bw = BAR[0] * sc if stype == 'bar_x' else BAR[1] * sc
+                bh = BAR[1] * sc if stype == 'bar_x' else BAR[0] * sc
+                g.append(dw.Rectangle(x, y - bh / 2, bw, bh, rx=BAR_RX * sc,
+                                      fill=color, fill_opacity=0.62,
+                                      stroke='none'))
+                g.append(_text(x + bw + 6 + 40, y, desc, 11, TEXT_MUTED))
+            else:
+                g.append(_text(x, y, var, 12, color, 600))
+                g.append(_text(x + 14 + 40, y, f'— {label}', 11, TEXT_MUTED))
+            if vertical:
+                y += 28
+            else:
+                x += 140
     parent.append(g)
 
 
@@ -609,9 +641,9 @@ def generate_composite():
     for name in names:
         ox, oy = offsets[name]
         render_stencil(name, d, ox, oy, show_title=False)
-    # Vertical legend in the bottom-right empty area
-    _add_legend(d, 4 * CELL + PAD, 4 * CELL + PAD,
-                show_intermediates=True, vertical=True)
+    # Compact legend in the bottom-right empty area
+    _add_legend(d, total_w - 5 * 34 + 10, total_h - 52,
+                show_intermediates=True, compact=True)
     return d
 
 
