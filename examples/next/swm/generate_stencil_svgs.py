@@ -9,8 +9,8 @@ Illustrates the Arakawa C-grid staggering and the stencil patterns for:
 
 Shapes encode grid location — matching WHERE on the C-grid they live:
   ● circle (filled)  → vertex        (z)       — sits at grid intersections
-  ━ horizontal bar   → x-edge        (u, cu)   — straddles horizontal cell boundary
-  ┃ vertical bar     → y-edge        (v, cv)   — straddles vertical cell boundary
+  ━ horizontal bar   → x-edge        (u, cu)   — straddles vertical cell boundary
+  ┃ vertical bar     → y-edge        (v, cv)   — straddles horizontal cell boundary
   (text only)        → cell center   (p, h)    — floats inside the cell
 
 Uses the drawsvg library for SVG generation and CSCS Reveal.js color palette.
@@ -58,7 +58,7 @@ SHAPE = {'p': 'text', 'u': 'bar_x', 'v': 'bar_y', 'z': 'circle', 'h': 'text'}
 
 # Grid parity: cell boundaries at even (0) or odd (1) CELL multiples
 GRID_PARITY = {
-    'z': (0, 0), 'p': (1, 1), 'h': (1, 1), 'u': (1, 0), 'v': (0, 1),
+    'z': (0, 0), 'p': (1, 1), 'h': (1, 1), 'u': (0, 1), 'v': (1, 0),
 }
 
 
@@ -614,17 +614,16 @@ def generate_phase2():
 
 
 def generate_composite():
-    names = ['p_composite', 'v_composite', 'u_composite']
+    names = ['p_composite', 'u_composite', 'v_composite']
 
-    # u to the right of p (shifted one cell up), v below p (shifted one cell
-    # left) — swapped vs before to match x=horizontal, y=vertical convention.
+    # u to the right of p (x-direction), v below p (y-direction).
     #
-    # Grid alignment: p↔u Δx=4·CELL(even,same xp=1✓) Δy=-CELL(odd,yp differs✓)
-    #                 p↔v Δx=-CELL(odd,xp differs✓) Δy=4·CELL(even,same yp=1✓)
+    # Grid alignment: p↔u Δx=5·CELL(odd,xp differs✓) Δy=0(even,same yp=1✓)
+    #                 p↔v Δx=0(even,same xp=1✓) Δy=5·CELL(odd,yp differs✓)
     offsets = {
         'p_composite': (CELL, CELL),
-        'u_composite': (5 * CELL, 0),
-        'v_composite': (0, 5 * CELL),
+        'u_composite': (6 * CELL, CELL),
+        'v_composite': (CELL, 6 * CELL),
     }
 
     sub_dim = 2 * PAD + 4 * CELL  # 364 (no title)
