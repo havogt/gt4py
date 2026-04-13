@@ -34,12 +34,11 @@ def _serialize_source(source: stages.ProgramSource) -> str:
     parameters = [_serialize_param(param) for param in source.entry_point.parameters]
     dependencies = [_serialize_library_dependency(dep) for dep in source.library_deps]
     return f"""\
-    language: {source.language}
+    language: {source.code_spec}
     name: {source.entry_point.name}
-    params: {', '.join(parameters)}
-    deps: {', '.join(dependencies)}
+    params: {", ".join(parameters)}
+    deps: {", ".join(dependencies)}
     src: {source.source_code}
-    implicit_domain: {source.implicit_domain}
     """
 
 
@@ -51,7 +50,7 @@ def _cache_folder_name(source: stages.ProgramSource) -> str:
 
 
 def get_cache_folder(
-    compilable_source: stages.CompilableSource, lifetime: config.BuildCacheLifetime
+    compilable_source: stages.CompilableProject, lifetime: config.BuildCacheLifetime
 ) -> pathlib.Path:
     """
     Construct the path to where the build system project artifact of a compilable source should be cached.
@@ -74,4 +73,6 @@ def get_cache_folder(
     complete_path = base_path / folder_name
     complete_path.mkdir(exist_ok=True)
 
-    return complete_path
+    # Resolve symlinks to workaround an issue on MacOS where the default tmp directory is a symlink
+    # which might sometimes get resolved in a way we don't control.
+    return complete_path.resolve()

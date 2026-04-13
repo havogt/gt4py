@@ -9,7 +9,7 @@
 from typing import Tuple
 
 from gt4py._core import definitions as core_defs
-from gt4py.next import common
+from gt4py.next import common, named_collections
 from gt4py.next.ffront.fbuiltins import BuiltInFunction, FieldOffset, WhereBuiltinFunction
 
 
@@ -20,9 +20,9 @@ def as_offset(offset_: FieldOffset, field: common.Field, /) -> common.Connectivi
 
 @WhereBuiltinFunction
 def concat_where(
-    mask: common.Field,
-    true_field: common.Field | core_defs.ScalarT | Tuple,
-    false_field: common.Field | core_defs.ScalarT | Tuple,
+    cond: common.Domain,
+    true_field: common.Field | core_defs.ScalarT | Tuple | named_collections.CustomNamedCollection,
+    false_field: common.Field | core_defs.ScalarT | Tuple | named_collections.CustomNamedCollection,
     /,
 ) -> common.Field | Tuple:
     """
