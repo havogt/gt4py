@@ -36,6 +36,7 @@ from gt4py.next.embedded import (
     context as embedded_context,
     exceptions as embedded_exceptions,
 )
+from gt4py.next.embedded import structured_connectivity as _structured_conn
 from gt4py.next.ffront import experimental, fbuiltins
 
 
@@ -309,6 +310,23 @@ class NdArrayField(
                   from the field domain by introducing new dimensions in its place)
 
         """  # noqa: RUF002  # TODO(egparedes): move docstring to the `premap` builtin function when it exists
+
+        # StructuredConnectivity short-circuit: takes a different path than
+        # integer-table connectivities and does not go through the
+        # ConnectivityKind dispatch below. Only relevant in the full-offset
+        # form (``inp(C2E)``); the indexed form ``inp(C2E[k])`` resolves to a
+        # `_StructuredConnectivityK` already before reaching `premap`.
+        # TODO(havogt): merge into the ConnectivityKind-based dispatch once
+        # `StructuredConnectivity` implements the `common.Connectivity` protocol.
+        if len(connectivities) == 1:
+            conn0 = connectivities[0]
+            if isinstance(conn0, fbuiltins.FieldOffset):
+                conn0 = conn0.as_connectivity_field()
+            if isinstance(
+                conn0,
+                (_structured_conn.StructuredConnectivity, _structured_conn._StructuredConnectivityK),
+            ):
+                return _structured_premap(self, conn0)
 
         conn_fields: list[common.Connectivity] = []
         codomains_counter: collections.Counter[common.Dimension] = collections.Counter()
@@ -707,6 +725,50 @@ def _gather_output_domain(
     return domain
 
 
+def _structured_premap(
+    data: NdArrayField,
+    connectivity: (
+        _structured_conn.StructuredConnectivity | _structured_conn._StructuredConnectivityK
+    ),
+) -> common.Field:
+    """Dispatch for `StructuredConnectivity` in the embedded path.
+
+    - ``inp(C2E[k])`` → `_StructuredConnectivityK` → k-th neighbor gather.
+    - ``inp(C2E)``    → `StructuredConnectivity`  → per-k gather stacked along
+      the connectivity's ``local_dim`` so ``neighbor_sum(..., axis=local_dim)``
+      can reduce it.
+    """
+    if isinstance(connectivity, _structured_conn._StructuredConnectivityK):
+        return _structured_conn.expand_k(data, connectivity.connectivity, connectivity.k)
+
+    # TODO(havogt): stacking along `local_dim` is the natural way to let
+    # `neighbor_sum` reduce the structured gather, but the per-k fields may
+    # have slightly different domains under the shift-induced restrictions.
+    # The current implementation intersects domains and stacks; revisit once
+    # domain handling stabilizes.
+    per_k = [_structured_conn.expand_k(data, connectivity, k) for k in range(connectivity.num_neighbors)]
+
+    common_dims = per_k[0].domain.dims
+    common_ranges = list(per_k[0].domain.ranges)
+    for field in per_k[1:]:
+        for i, d in enumerate(common_dims):
+            r = field.domain[field.domain.dim_index(d)][1]
+            cur = common_ranges[i]
+            common_ranges[i] = common.UnitRange(max(cur.start, r.start), min(cur.stop, r.stop))
+    intersected = common.Domain(
+        *(common.NamedRange(d, r) for d, r in zip(common_dims, common_ranges))
+    )
+    per_k_restricted = [f.restrict(intersected) for f in per_k]
+
+    xp = data.array_ns
+    stacked = xp.stack([f.ndarray for f in per_k_restricted], axis=-1)
+    new_domain = common.Domain(
+        *intersected,
+        common.NamedRange(connectivity.local_dim, common.UnitRange(0, connectivity.num_neighbors)),
+    )
+    return data.__class__.from_array(stacked, domain=new_domain, dtype=data.dtype)
+
+
 def _gather_premap(data: NdArrayField, *connectivities: common.GatherConnectivity) -> NdArrayField:
     """`premap` via a single advanced-index gather (dimension-preserving and -introducing cases)."""
     xp = data.array_ns
@@ -1034,6 +1096,18 @@ def _make_reduction(
         offset_definition = common.get_offset(
             current_offset_provider, axis.value
         )  # assumes offset and local dimension have same name
+
+        # StructuredConnectivity: no skip_value masking — all colored-Cartesian
+        # neighbors are always valid by construction.
+        # TODO(havogt): unify reduction dispatch once StructuredConnectivity
+        # conforms to the common.Connectivity protocol.
+        if isinstance(offset_definition, _structured_conn.StructuredConnectivity):
+            new_domain = common.Domain(*[nr for nr in field.domain if nr.dim != axis])
+            return field.__class__.from_array(
+                getattr(xp, array_builtin_name)(field.ndarray, axis=reduce_dim_index),
+                domain=new_domain,
+            )
+
         assert common.is_neighbor_table(offset_definition)
         new_domain = common.Domain(*[nr for nr in field.domain if nr.dim != axis])
 

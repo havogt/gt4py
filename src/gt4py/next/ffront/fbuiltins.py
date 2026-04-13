@@ -505,6 +505,13 @@ class FieldOffset(runtime.Offset):
         assert current_offset_provider is not None
         offset_definition = common.get_offset(current_offset_provider, self.value)
 
+        from gt4py.next.embedded.structured_connectivity import (
+            StructuredConnectivity,
+            _StructuredConnectivityK,
+        )
+
+        if isinstance(offset_definition, StructuredConnectivity):
+            return _StructuredConnectivityK(offset_definition, offset)  # type: ignore[return-value]
         assert common.is_neighbor_table(offset_definition)
         named_index = common.NamedIndex(self.target[-1], offset)
         connectivity = offset_definition[named_index]
@@ -520,9 +527,11 @@ class FieldOffset(runtime.Offset):
         assert current_offset_provider is not None
         offset_definition = common.get_offset(current_offset_provider, self.value)
 
+        from gt4py.next.embedded.structured_connectivity import StructuredConnectivity
+
         cache_key = id(offset_definition)
         if (connectivity := self._cache.get(cache_key, None)) is None:
-            if isinstance(offset_definition, common.Connectivity):
+            if isinstance(offset_definition, (common.Connectivity, StructuredConnectivity)):
                 connectivity = offset_definition
             else:
                 raise NotImplementedError()
