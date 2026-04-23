@@ -276,7 +276,7 @@ with_temporaries = next_backend.Backend(
     transforms=next_backend.DEFAULT_TRANSFORMS,
 )
 no_transforms = next_backend.Backend(
-    name="roundtrip",
+    name="roundtrip_no_transforms",
     executor=Roundtrip(transforms=lambda o, *, offset_provider: o),
     allocator=next_allocators.StandardCPUFieldBufferAllocator(),
     transforms=next_backend.DEFAULT_TRANSFORMS,

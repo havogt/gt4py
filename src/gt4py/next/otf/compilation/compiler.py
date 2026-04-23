@@ -62,10 +62,16 @@ class Compiler(
     builder_factory: BuildSystemProjectGenerator[CPPLikeCodeSpecT, code_specs.PythonCodeSpec]
     force_recompile: bool = False
 
-    def __call__(
+    def build(
         self,
         inp: stages.CompilableProject[CPPLikeCodeSpecT, code_specs.PythonCodeSpec],
-    ) -> stages.ExecutableProgram:
+    ) -> stages.BuildArtifact:
+        """Run codegen + native build only. Returns a picklable on-disk artifact descriptor.
+
+        Split out from ``__call__`` so that the heavy part (safe to run in a worker process)
+        is separable from importing the freshly built module (which must happen in the process
+        that will eventually call it).
+        """
         src_dir = cache.get_cache_folder(inp, self.cache_lifetime)
 
         # If we are compiling the same program at the same time (e.g. multiple MPI ranks),
@@ -83,12 +89,33 @@ class Compiler(
                     f"On-the-fly compilation unsuccessful for '{inp.program_source.entry_point.name}'."
                 )
 
-        m = importer.import_from_path(
-            src_dir / new_data.module, sys_modules_prefix="gt4py.__compiled_programs__."
+        return stages.BuildArtifact(
+            src_dir=src_dir, module=new_data.module, entry_point_name=new_data.entry_point_name
         )
-        func = getattr(m, new_data.entry_point_name)
 
-        return func
+    def __call__(
+        self,
+        inp: stages.CompilableProject[CPPLikeCodeSpecT, code_specs.PythonCodeSpec],
+    ) -> stages.ExecutableProgram:
+        return self.load(self.build(inp))
+
+    def load(self, artifact: stages.BuildArtifact) -> stages.ExecutableProgram:
+        """Dynamically import a previously-built module and return its entry point.
+
+        Counterpart to :meth:`build`: runs whatever process will ultimately call the program.
+        Kept as an instance method (not a free function) so that every compilation step in
+        the OTF workflow exposes a uniform ``build`` / ``load`` contract and recipes can
+        dispatch through it without knowing backend specifics.
+        """
+        return load_artifact(artifact)
+
+
+def load_artifact(artifact: stages.BuildArtifact) -> stages.ExecutableProgram:
+    """Dynamically import a previously-built module and return its entry point."""
+    m = importer.import_from_path(
+        artifact.src_dir / artifact.module, sys_modules_prefix="gt4py.__compiled_programs__."
+    )
+    return getattr(m, artifact.entry_point_name)
 
 
 class CompilerFactory(factory.Factory):

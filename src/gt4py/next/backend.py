@@ -158,8 +158,70 @@ class Backend(Generic[core_defs.DeviceTypeT]):
             self.transforms(definitions.ConcreteProgramDef(data=program, args=compile_time_args))
         )
 
+    def compile_to_artifact(
+        self, program: definitions.IRDefinitionT, compile_time_args: arguments.CompileTimeArgs
+    ) -> stages.BuildArtifact:
+        """Run the heavy compilation steps and stop at the on-disk build artifact.
+
+        Requires that ``self.executor`` exposes :meth:`build_artifact` (i.e. an
+        :class:`~gt4py.next.otf.recipes.OTFCompileWorkflow`-shaped executor with a splittable
+        ``compilation`` step, such as :class:`~gt4py.next.otf.compilation.compiler.Compiler`).
+        Backends whose executor does not split cannot participate in process-pool compilation.
+        """
+        compilable = self.transforms(
+            definitions.ConcreteProgramDef(data=program, args=compile_time_args)
+        )
+        if not hasattr(self.executor, "build_artifact"):
+            raise RuntimeError(
+                f"Backend '{self.name}' executor does not support 'build_artifact'; "
+                "process-pool compilation is not available for this backend."
+            )
+        return self.executor.build_artifact(compilable)  # type: ignore[attr-defined]
+
+    def finalize_artifact(self, artifact: stages.BuildArtifact) -> stages.ExecutableProgram:
+        """Import an artifact produced by :meth:`compile_to_artifact` and apply decoration."""
+        if not hasattr(self.executor, "finalize_artifact"):
+            raise RuntimeError(
+                f"Backend '{self.name}' executor does not support 'finalize_artifact'."
+            )
+        return self.executor.finalize_artifact(artifact)  # type: ignore[attr-defined]
+
     @property
     def __gt_allocator__(
         self,
     ) -> next_allocators.FieldBufferAllocatorProtocol[core_defs.DeviceTypeT]:
         return self.allocator
+
+
+def serialize_backend_for_worker(backend: Backend) -> bytes:
+    """Serialize ``backend`` into bytes suitable for a :mod:`concurrent.futures.
+    ProcessPoolExecutor` worker.
+
+    Uses :mod:`cloudpickle` rather than :mod:`pickle`: a ``Backend`` transitively holds
+    lambdas / nested classes (e.g. :class:`gt4py.next.otf.workflow.StepSequence.__Steps`)
+    / ``factory``-boy closures / ``module`` references (DaCe) that :mod:`pickle` refuses
+    but :mod:`cloudpickle` serializes by value. This keeps the prototype working for
+    backends constructed on-the-fly via factories (e.g.
+    ``GTFNBackendFactory(cmake_build_type=...)`` in a user script), not just for those
+    assigned to a module-global attribute.
+
+    Payload size is ~8 KB per backend for the standard runners — negligible next to
+    typical C++/NVCC compile times.
+    """
+    try:
+        import cloudpickle  # type: ignore[import-not-found]
+    except ImportError as err:
+        raise RuntimeError(
+            "Process-pool compilation requires 'cloudpickle' to be installed "
+            "(Backend objects are not picklable with the stdlib pickle module). "
+            "Install it (e.g. `pip install cloudpickle`) or fall back to "
+            "GT4PY_BUILD_JOBS_MODE=thread."
+        ) from err
+    return cloudpickle.dumps(backend)
+
+
+def deserialize_backend_from_worker(blob: bytes) -> Backend:
+    """Counterpart of :func:`serialize_backend_for_worker`: runs in a worker process."""
+    import cloudpickle  # type: ignore[import-not-found]
+
+    return cloudpickle.loads(blob)

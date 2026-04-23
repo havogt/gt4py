@@ -199,5 +199,6 @@ run_gtfn_gpu_cached = GTFNBackendFactory(
 )
 
 run_gtfn_no_transforms = GTFNBackendFactory(
-    otf_workflow__bare_translation__enable_itir_transforms=False
+    name_postfix="_no_transforms",
+    otf_workflow__bare_translation__enable_itir_transforms=False,
 )

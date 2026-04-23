@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import dataclasses
 import os
+import pathlib
 import warnings
 from collections.abc import Callable, MutableSequence, Sequence
 from typing import Any
@@ -115,6 +116,23 @@ class CompiledDaceProgram:
 
 
 @dataclasses.dataclass(frozen=True)
+class DaCeBuildArtifact(stages.CompilationArtifact):
+    """Picklable handoff between a :class:`DaCeCompiler.build` call in a worker process and
+    :class:`DaCeCompiler.load` in the main process.
+
+    The build folder is self-contained (DaCe writes the SDFG dump + compiled ``.so`` into it),
+    so only the binding source and the handful of parameters needed to reconstruct a
+    :class:`CompiledDaceProgram` are shipped alongside. The live ``dace.CompiledSDFG`` that
+    would normally be returned by :class:`DaCeCompiler.__call__` holds a ctypes handle into
+    a dlopen'd library and cannot cross a process boundary.
+    """
+
+    build_folder: pathlib.Path
+    binding_source_code: str
+    bind_func_name: str
+
+
+@dataclasses.dataclass(frozen=True)
 class DaCeCompiler(
     workflow.ChainableWorkflowMixin[
         stages.CompilableProject[code_specs.SDFGCodeSpec, code_specs.PythonCodeSpec],
@@ -133,10 +151,16 @@ class DaCeCompiler(
     device_type: core_defs.DeviceType
     cmake_build_type: config.CMakeBuildType = config.CMakeBuildType.DEBUG
 
-    def __call__(
+    def build(
         self,
         inp: stages.CompilableProject[code_specs.SDFGCodeSpec, code_specs.PythonCodeSpec],
-    ) -> CompiledDaceProgram:
+    ) -> DaCeBuildArtifact:
+        """Codegen + native build only; returns a picklable descriptor of the on-disk result.
+
+        Split out from :meth:`__call__` so that the heavy work (safe to run in a worker
+        process) is separable from constructing the live :class:`CompiledDaceProgram` (which
+        owns an ``ctypes`` handle and therefore must live in the process that will invoke it).
+        """
         with gtx_wfdcommon.dace_context(
             device_type=self.device_type,
             cmake_build_type=self.cmake_build_type,
@@ -147,14 +171,48 @@ class DaCeCompiler(
             sdfg = dace.SDFG.from_json(inp.program_source.source_code)
             sdfg.build_folder = sdfg_build_folder
             with locking.lock(sdfg_build_folder):
-                sdfg_program = sdfg.compile(validate=False)
+                sdfg.compile(validate=False, return_program_handle=False)
 
         assert inp.binding_source is not None
+        return DaCeBuildArtifact(
+            build_folder=pathlib.Path(sdfg_build_folder),
+            binding_source_code=inp.binding_source.source_code,
+            bind_func_name=self.bind_func_name,
+        )
+
+    def load(self, artifact: DaCeBuildArtifact) -> CompiledDaceProgram:
+        """Rehydrate a :class:`CompiledDaceProgram` from a previously-built artifact.
+
+        Uses :func:`dace.codegen.compiler.load_precompiled_sdfg`, which reads the SDFG dump
+        and the compiled ``.so`` from the build folder without triggering another compile.
+        The ``dace_context`` isn't strictly required here (we are not invoking code
+        generation) but we keep it for symmetry with :meth:`build`.
+        """
+        from dace.codegen import compiler as dace_compiler
+
+        with gtx_wfdcommon.dace_context(
+            device_type=self.device_type,
+            cmake_build_type=self.cmake_build_type,
+        ):
+            sdfg_program = dace_compiler.load_precompiled_sdfg(folder=artifact.build_folder)
+
+        # Reconstruct a BindingSource minimally: only `source_code` is consumed by
+        # `CompiledDaceProgram.__init__`. We use `types.SimpleNamespace` to avoid circular
+        # imports of the binding source dataclass for a two-field shim.
+        import types as _types
+
+        binding_source_shim = _types.SimpleNamespace(source_code=artifact.binding_source_code)
         return CompiledDaceProgram(
             sdfg_program,
-            self.bind_func_name,
-            inp.binding_source,
+            artifact.bind_func_name,
+            binding_source_shim,  # type: ignore[arg-type]  # only source_code is read
         )
+
+    def __call__(
+        self,
+        inp: stages.CompilableProject[code_specs.SDFGCodeSpec, code_specs.PythonCodeSpec],
+    ) -> CompiledDaceProgram:
+        return self.load(self.build(inp))
 
 
 class DaCeCompilationStepFactory(factory.Factory):

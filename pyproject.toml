@@ -169,6 +169,9 @@ standard = [
   'scipy>=1.16.1 ; python_version >= "3.11"'
 ]
 testing = ['hypothesis>=6.93', 'pytest>=7.0']
+test = [
+    "cloudpickle>=3.1.2",
+]
 
 [project.urls]
 Documentation = 'https://gridtools.github.io/gt4py'

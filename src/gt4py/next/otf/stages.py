@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import dataclasses
+import pathlib
 from collections.abc import Callable
 from typing import Generic, Optional, Protocol, TypeAlias, TypeVar
 
@@ -17,6 +18,32 @@ from gt4py.next import common
 from gt4py.next.iterator import ir as itir
 from gt4py.next.otf import code_specs, definitions
 from gt4py.next.otf.binding import interface
+
+
+class CompilationArtifact:
+    """Marker base class for picklable descriptors returned by a compilation step's
+    ``build()`` method and consumed by its ``load()``.
+
+    Used to recognize process-pool results in
+    :meth:`~gt4py.next.otf.compiled_program.CompiledProgramsPool._finish_compilation_job`
+    without coupling it to any particular backend's artifact shape. Concrete subclasses
+    (GTFN :class:`BuildArtifact`, DaCe's ``DaCeBuildArtifact``) carry the actual fields.
+    """
+
+
+@dataclasses.dataclass(frozen=True)
+class BuildArtifact(CompilationArtifact):
+    """
+    Fully-built, on-disk result of a compilation: everything a later process needs to import it.
+
+    This is the intentionally picklable boundary between "heavy compilation" (codegen + C++/NVCC
+    build, safe to run in a worker process) and "main-process finalization" (dynamic import of the
+    freshly built module + backend-specific result decoration).
+    """
+
+    src_dir: pathlib.Path
+    module: pathlib.Path
+    entry_point_name: str
 
 
 def compilation_hash(program_def: definitions.CompilableProgramDef) -> int:

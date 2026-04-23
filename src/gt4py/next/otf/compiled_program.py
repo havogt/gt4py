@@ -32,7 +32,7 @@ from gt4py.next.ffront import (
     type_translation,
 )
 from gt4py.next.instrumentation import hook_machinery, metrics
-from gt4py.next.otf import arguments, stages
+from gt4py.next.otf import arguments, definitions, stages
 from gt4py.next.type_system import type_specifications as ts
 from gt4py.next.utils import tree_map
 
@@ -154,19 +154,118 @@ def compiled_program_call_context(
     return metrics.metrics_source_key_setter(metrics_source_key(program_pool, key))
 
 
-# TODO(havogt): We would like this to be a ProcessPoolExecutor, which requires (to decide what) to pickle.
+#: Pool backing ``_compile_variant``. Two modes, selected by :attr:`config.BUILD_JOBS_MODE`:
+#:   * "thread": :class:`concurrent.futures.ThreadPoolExecutor`. The submitted callable is the
+#:     full backend compile (codegen + build + import + decoration), and the returned future
+#:     yields an :class:`~gt4py.next.otf.stages.ExecutableProgram` directly.
+#:   * "process": :class:`concurrent.futures.ProcessPoolExecutor` with ``spawn`` start method.
+#:     Workers only produce a picklable :class:`~gt4py.next.otf.stages.BuildArtifact`; the main
+#:     process imports the freshly built module and applies the backend's decoration step in
+#:     :meth:`CompiledProgramsPool._finish_compilation_job`.
 _async_compilation_pool: concurrent.futures.Executor | None = None
+
+
+def _pool_worker_initializer(shared_session_cache_dir: str) -> None:
+    """Per-worker setup when the pool is a ``ProcessPoolExecutor``.
+
+    Runs once in each worker immediately after start-up. Points the worker's
+    session-lifetime build cache at the *main process's* temp dir instead of the worker's
+    own one. Each process creates its own :class:`tempfile.TemporaryDirectory` on
+    ``gt4py.next.otf.compilation.cache`` import which is scrubbed at process exit — so if
+    workers wrote ``.so``s under their own dir, those files would vanish as soon as the
+    pool is shut down, before the main process had a chance to ``dlopen`` them. Sharing
+    the main's dir keeps artifacts alive for exactly as long as the main process lives.
+
+    Backend modules do *not* need to be eagerly imported here: the submitted compile job
+    calls :func:`pkgutil.resolve_name` on a ``"module:attr"`` locator, which imports the
+    backend's module on demand. First-call overhead is paid once per worker (import
+    caching) regardless.
+    """
+    import pathlib
+
+    from gt4py.next.otf.compilation import cache as _cache
+
+    _cache._session_cache_dir_path = pathlib.Path(shared_session_cache_dir)
 
 
 def _init_async_compilation_pool() -> None:
     global _async_compilation_pool
-    if _async_compilation_pool is None and config.BUILD_JOBS > 0:
+    if _async_compilation_pool is not None or config.BUILD_JOBS <= 0:
+        return
+
+    mode = config.BUILD_JOBS_MODE
+    if mode == "thread":
         _async_compilation_pool = concurrent.futures.ThreadPoolExecutor(
             max_workers=config.BUILD_JOBS
         )
+    elif mode == "process":
+        import multiprocessing
+
+        from gt4py.next.otf.compilation import cache as _cache
+
+        # ``spawn`` avoids the well-known fork-after-threads / fork-with-CUDA-or-MPI hazards;
+        # the trade-off is a cold import on each worker, amortized by the initializer below.
+        ctx = multiprocessing.get_context("spawn")
+        _async_compilation_pool = concurrent.futures.ProcessPoolExecutor(
+            max_workers=config.BUILD_JOBS,
+            mp_context=ctx,
+            initializer=_pool_worker_initializer,
+            initargs=(str(_cache._session_cache_dir_path),),
+        )
+    else:
+        raise ValueError(
+            f"Unsupported GT4PY_BUILD_JOBS_MODE={mode!r}; expected 'thread' or 'process'."
+        )
 
 
-_init_async_compilation_pool()
+def _should_use_process_pool() -> bool:
+    return isinstance(_async_compilation_pool, concurrent.futures.ProcessPoolExecutor)
+
+
+# Top-level worker entry point (must be top-level for pickle).
+def _process_pool_compile_job(
+    backend_blob: bytes,
+    compilable: Any,  # actually stages.CompilableProgramDef, but typed Any to avoid import churn
+) -> stages.CompilationArtifact:
+    """Worker entry point: deserialize the backend and produce a build artifact.
+
+    Contract:
+
+    * ``backend_blob`` is a :mod:`cloudpickle`-serialized :class:`~gt4py.next.backend
+      .Backend`. We go through cloudpickle rather than vanilla pickle because the
+      :class:`Backend.executor` transitively holds things stdlib pickle refuses
+      (``factory``-boy closures, nested ``StepSequence.__Steps`` classes, ``module``
+      references inside DaCe's workflow). This also avoids constraining users to
+      expose backends as module-global attributes — factory-constructed backends
+      assigned to plain locals round-trip too.
+    * ``compilable`` is the post-frontend :class:`~gt4py.next.otf.definitions
+      .CompilableProgramDef` (itir + ``CompileTimeArgs`` + offset provider). All
+      fields are pickle-safe by construction. Frontend lowering (DSL ``types
+      .FunctionType`` → itir) runs in the main process because raw Python
+      functions generally do not round-trip through pickle once a decorator has
+      rebound their module attribute to a wrapper.
+    """
+    from gt4py.next import backend as gtx_backend_mod
+
+    backend = gtx_backend_mod.deserialize_backend_from_worker(backend_blob)
+    if not hasattr(backend.executor, "build_artifact"):
+        raise RuntimeError(
+            f"Backend {backend.name!r} executor does not support 'build_artifact'."
+        )
+    return backend.executor.build_artifact(compilable)
+
+
+# Suppress lazy pool creation inside worker processes — a worker that re-imports this module
+# must not spin up its own pool. ``multiprocessing.parent_process()`` is ``None`` in the main
+# process and the started ``BaseProcess`` instance in children.
+def _is_worker_process() -> bool:
+    import multiprocessing
+
+    return multiprocessing.parent_process() is not None
+
+
+if not _is_worker_process():
+    _init_async_compilation_pool()
 
 
 def wait_for_compilation() -> None:
@@ -346,9 +445,15 @@ class CompiledProgramsPool(Generic[ffront_stages.DSLDefinitionT]):
         default_factory=dict, init=False
     )
 
-    # store for the async compilation jobs
+    # store for the async compilation jobs.
+    # Future payload depends on the pool mode:
+    #   - thread pool: future yields a fully ready ExecutableProgram.
+    #   - process pool: future yields a backend-specific subclass of CompilationArtifact,
+    #     which is finalized (imported / reloaded + decorated) in the main process by
+    #     :meth:`_finish_compilation_job`.
     _compilation_jobs: dict[
-        CompiledProgramsKey, concurrent.futures.Future[stages.ExecutableProgram]
+        CompiledProgramsKey,
+        concurrent.futures.Future[stages.ExecutableProgram | stages.CompilationArtifact],
     ] = dataclasses.field(default_factory=dict, init=False)
 
     @functools.cached_property
@@ -571,7 +676,15 @@ class CompiledProgramsPool(Generic[ffront_stages.DSLDefinitionT]):
         compiled_program_future = self._compilation_jobs.pop(key)
         assert isinstance(compiled_program_future, concurrent.futures.Future)
         assert key not in self.compiled_programs
-        self.compiled_programs[key] = compiled_program_future.result()
+        result = compiled_program_future.result()
+        if isinstance(result, stages.CompilationArtifact):
+            # Process-pool path: the worker produced an on-disk artifact (GTFN: .so path +
+            # entry point; DaCe: SDFG build folder + binding source). Finalization
+            # (dynamic import / precompiled-SDFG reload + backend decoration) must happen
+            # in the calling process, since that is the interpreter that will actually run
+            # the compiled program.
+            result = self.backend.finalize_artifact(result)
+        self.compiled_programs[key] = result
         return True
 
     def _compile_variant(
@@ -629,9 +742,6 @@ class CompiledProgramsPool(Generic[ffront_stages.DSLDefinitionT]):
             kwargs=kwarg_types,
             argument_descriptor_contexts=argument_descriptor_contexts,
         )
-        compile_call = functools.partial(
-            self.backend.compile, self.definition_stage, compile_time_args=compile_time_args
-        )
         compile_variant_hook(
             self,
             key=key,
@@ -641,8 +751,34 @@ class CompiledProgramsPool(Generic[ffront_stages.DSLDefinitionT]):
         )
 
         if _async_compilation_pool is None:
-            self.compiled_programs[key] = compile_call()
+            # Synchronous path: full compile + import + decoration in the current process.
+            self.compiled_programs[key] = self.backend.compile(
+                self.definition_stage, compile_time_args=compile_time_args
+            )
+        elif _should_use_process_pool():
+            # Frontend lowering (DSL `types.FunctionType` → itir) stays main-side: raw
+            # user-defined Python functions do not reliably pickle once a decorator has
+            # rebound their module attribute to a wrapper. The post-frontend
+            # `CompilableProgramDef` (itir + types + offset provider) is pickle-safe.
+            # The backend is sent as a cloudpickle blob (~8 KB) — handles factory-
+            # constructed backends with no module-global home, without needing a
+            # registry or import-path resolution.
+            backend_blob = gtx_backend.serialize_backend_for_worker(self.backend)
+            compilable = self.backend.transforms(
+                definitions.ConcreteProgramDef(
+                    data=self.definition_stage, args=compile_time_args
+                )
+            )
+            self._compilation_jobs[key] = _async_compilation_pool.submit(
+                _process_pool_compile_job, backend_blob, compilable
+            )
         else:
+            # Thread pool: full compile happens in a worker thread; future yields the final
+            # ExecutableProgram. Module import ends up in the worker thread's call site, which
+            # still registers the dynamic module under ``sys.modules`` for the whole process.
+            compile_call = functools.partial(
+                self.backend.compile, self.definition_stage, compile_time_args=compile_time_args
+            )
             self._compilation_jobs[key] = _async_compilation_pool.submit(compile_call)
 
     # TODO(tehrengruber): Rework the interface to allow precompilation with compile time
