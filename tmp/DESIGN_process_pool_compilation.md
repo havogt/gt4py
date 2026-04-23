@@ -351,52 +351,54 @@ a `Workflow[StartT, EndT]` Protocol whose only verb is `__call__(inp) -> out`.
 Every composition mechanism (`NamedStepSequence`, `StepSequence`,
 `MultiWorkflow`, `CachedStep`, `ChainableWorkflowMixin.chain`) builds on that
 one arrow. To stay inside that model, the boundary between "runs in a worker
-process" and "runs in the caller's process" must be a *step boundary in the
-pipeline*, not a method pair living on individual steps.
+process" and "runs in the caller's process" must live in the pipeline itself,
+not as a separate API on individual steps.
 
 The `compilation` step hides two operations with very different characteristics:
 
-1. Codegen + native build — expensive, filesystem-bound, its output
-   (``.so`` path + entry-point name) is picklable.
+1. Codegen + native build — expensive, filesystem-bound, its output (``.so``
+   path + entry-point name) is picklable.
 2. Dynamically import the freshly built module — cheap, ``sys.modules``-bound,
    its output (a live Python function) is not picklable.
 
-Pulling those apart into two named steps makes the boundary explicit:
-
-```
-translation: CompilableProgramDef -> ProgramSource
-bindings:    ProgramSource        -> CompilableProject
-compilation: CompilableProject    -> BuildArtifact
-load:        BuildArtifact        -> ExecutableProgram
-decoration:  ExecutableProgram    -> ExecutableProgram
-```
-
-`BuildArtifact` is just an intermediate type in the named sequence. It has no
-special supertype and no marker interface — it simply happens to be picklable,
-which is the whole point.
-
-**One new capability on `NamedStepSequence`**: slicing by step name.
+Pulling those apart into two named steps makes the boundary explicit, and
+grouping the steps on each side of the boundary into their own named sub-
+workflows gives the boundary an identity:
 
 ```python
-class NamedStepSequence:
-    def __call__(self, inp):                       # unchanged
-        for name in self.step_order:
-            inp = getattr(self, name)(inp)
-        return inp
+@dataclass(frozen=True)
+class OTFBuildWorkflow(NamedStepSequence):
+    translation: Workflow[CompilableProgramDef, ProgramSource]
+    bindings:    Workflow[ProgramSource, CompilableProject]
+    compilation: Workflow[CompilableProject, BuildArtifact]
 
-    def subsequence(self, start: str | None = None,
-                    stop:  str | None = None) -> Workflow:
-        """Slice the named sequence by step name (half-open, like slicing)."""
-        ...
+@dataclass(frozen=True)
+class OTFFinalizeWorkflow(NamedStepSequence):
+    load:       Workflow[BuildArtifact, ExecutableProgram]
+    decoration: Workflow[ExecutableProgram, ExecutableProgram]
+
+@dataclass(frozen=True)
+class OTFCompileWorkflow(NamedStepSequence):
+    build:    OTFBuildWorkflow
+    finalize: OTFFinalizeWorkflow
+    # __call__ is inherited from NamedStepSequence: runs build then finalize.
 ```
 
-The process pool is a pair of slices:
+`BuildArtifact` is just an intermediate type in the inner sequences. It has
+no special supertype and no marker interface — it simply happens to be the
+type that flows between the two phases, and it happens to be picklable. That
+is the whole point.
+
+Composition mechanism: none new. `NamedStepSequence` already nests naturally
+inside `NamedStepSequence`; `__call__` already runs named fields in order.
+
+The process pool then works by calling the two phases explicitly:
 
 ```python
 # worker
-artifact = backend.executor.subsequence(stop="load")(compilable)
+artifact = backend.executor.build(compilable)
 # main (after cloudpickle round-trip of `artifact`)
-executable = backend.executor.subsequence(start="load")(artifact)
+executable = backend.executor.finalize(artifact)
 ```
 
 **Consequences:**
@@ -404,25 +406,26 @@ executable = backend.executor.subsequence(start="load")(artifact)
 - Every compile step exposes its behaviour via `__call__` only. No
   backend-specific artifact classes, no marker bases, no runtime `hasattr`
   dispatch.
+- The two phases are named, typed attributes (`executor.build :
+  OTFBuildWorkflow`, `executor.finalize : OTFFinalizeWorkflow`). Async
+  strategies reference them directly — no string-based step lookups, no
+  "what if someone renames a step" footgun.
 - `Backend.compile` is the sole public compile entry point. Async strategies
-  slice `self.executor` directly and have no need for separate
-  `compile_to_artifact` / `finalize_artifact` API.
+  call `executor.build` and `executor.finalize` themselves; there is no need
+  for separate `compile_to_artifact` / `finalize_artifact` API on `Backend`.
 - The pipeline gains a type-checkable artifact boundary useful well beyond
   the process pool (distributed build caches, AOT compilation to disk,
   cross-language bindings all want to stop at the same point).
 
 **Wrinkles worth flagging:**
 
-- `MultiWorkflow.step_order(inp)` is dynamic; `subsequence` only makes sense
-  on `NamedStepSequence`. `Transforms` uses `MultiWorkflow`, but the frontend
-  runs main-side anyway — no conflict.
+- `MultiWorkflow` (dynamic step order, used by `Transforms`) nests just as
+  well inside a `NamedStepSequence`, but the frontend runs main-side anyway
+  so it's not relevant to the build/finalize split.
 - `StepSequence` (the result of `.chain()`) holds an anonymous tuple, so it
-  has no named split points. Backends that want to be process-pool-friendly
-  should use `NamedStepSequence`. All built-in runners already do.
-- `subsequence(start, stop)` can't in general statically type-check its output
-  vs. input — it's a low-level slicing tool. A few named helpers on
-  `OTFCompileWorkflow` (e.g. `build_phase`, `load_phase`) with concrete
-  signatures recover the type story where it matters.
+  has no named phases. Backends that want to be process-pool-friendly should
+  compose their executors via nested `NamedStepSequence`s. All built-in
+  runners already do.
 
 ### 2. Frontend-as-AST end-to-end
 
@@ -467,11 +470,11 @@ implementation per pool mode, uniform contract:
 
 ```python
 class AsyncCompileStrategy(Protocol):
-    def submit(self, executor: NamedStepSequence, inp) -> Future[ExecutableProgram]: ...
-    # process impl: run  executor.subsequence(stop="load")  remotely,
-    #               run  executor.subsequence(start="load") in the resolve callback
-    # thread impl:  run  executor(inp)                      in a worker thread
-    # sync impl:    run  executor(inp)                      inline
+    def submit(self, executor: OTFCompileWorkflow, inp) -> Future[ExecutableProgram]: ...
+    # process impl: run  executor.build     remotely,
+    #               run  executor.finalize  in the resolve callback
+    # thread impl:  run  executor(inp)      in a worker thread
+    # sync impl:    run  executor(inp)      inline
 ```
 
 `CompiledProgramsPool` holds an `AsyncCompileStrategy` and submits through
@@ -569,8 +572,8 @@ this is the last refactor to do, not the first.
 ---
 
 Together refactors 1, 2, 3 reduce the process-pool integration to a handful
-of plumbing lines: the pipeline has an explicit artifact boundary (a `load`
-step and a `subsequence` slicer), the frontend runs alongside the rest of
+of plumbing lines: the pipeline has named `build` and `finalize` phases
+connected by a picklable artifact, the frontend runs alongside the rest of
 the pipeline in workers, and caching sits at the right layer by construction.
 Refactors 4–7 are cleanup with no new features. 8–10 are larger and mostly
 independent of the process-pool motivation.
