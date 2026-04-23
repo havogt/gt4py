@@ -40,11 +40,43 @@ from gt4py.next.otf import arguments, toolchain
 
 @dataclasses.dataclass(frozen=True)
 class DSLFieldOperatorDef:
+    """DSL-stage field operator definition.
+
+    The authoritative representation for the compile pipeline is the triple
+    ``(source_definition, closure_vars, annotations)``, extracted once at decoration
+    time. ``definition`` — the live Python function — is retained so embedded
+    execution can still call it directly, but frontend / codegen passes must read
+    from the extracted fields. This makes the DSL stage self-contained (it carries
+    the source, not a handle to it) and removes repeated
+    ``inspect.getsource`` / ``typing.get_type_hints`` calls from the parse step.
+    """
+
     definition: types.FunctionType
     node_class: type[foast.OperatorNode] = foast.FieldOperator
     attributes: dict[str, Any] = dataclasses.field(default_factory=dict)
     grid_type: Optional[common.GridType] = None
     debug: bool = False
+    # Populated from ``definition`` in ``__post_init__`` if not supplied. ``Optional``
+    # only to allow legacy construction as ``DSLFieldOperatorDef(definition=func, ...)``.
+    source_definition: Optional[source_utils.SourceDefinition] = None
+    closure_vars: Optional[dict[str, Any]] = None
+    annotations: Optional[dict[str, Any]] = None
+
+    def __post_init__(self) -> None:
+        if self.source_definition is None:
+            object.__setattr__(
+                self,
+                "source_definition",
+                source_utils.SourceDefinition.from_function(self.definition),
+            )
+        if self.closure_vars is None:
+            object.__setattr__(
+                self,
+                "closure_vars",
+                source_utils.get_closure_vars_from_function(self.definition),
+            )
+        if self.annotations is None:
+            object.__setattr__(self, "annotations", typing.get_type_hints(self.definition))
 
 
 ConcreteDSLFieldOperatorDef: typing.TypeAlias = toolchain.ConcreteArtifact[
@@ -68,9 +100,30 @@ ConcreteFOASTOperatorDef: typing.TypeAlias = toolchain.ConcreteArtifact[
 
 @dataclasses.dataclass(frozen=True)
 class DSLProgramDef:
+    """DSL-stage program definition. See :class:`DSLFieldOperatorDef` for the layout."""
+
     definition: types.FunctionType
     grid_type: Optional[common.GridType] = None
     debug: bool = False
+    source_definition: Optional[source_utils.SourceDefinition] = None
+    closure_vars: Optional[dict[str, Any]] = None
+    annotations: Optional[dict[str, Any]] = None
+
+    def __post_init__(self) -> None:
+        if self.source_definition is None:
+            object.__setattr__(
+                self,
+                "source_definition",
+                source_utils.SourceDefinition.from_function(self.definition),
+            )
+        if self.closure_vars is None:
+            object.__setattr__(
+                self,
+                "closure_vars",
+                source_utils.get_closure_vars_from_function(self.definition),
+            )
+        if self.annotations is None:
+            object.__setattr__(self, "annotations", typing.get_type_hints(self.definition))
 
 
 ConcreteDSLProgramDef: typing.TypeAlias = toolchain.ConcreteArtifact[

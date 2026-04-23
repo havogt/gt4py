@@ -68,9 +68,15 @@ def func_to_foast(inp: DSLFieldOperatorDef) -> FOASTOperatorDef:
         >>> print(foast_closure_vars)
         {'const': '2.0'}
     """
-    source_def = source_utils.SourceDefinition.from_function(inp.definition)
-    closure_vars = source_utils.get_closure_vars_from_function(inp.definition)
-    annotations = typing.get_type_hints(inp.definition)
+    # Read the source / closure / annotations the DSL stage already extracted at
+    # decoration time (see :class:`DSLFieldOperatorDef`). The live ``inp.definition``
+    # function is no longer touched by the compile pipeline; keeping it off the hot
+    # path also avoids hitting raw-Python-function limitations (qualname-based
+    # pickling, closure cells, notebook ``__main__`` edge cases) from here on.
+    source_def = inp.source_definition
+    closure_vars = inp.closure_vars
+    annotations = inp.annotations
+    assert source_def is not None and closure_vars is not None and annotations is not None
     foast_definition_node = FieldOperatorParser.apply(source_def, closure_vars, annotations)
     loc = foast_definition_node.location
     operator_attribute_nodes = {

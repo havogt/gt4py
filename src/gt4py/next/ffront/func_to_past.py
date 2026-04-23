@@ -59,9 +59,13 @@ def func_to_past(inp: DSLProgramDef) -> PASTProgramDef:
 
         >>> assert "copy" in past_definition.closure_vars
     """
-    source_def = source_utils.SourceDefinition.from_function(inp.definition)
-    closure_vars = source_utils.get_closure_vars_from_function(inp.definition)
-    annotations = typing.get_type_hints(inp.definition)
+    # Read the source / closure / annotations the DSL stage already extracted at
+    # decoration time (see :class:`DSLProgramDef`). The compile pipeline no longer
+    # needs to touch ``inp.definition`` directly.
+    source_def = inp.source_definition
+    closure_vars = inp.closure_vars
+    annotations = inp.annotations
+    assert source_def is not None and closure_vars is not None and annotations is not None
     return ffront_stages.PASTProgramDef(
         past_node=ProgramParser.apply(source_def, closure_vars, annotations),
         closure_vars=closure_vars,
