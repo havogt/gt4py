@@ -176,10 +176,8 @@ def _pool_worker_initializer(shared_session_cache_dir: str) -> None:
     pool is shut down, before the main process had a chance to ``dlopen`` them. Sharing
     the main's dir keeps artifacts alive for exactly as long as the main process lives.
 
-    Backend modules do *not* need to be eagerly imported here: the submitted compile job
-    calls :func:`pkgutil.resolve_name` on a ``"module:attr"`` locator, which imports the
-    backend's module on demand. First-call overhead is paid once per worker (import
-    caching) regardless.
+    Backend modules do *not* need to be eagerly imported here: unpickling the cloudpickle
+    blob imports whatever the backend references as a side effect.
     """
     import pathlib
 
