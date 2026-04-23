@@ -12,8 +12,9 @@ Validated backends: `run_gtfn`, `run_gtfn_gpu`, `run_gtfn_cached`,
 ## Motivation
 
 `CompiledProgramsPool._compile_variant` in `src/gt4py/next/otf/compiled_program.py`
-submits compile jobs to a module-level `concurrent.futures.Executor`. It is currently a
-`ThreadPoolExecutor`; the `TODO` at line 157 asks for `ProcessPoolExecutor`.
+submits compile jobs to a module-level `concurrent.futures.Executor`. Before
+this prototype it was always a `ThreadPoolExecutor`; a long-standing
+`TODO(havogt)` comment asked for `ProcessPoolExecutor`.
 
 Threads help because C++ compilation happens in a subprocess and releases the GIL, but:
 
@@ -332,10 +333,10 @@ On workloads with more and larger stencils (ICON4Py scale) the process-pool
 advantage widens — that is the use case to measure next.
 
 Regression: `tests/next_tests/unit_tests/program_processor_tests/runners_tests/`
-and the relevant subsets of `unit_tests/otf_tests/` / `type_system_tests/` pass
-clean modulo one pre-existing failure
-(`dace_tests/test_dace.py::test_dace_fastcall[exec_alloc_descriptor1]`) that
-also fails on untouched `main` — unrelated to this prototype.
+runs clean (366 passed, 4 xfailed, ~11 min) modulo one pre-existing failure
+(`dace_tests/test_dace.py::test_dace_fastcall[exec_alloc_descriptor1]`, which
+also fails on untouched `main` and is therefore deselected). `otf_tests/` +
+`type_system_tests/` + `runners_tests/test_gtfn.py` together: 194 passed.
 
 ## Refactoring opportunities
 
@@ -343,35 +344,85 @@ These are things the prototype would have been **cleaner** with. None is a
 prerequisite for shipping — this section is a punch-list of follow-up work
 ordered roughly by "how much of the prototype's awkwardness goes away."
 
-### 1. Compile step as a first-class `build` / `load` protocol
+### 1. Make "the split" an OTF-native pipeline boundary
 
-The natural unit for async compilation is the `(build, load)` pair:
+The OTF composition model in `otf/workflow.py` is built on a single primitive:
+a `Workflow[StartT, EndT]` Protocol whose only verb is `__call__(inp) -> out`.
+Every composition mechanism (`NamedStepSequence`, `StepSequence`,
+`MultiWorkflow`, `CachedStep`, `ChainableWorkflowMixin.chain`) builds on that
+one arrow. To stay inside that model, the boundary between "runs in a worker
+process" and "runs in the caller's process" must be a *step boundary in the
+pipeline*, not a method pair living on individual steps.
 
-```python
-class CompilationStep(Protocol):
-    def build(self, inp: CompilableProject) -> CompilationArtifact: ...
-    def load(self, artifact: CompilationArtifact) -> ExecutableProgram: ...
-    def __call__(self, inp): return self.load(self.build(inp))  # default
+The `compilation` step hides two operations with very different characteristics:
+
+1. Codegen + native build — expensive, filesystem-bound, its output
+   (``.so`` path + entry-point name) is picklable.
+2. Dynamically import the freshly built module — cheap, ``sys.modules``-bound,
+   its output (a live Python function) is not picklable.
+
+Pulling those apart into two named steps makes the boundary explicit:
+
+```
+translation: CompilableProgramDef -> ProgramSource
+bindings:    ProgramSource        -> CompilableProject
+compilation: CompilableProject    -> BuildArtifact
+load:        BuildArtifact        -> ExecutableProgram
+decoration:  ExecutableProgram    -> ExecutableProgram
 ```
 
-Right now we have:
-- `Compiler.__call__` and `Compiler.build` / `Compiler.load` (GTFN),
-- `DaCeCompiler.__call__` and `DaCeCompiler.build` / `DaCeCompiler.load`,
-- pass-through `build_artifact` / `finalize_artifact` methods on
-  `OTFCompileWorkflow` and on `CachedStep`,
-- `hasattr(..., "build_artifact")` / `hasattr(..., "load")` runtime checks
-  scattered across `Backend.compile_to_artifact`,
-  `Backend.finalize_artifact`, `OTFCompileWorkflow.build_artifact`,
-  `OTFCompileWorkflow.finalize_artifact`, `CachedStep.build_artifact`,
-  `CachedStep.finalize_artifact`, and the worker entry point,
-- a `stages.CompilationArtifact` marker base to let the pool's finalizer
-  recognise artifact-shaped results.
+`BuildArtifact` is just an intermediate type in the named sequence. It has no
+special supertype and no marker interface — it simply happens to be picklable,
+which is the whole point.
 
-If the protocol above were the canonical contract on every `CompilationStep`
-and `Workflow`-step subclass, half of that machinery goes away: no
-`hasattr` checks, no marker class, no two names for the same thing
-(`build` vs `build_artifact`, `load` vs `finalize_artifact`). The pool just
-calls `step.build(...)` in the worker and `step.load(...)` in the main.
+**One new capability on `NamedStepSequence`**: slicing by step name.
+
+```python
+class NamedStepSequence:
+    def __call__(self, inp):                       # unchanged
+        for name in self.step_order:
+            inp = getattr(self, name)(inp)
+        return inp
+
+    def subsequence(self, start: str | None = None,
+                    stop:  str | None = None) -> Workflow:
+        """Slice the named sequence by step name (half-open, like slicing)."""
+        ...
+```
+
+The process pool is a pair of slices:
+
+```python
+# worker
+artifact = backend.executor.subsequence(stop="load")(compilable)
+# main (after cloudpickle round-trip of `artifact`)
+executable = backend.executor.subsequence(start="load")(artifact)
+```
+
+**Consequences:**
+
+- Every compile step exposes its behaviour via `__call__` only. No
+  backend-specific artifact classes, no marker bases, no runtime `hasattr`
+  dispatch.
+- `Backend.compile` is the sole public compile entry point. Async strategies
+  slice `self.executor` directly and have no need for separate
+  `compile_to_artifact` / `finalize_artifact` API.
+- The pipeline gains a type-checkable artifact boundary useful well beyond
+  the process pool (distributed build caches, AOT compilation to disk,
+  cross-language bindings all want to stop at the same point).
+
+**Wrinkles worth flagging:**
+
+- `MultiWorkflow.step_order(inp)` is dynamic; `subsequence` only makes sense
+  on `NamedStepSequence`. `Transforms` uses `MultiWorkflow`, but the frontend
+  runs main-side anyway — no conflict.
+- `StepSequence` (the result of `.chain()`) holds an anonymous tuple, so it
+  has no named split points. Backends that want to be process-pool-friendly
+  should use `NamedStepSequence`. All built-in runners already do.
+- `subsequence(start, stop)` can't in general statically type-check its output
+  vs. input — it's a low-level slicing tool. A few named helpers on
+  `OTFCompileWorkflow` (e.g. `build_phase`, `load_phase`) with concrete
+  signatures recover the type story where it matters.
 
 ### 2. Frontend-as-AST end-to-end
 
@@ -392,39 +443,40 @@ run in a worker. Removes the "frontend stays main-side" carve-out and
 lets process-pool parallelism scale to the frontend too (worth doing for
 ICON4Py where `past_to_itir` is non-trivial on large programs).
 
-### 3. Cache layering: remove the outer executor-level `CachedStep`
+### 3. Cache at the `compilation` step, not around the whole workflow
 
-`run_gtfn_cached` / `run_dace_gpu_cached` wrap the whole executor in
-`workflow.CachedStep(OTFCompileWorkflow(...))`, caching
-`compilable -> ExecutableProgram` in memory. In the process-pool path
-this is useless — the worker is a different process, its in-memory dict is
-ephemeral — and in the thread-pool path it's a minor hit-rate
-optimisation duplicating what the on-disk `FileCache` (attached to the
-`compilation` step for the `cached_translation` trait) already does
-cross-process.
+The `cached=True` trait (`run_gtfn_cached`, `run_dace_gpu_cached`) wraps the
+whole executor in `workflow.CachedStep(OTFCompileWorkflow(...))`, caching
+`compilable -> ExecutableProgram` in memory. That's the wrong granularity:
+the payload is an already-imported Python module, which is neither picklable
+nor safe to share across processes, and it duplicates what the on-disk
+`FileCache` (attached to the `translation` step via the `cached_translation`
+trait) already does cross-process.
 
-If that outer wrapper is removed, or replaced by a file-backed cache at
-the right layer, the `CachedStep.build_artifact` / `finalize_artifact`
-pass-through methods the prototype had to add become unnecessary.
+Under refactor #1 the natural place to cache is the `compilation` step
+itself: wrap it in a `CachedStep[CompilableProject, BuildArtifact]`. The
+payload is picklable, the cache can be file-backed and cross-process, and
+its granularity sits cleanly next to the existing `cached_translation`
+cache.
 
 ### 4. Decouple async strategy from `CompiledProgramsPool`
 
-`_compile_variant` branches on `_should_use_process_pool()` and has three
-code paths (synchronous, thread, process). An `AsyncCompileStrategy`
-abstraction — one implementation per pool mode — moves the branching out:
+`CompiledProgramsPool._compile_variant` should not know how compilation is
+dispatched; it should ask an `AsyncCompileStrategy` to do it. One
+implementation per pool mode, uniform contract:
 
 ```python
 class AsyncCompileStrategy(Protocol):
-    def submit(self, backend, compilable) -> Future[ExecutableProgram]: ...
-    # process impl: submit(cloudpickle.dumps(backend), compilable) + finalize callback
-    # thread impl:  submit(backend.compile, ...)
-    # sync impl:    return an already-resolved Future
+    def submit(self, executor: NamedStepSequence, inp) -> Future[ExecutableProgram]: ...
+    # process impl: run  executor.subsequence(stop="load")  remotely,
+    #               run  executor.subsequence(start="load") in the resolve callback
+    # thread impl:  run  executor(inp)                      in a worker thread
+    # sync impl:    run  executor(inp)                      inline
 ```
 
-`CompiledProgramsPool` then holds an `AsyncCompileStrategy` and submits
-through it; `_finish_compilation_job` disappears because finalization is
-attached as a future callback inside the strategy. The "main-side
-finalize" mechanism stops being a special case visible to the pool.
+`CompiledProgramsPool` holds an `AsyncCompileStrategy` and submits through
+it. Finalization becomes a future callback inside the strategy, not a
+separate bookkeeping path visible to the pool.
 
 ### 5. Session cache as a service, not module-level mutable state
 
@@ -516,11 +568,11 @@ this is the last refactor to do, not the first.
 
 ---
 
-Applying refactors 1, 2, 3 would shrink the process-pool patch to a
-handful of plumbing lines: the artifact split is already built into every
-compilation step, the frontend no longer needs a main-side carve-out,
-and the `CachedStep` pass-through methods go away. Refactors 4, 5, 6, 7
-are pure cleanup with no new features. 8, 9, 10 are larger and mostly
+Together refactors 1, 2, 3 reduce the process-pool integration to a handful
+of plumbing lines: the pipeline has an explicit artifact boundary (a `load`
+step and a `subsequence` slicer), the frontend runs alongside the rest of
+the pipeline in workers, and caching sits at the right layer by construction.
+Refactors 4–7 are cleanup with no new features. 8–10 are larger and mostly
 independent of the process-pool motivation.
 
 ## Open questions for discussion
