@@ -183,22 +183,41 @@ class DaCeCompiler(
     def load(self, artifact: DaCeBuildArtifact) -> CompiledDaceProgram:
         """Rehydrate a :class:`CompiledDaceProgram` from a previously-built artifact.
 
-        Uses :func:`dace.codegen.compiler.load_precompiled_sdfg`, which reads the SDFG dump
-        and the compiled ``.so`` from the build folder without triggering another compile.
-        The ``dace_context`` isn't strictly required here (we are not invoking code
-        generation) but we keep it for symmetry with :meth:`build`.
+        Reads the SDFG dump written by :meth:`build` from the build folder, then asks
+        dace to produce a program handle while forcing the on-disk build cache to hit
+        (``compiler.use_cache = True``) so no recompile is triggered. This avoids the
+        newer :func:`dace.codegen.compiler.load_precompiled_sdfg` API — which doesn't
+        exist in older pinned dace versions (e.g. the one icon4py ships with) — and
+        only relies on :meth:`dace.SDFG.from_file` + :meth:`dace.SDFG.compile`, both
+        long-stable. The ``dace_context`` isn't strictly required here (no codegen)
+        but we keep it for symmetry with :meth:`build`.
         """
-        from dace.codegen import compiler as dace_compiler
+        # The SDFG dump is written by `sdfg.compile()` inside :meth:`build`; dace
+        # prefers the gzipped form when available.
+        for dump_name in ("program.sdfgz", "program.sdfg"):
+            sdfg_dump = artifact.build_folder / dump_name
+            if sdfg_dump.exists():
+                break
+        else:
+            raise RuntimeError(
+                f"DaCe build folder {artifact.build_folder!s} contains no SDFG dump "
+                f"({'program.sdfgz'!r} / {'program.sdfg'!r}). The worker likely did "
+                "not finish a successful build."
+            )
+
+        sdfg = dace.SDFG.from_file(str(sdfg_dump))
+        sdfg.build_folder = str(artifact.build_folder)
 
         with gtx_wfdcommon.dace_context(
             device_type=self.device_type,
             cmake_build_type=self.cmake_build_type,
         ):
-            sdfg_program = dace_compiler.load_precompiled_sdfg(folder=artifact.build_folder)
+            with dace.config.set_temporary("compiler", "use_cache", value=True):
+                sdfg_program = sdfg.compile(validate=False)
 
         # Reconstruct a BindingSource minimally: only `source_code` is consumed by
-        # `CompiledDaceProgram.__init__`. We use `types.SimpleNamespace` to avoid circular
-        # imports of the binding source dataclass for a two-field shim.
+        # `CompiledDaceProgram.__init__`. We use `types.SimpleNamespace` to avoid
+        # circular imports of the binding source dataclass for a two-field shim.
         import types as _types
 
         binding_source_shim = _types.SimpleNamespace(source_code=artifact.binding_source_code)
