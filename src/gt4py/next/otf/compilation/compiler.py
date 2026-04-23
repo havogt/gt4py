@@ -48,29 +48,31 @@ class BuildSystemProjectGenerator(Protocol[CodeSpecT, TargetCodeSpecT]):
 class Compiler(
     workflow.ChainableWorkflowMixin[
         stages.CompilableProject[CPPLikeCodeSpecT, code_specs.PythonCodeSpec],
-        stages.ExecutableProgram,
+        stages.BuildArtifact,
     ],
     workflow.ReplaceEnabledWorkflowMixin[
         stages.CompilableProject[CPPLikeCodeSpecT, code_specs.PythonCodeSpec],
-        stages.ExecutableProgram,
+        stages.BuildArtifact,
     ],
     definitions.CompilationStep[CPPLikeCodeSpecT, code_specs.PythonCodeSpec],
 ):
-    """Use any build system (via configured factory) to compile a GT4Py program to a ``gt4py.next.otf.stages.CompiledProgram``."""
+    """Run a build system to produce an on-disk :class:`~gt4py.next.otf.stages.BuildArtifact` for a GT4Py program."""
 
     cache_lifetime: config.BuildCacheLifetime
     builder_factory: BuildSystemProjectGenerator[CPPLikeCodeSpecT, code_specs.PythonCodeSpec]
     force_recompile: bool = False
 
-    def build(
+    def __call__(
         self,
         inp: stages.CompilableProject[CPPLikeCodeSpecT, code_specs.PythonCodeSpec],
     ) -> stages.BuildArtifact:
-        """Run codegen + native build only. Returns a picklable on-disk artifact descriptor.
+        """Run codegen + native build. Returns a picklable on-disk artifact descriptor.
 
-        Split out from ``__call__`` so that the heavy part (safe to run in a worker process)
-        is separable from importing the freshly built module (which must happen in the process
-        that will eventually call it).
+        The counterpart :func:`load_artifact` dynamically imports the produced module
+        and returns its entry-point function; it is composed as the ``load`` step of
+        :class:`~gt4py.next.otf.recipes.OTFFinalizeWorkflow` so that the split between
+        "produce the artifact" and "rehydrate it into a callable" is a pipeline
+        boundary, not a pair of methods on this class.
         """
         src_dir = cache.get_cache_folder(inp, self.cache_lifetime)
 
@@ -93,25 +95,15 @@ class Compiler(
             src_dir=src_dir, module=new_data.module, entry_point_name=new_data.entry_point_name
         )
 
-    def __call__(
-        self,
-        inp: stages.CompilableProject[CPPLikeCodeSpecT, code_specs.PythonCodeSpec],
-    ) -> stages.ExecutableProgram:
-        return self.load(self.build(inp))
-
-    def load(self, artifact: stages.BuildArtifact) -> stages.ExecutableProgram:
-        """Dynamically import a previously-built module and return its entry point.
-
-        Counterpart to :meth:`build`: runs whatever process will ultimately call the program.
-        Kept as an instance method (not a free function) so that every compilation step in
-        the OTF workflow exposes a uniform ``build`` / ``load`` contract and recipes can
-        dispatch through it without knowing backend specifics.
-        """
-        return load_artifact(artifact)
-
 
 def load_artifact(artifact: stages.BuildArtifact) -> stages.ExecutableProgram:
-    """Dynamically import a previously-built module and return its entry point."""
+    """Dynamically import a previously-built module and return its entry point.
+
+    Used as the ``load`` step of :class:`~gt4py.next.otf.recipes.OTFFinalizeWorkflow`
+    for C++-based backends (GTFN). Must run in the process that will ultimately call
+    the returned program, since the module is registered in that process's
+    ``sys.modules`` under the ``gt4py.__compiled_programs__.`` prefix.
+    """
     m = importer.import_from_path(
         artifact.src_dir / artifact.module, sys_modules_prefix="gt4py.__compiled_programs__."
     )

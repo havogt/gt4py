@@ -20,25 +20,14 @@ from gt4py.next.otf import code_specs, definitions
 from gt4py.next.otf.binding import interface
 
 
-class CompilationArtifact:
-    """Marker base class for picklable descriptors returned by a compilation step's
-    ``build()`` method and consumed by its ``load()``.
-
-    Used to recognize process-pool results in
-    :meth:`~gt4py.next.otf.compiled_program.CompiledProgramsPool._finish_compilation_job`
-    without coupling it to any particular backend's artifact shape. Concrete subclasses
-    (GTFN :class:`BuildArtifact`, DaCe's ``DaCeBuildArtifact``) carry the actual fields.
-    """
-
-
 @dataclasses.dataclass(frozen=True)
-class BuildArtifact(CompilationArtifact):
-    """
-    Fully-built, on-disk result of a compilation: everything a later process needs to import it.
+class BuildArtifact:
+    """On-disk result of a compilation: everything a later step needs to import it.
 
-    This is the intentionally picklable boundary between "heavy compilation" (codegen + C++/NVCC
-    build, safe to run in a worker process) and "main-process finalization" (dynamic import of the
-    freshly built module + backend-specific result decoration).
+    This is the intentionally picklable intermediate type between the ``build`` and
+    ``finalize`` phases of :class:`~gt4py.next.otf.recipes.OTFCompileWorkflow` — the
+    boundary at which async-compile strategies (e.g. a process pool) split work
+    between "runs the native build" and "runs the dynamic import + decoration".
     """
 
     src_dir: pathlib.Path

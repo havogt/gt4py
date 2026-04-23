@@ -57,12 +57,12 @@ class BindingStep(Protocol[CodeSpecT, TargetCodeSpecT]):
 
 class CompilationStep(
     workflow.Workflow[
-        stages.CompilableProject[CodeSpecT, TargetCodeSpecT], stages.ExecutableProgram
+        stages.CompilableProject[CodeSpecT, TargetCodeSpecT], stages.BuildArtifact
     ],
     Protocol[CodeSpecT, TargetCodeSpecT],
 ):
-    """Compile program source code and bindings into a python callable (CompilableSource -> CompiledProgram)."""
+    """Compile program source code and bindings to an on-disk :class:`~gt4py.next.otf.stages.BuildArtifact`."""
 
     def __call__(
         self, source: stages.CompilableProject[CodeSpecT, TargetCodeSpecT]
-    ) -> stages.ExecutableProgram: ...
+    ) -> stages.BuildArtifact: ...

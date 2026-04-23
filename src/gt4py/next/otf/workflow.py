@@ -266,31 +266,6 @@ class CachedStep(
             result = self.cache[hash_] = self.step(inp)
         return result
 
-    def build_artifact(self, inp: StartT) -> Any:
-        """Transparent delegation for the process-pool compile path.
-
-        ``CachedStep`` caches ``inp -> result`` in memory. That cache's payload is the
-        final ``ExecutableProgram`` — which is produced by the ``__call__`` path, not
-        the ``build_artifact`` path. For the process-pool path we bypass this cache
-        entirely: the on-disk build cache managed by the compilation step below
-        already serves the same purpose cross-process.
-        """
-        if not hasattr(self.step, "build_artifact"):
-            raise RuntimeError(
-                f"Wrapped step {type(self.step).__name__} does not support 'build_artifact'."
-            )
-        return self.step.build_artifact(inp)  # type: ignore[attr-defined]
-
-    def finalize_artifact(self, artifact: Any) -> EndT:
-        """Counterpart of :meth:`build_artifact`. Populates the in-memory cache with the
-        finalised program so subsequent ``__call__`` invocations with the same input
-        hit the cached result (matching non-pool behaviour)."""
-        if not hasattr(self.step, "finalize_artifact"):
-            raise RuntimeError(
-                f"Wrapped step {type(self.step).__name__} does not support 'finalize_artifact'."
-            )
-        return self.step.finalize_artifact(artifact)  # type: ignore[attr-defined]
-
 
 @dataclasses.dataclass(frozen=True)
 class SkippableStep(

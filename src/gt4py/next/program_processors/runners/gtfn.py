@@ -6,6 +6,7 @@
 # Please, refer to the LICENSE file in the root directory.
 # SPDX-License-Identifier: BSD-3-Clause
 
+import dataclasses
 import functools
 from typing import Any
 
@@ -106,9 +107,11 @@ def extract_connectivity_args(
     return args
 
 
-class GTFNCompileWorkflowFactory(factory.Factory):
+class GTFNBuildWorkflowFactory(factory.Factory):
+    """Phase-1 pipeline: itir -> ... -> on-disk :class:`~gt4py.next.otf.stages.BuildArtifact`."""
+
     class Meta:
-        model = recipes.OTFCompileWorkflow
+        model = recipes.OTFBuildWorkflow
 
     class Params:
         device_type: core_defs.DeviceType = core_defs.DeviceType.CPU
@@ -144,8 +147,49 @@ class GTFNCompileWorkflowFactory(factory.Factory):
         cache_lifetime=factory.LazyFunction(lambda: config.BUILD_CACHE_LIFETIME),
         builder_factory=factory.SelfAttribute("..builder_factory"),
     )
+
+
+class GTFNFinalizeWorkflowFactory(factory.Factory):
+    """Phase-2 pipeline: rehydrate a :class:`~gt4py.next.otf.stages.BuildArtifact` into a callable program."""
+
+    class Meta:
+        model = recipes.OTFFinalizeWorkflow
+
+    class Params:
+        device_type: core_defs.DeviceType = core_defs.DeviceType.CPU
+
+    load = factory.LazyFunction(lambda: compiler.load_artifact)
     decoration = factory.LazyAttribute(
         lambda o: functools.partial(convert_args, device=o.device_type)
+    )
+
+
+class GTFNCompileWorkflowFactory(factory.Factory):
+    class Meta:
+        model = recipes.OTFCompileWorkflow
+
+    class Params:
+        device_type: core_defs.DeviceType = core_defs.DeviceType.CPU
+        cmake_build_type: config.CMakeBuildType = factory.LazyFunction(  # type: ignore[assignment] # factory-boy typing not precise enough
+            lambda: config.CMAKE_BUILD_TYPE
+        )
+        builder_factory: compiler.BuildSystemProjectGenerator = factory.LazyAttribute(  # type: ignore[assignment] # factory-boy typing not precise enough
+            lambda o: compiledb.CompiledbFactory(cmake_build_type=o.cmake_build_type)
+        )
+        # Forwarded through to ``GTFNBuildWorkflowFactory.cached_translation`` so that
+        # ``GTFNBackendFactory(..., otf_workflow__cached_translation=True)`` still works
+        # the same way at call sites.
+        cached_translation = factory.Trait(build__cached_translation=True)
+
+    build = factory.SubFactory(
+        GTFNBuildWorkflowFactory,
+        device_type=factory.SelfAttribute("..device_type"),
+        cmake_build_type=factory.SelfAttribute("..cmake_build_type"),
+        builder_factory=factory.SelfAttribute("..builder_factory"),
+    )
+    finalize = factory.SubFactory(
+        GTFNFinalizeWorkflowFactory,
+        device_type=factory.SelfAttribute("..device_type"),
     )
 
 
@@ -164,8 +208,18 @@ class GTFNBackendFactory(factory.Factory):
             name_device="gpu",
         )
         cached = factory.Trait(
+            # Cache the on-disk BuildArtifact, not the ExecutableProgram. This keeps the
+            # cache layer at the natural pipeline boundary: its payload is picklable /
+            # persistable, the finalize phase (dynamic import + decoration) is cheap and
+            # not worth memoising. `executor` remains an OTFCompileWorkflow so callers
+            # still see ``executor.build`` / ``executor.finalize``.
             executor=factory.LazyAttribute(
-                lambda o: workflow.CachedStep(o.otf_workflow, hash_function=o.hash_function)
+                lambda o: dataclasses.replace(
+                    o.otf_workflow,
+                    build=workflow.CachedStep(
+                        o.otf_workflow.build, hash_function=o.hash_function
+                    ),
+                )
             ),
             name_cached="_cached",
         )
@@ -187,18 +241,21 @@ class GTFNBackendFactory(factory.Factory):
 run_gtfn = GTFNBackendFactory()
 
 run_gtfn_imperative = GTFNBackendFactory(
-    name_postfix="_imperative", otf_workflow__translation__use_imperative_backend=True
+    name_postfix="_imperative",
+    otf_workflow__build__translation__use_imperative_backend=True,
 )
 
-run_gtfn_cached = GTFNBackendFactory(cached=True, otf_workflow__cached_translation=True)
+run_gtfn_cached = GTFNBackendFactory(
+    cached=True, otf_workflow__build__cached_translation=True
+)
 
 run_gtfn_gpu = GTFNBackendFactory(gpu=True)
 
 run_gtfn_gpu_cached = GTFNBackendFactory(
-    gpu=True, cached=True, otf_workflow__cached_translation=True
+    gpu=True, cached=True, otf_workflow__build__cached_translation=True
 )
 
 run_gtfn_no_transforms = GTFNBackendFactory(
     name_postfix="_no_transforms",
-    otf_workflow__bare_translation__enable_itir_transforms=False,
+    otf_workflow__build__bare_translation__enable_itir_transforms=False,
 )

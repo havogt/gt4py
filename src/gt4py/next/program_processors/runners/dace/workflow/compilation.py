@@ -116,7 +116,7 @@ class CompiledDaceProgram:
 
 
 @dataclasses.dataclass(frozen=True)
-class DaCeBuildArtifact(stages.CompilationArtifact):
+class DaCeBuildArtifact:
     """Picklable handoff between a :class:`DaCeCompiler.build` call in a worker process and
     :class:`DaCeCompiler.load` in the main process.
 
@@ -136,31 +136,30 @@ class DaCeBuildArtifact(stages.CompilationArtifact):
 class DaCeCompiler(
     workflow.ChainableWorkflowMixin[
         stages.CompilableProject[code_specs.SDFGCodeSpec, code_specs.PythonCodeSpec],
-        CompiledDaceProgram,
+        DaCeBuildArtifact,
     ],
     workflow.ReplaceEnabledWorkflowMixin[
         stages.CompilableProject[code_specs.SDFGCodeSpec, code_specs.PythonCodeSpec],
-        CompiledDaceProgram,
+        DaCeBuildArtifact,
     ],
-    definitions.CompilationStep[code_specs.SDFGCodeSpec, code_specs.PythonCodeSpec],
 ):
-    """Use the dace build system to compile a GT4Py program to a ``gt4py.next.otf.stages.CompiledProgram``."""
+    """Run DaCe's build system to produce an on-disk :class:`DaCeBuildArtifact`.
+
+    The counterpart :class:`DaCeLoader` rehydrates the artifact into a live
+    :class:`CompiledDaceProgram` in the process that will call it; they are composed
+    as the ``compilation`` and ``load`` steps of
+    :class:`~gt4py.next.otf.recipes.OTFCompileWorkflow`.
+    """
 
     bind_func_name: str
     cache_lifetime: config.BuildCacheLifetime
     device_type: core_defs.DeviceType
     cmake_build_type: config.CMakeBuildType = config.CMakeBuildType.DEBUG
 
-    def build(
+    def __call__(
         self,
         inp: stages.CompilableProject[code_specs.SDFGCodeSpec, code_specs.PythonCodeSpec],
     ) -> DaCeBuildArtifact:
-        """Codegen + native build only; returns a picklable descriptor of the on-disk result.
-
-        Split out from :meth:`__call__` so that the heavy work (safe to run in a worker
-        process) is separable from constructing the live :class:`CompiledDaceProgram` (which
-        owns an ``ctypes`` handle and therefore must live in the process that will invoke it).
-        """
         with gtx_wfdcommon.dace_context(
             device_type=self.device_type,
             cmake_build_type=self.cmake_build_type,
@@ -180,20 +179,30 @@ class DaCeCompiler(
             bind_func_name=self.bind_func_name,
         )
 
-    def load(self, artifact: DaCeBuildArtifact) -> CompiledDaceProgram:
-        """Rehydrate a :class:`CompiledDaceProgram` from a previously-built artifact.
 
-        Reads the SDFG dump written by :meth:`build` from the build folder, then asks
-        dace to produce a program handle while forcing the on-disk build cache to hit
-        (``compiler.use_cache = True``) so no recompile is triggered. This avoids the
-        newer :func:`dace.codegen.compiler.load_precompiled_sdfg` API — which doesn't
-        exist in older pinned dace versions (e.g. the one icon4py ships with) — and
-        only relies on :meth:`dace.SDFG.from_file` + :meth:`dace.SDFG.compile`, both
-        long-stable. The ``dace_context`` isn't strictly required here (no codegen)
-        but we keep it for symmetry with :meth:`build`.
-        """
-        # The SDFG dump is written by `sdfg.compile()` inside :meth:`build`; dace
-        # prefers the gzipped form when available.
+@dataclasses.dataclass(frozen=True)
+class DaCeLoader(
+    workflow.ChainableWorkflowMixin[DaCeBuildArtifact, CompiledDaceProgram],
+    workflow.ReplaceEnabledWorkflowMixin[DaCeBuildArtifact, CompiledDaceProgram],
+):
+    """Rehydrate a :class:`CompiledDaceProgram` from a previously-built :class:`DaCeBuildArtifact`.
+
+    Reads the SDFG dump written by :class:`DaCeCompiler` from the build folder and
+    asks dace for a program handle while forcing the on-disk build cache to hit
+    (``compiler.use_cache = True``) so no recompile is triggered. Relies only on
+    :meth:`dace.SDFG.from_file` and :meth:`dace.SDFG.compile`, which are long-stable
+    in dace (unlike the newer :func:`dace.codegen.compiler.load_precompiled_sdfg`
+    helper, which is absent from some pinned dace versions).
+
+    Must run in the process that will invoke the program: a live
+    :class:`dace.CompiledSDFG` holds a ctypes handle into a dlopen'd library and is
+    not portable across processes.
+    """
+
+    device_type: core_defs.DeviceType
+    cmake_build_type: config.CMakeBuildType = config.CMakeBuildType.DEBUG
+
+    def __call__(self, artifact: DaCeBuildArtifact) -> CompiledDaceProgram:
         for dump_name in ("program.sdfgz", "program.sdfg"):
             sdfg_dump = artifact.build_folder / dump_name
             if sdfg_dump.exists():
@@ -215,9 +224,9 @@ class DaCeCompiler(
             with dace.config.set_temporary("compiler", "use_cache", value=True):
                 sdfg_program = sdfg.compile(validate=False)
 
-        # Reconstruct a BindingSource minimally: only `source_code` is consumed by
-        # `CompiledDaceProgram.__init__`. We use `types.SimpleNamespace` to avoid
-        # circular imports of the binding source dataclass for a two-field shim.
+        # `CompiledDaceProgram.__init__` only reads `source_code` off the binding source;
+        # a ``types.SimpleNamespace`` shim avoids importing / depending on the full
+        # BindingSource dataclass here.
         import types as _types
 
         binding_source_shim = _types.SimpleNamespace(source_code=artifact.binding_source_code)
@@ -226,12 +235,6 @@ class DaCeCompiler(
             artifact.bind_func_name,
             binding_source_shim,  # type: ignore[arg-type]  # only source_code is read
         )
-
-    def __call__(
-        self,
-        inp: stages.CompilableProject[code_specs.SDFGCodeSpec, code_specs.PythonCodeSpec],
-    ) -> CompiledDaceProgram:
-        return self.load(self.build(inp))
 
 
 class DaCeCompilationStepFactory(factory.Factory):
