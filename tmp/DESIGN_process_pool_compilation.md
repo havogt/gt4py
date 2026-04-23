@@ -1,9 +1,13 @@
 # Design: ProcessPool-based compilation for `gt4py.next`
 
 Status: prototype (opt-in behind `GT4PY_BUILD_JOBS_MODE=process`)
-Author: prototype investigation, 2026-04-22 (updated same day with DaCe + GPU validation)
+Author: prototype investigation, 2026-04-22; revised 2026-04-23 (cloudpickle
+handoff, cached-trait transparency, portable DaCe load path, NamespaceProxy
+unpickle fix)
 Scope: `gt4py.next` only (`gt4py.cartesian` not affected)
-Validated backends: `run_gtfn`, `run_gtfn_gpu`, `run_dace_cpu`, `run_dace_gpu`
+Validated backends: `run_gtfn`, `run_gtfn_gpu`, `run_gtfn_cached`,
+`run_gtfn_gpu_cached`, `run_dace_cpu`, `run_dace_gpu`, `run_dace_cpu_cached`,
+`run_dace_gpu_cached`
 
 ## Motivation
 
@@ -50,27 +54,46 @@ the pool's work unit. The constraints, in the order they bit us:
    path, the main process will find the file exists *while the worker is still alive*
    but fail to `dlopen` it after pool shutdown (or simply hit a stale path the next
    run). Workers must share the main process's session dir.
-5. **Latent name collisions in backends.** `run_gtfn_no_transforms` and
-   `roundtrip.no_transforms` shared `.name` with their non-"no_transforms" siblings
-   (`run_gtfn` / `roundtrip.default`). The registry we need for name-based backend
-   lookup in workers surfaces this as a real bug: the last-registered backend wins,
-   so a worker asked to compile "run_gtfn_cpu" would use the no-transforms variant,
-   skip `apply_common_transforms`, and fail `visit_SetAt`'s `is_applied_as_fieldop`
-   assertion.
+5. **Pickle-recursion in `type_translation.NamespaceProxy`.** The class defines
+   `__getattr__` to delegate to `self._object`. When cloudpickle unpickles a
+   ``NamespaceProxy``, it probes for dunders (``__setstate__``, ``__reduce_ex__``)
+   on the freshly-constructed instance *before* ``_object`` has been restored —
+   ``self._object`` then itself falls through to ``__getattr__`` and recurses
+   unboundedly. A latent bug, not specific to the process pool, but unreachable
+   before cloudpickle-of-backend exercised the path.
+6. **`cached=True` trait wraps the whole executor in `CachedStep`.**
+   ``run_gtfn_cached`` / ``run_dace_gpu_cached`` have
+   ``backend.executor = CachedStep(OTFCompileWorkflow(...))``, not the
+   ``OTFCompileWorkflow`` itself. The process-pool path needs ``build_artifact`` /
+   ``finalize_artifact`` on whatever ``backend.executor`` is, so ``CachedStep`` has
+   to delegate them transparently to its wrapped step.
+7. **Latent name collisions in backends.** ``run_gtfn_no_transforms`` shared
+   ``.name == "run_gtfn_cpu"`` with ``run_gtfn``; ``roundtrip.no_transforms``
+   shared ``"roundtrip"`` with ``roundtrip.default``. This was surfaced by an
+   earlier iteration of the prototype (a name-based registry), but the clashing
+   names were also misleading to metrics and logs regardless. Fixed by giving
+   each a distinct ``name_postfix``; the fix is kept even though the final
+   cloudpickle-based design no longer depends on unique names.
 
 Things that are *not* blockers despite being worried about on the first pass:
 
 - `CompileTimeArgs.offset_provider` pickling. Frontend lowering is cheap; even if
   we ship concrete offset providers, the cost is amortized against the downstream
-  C++ compile. (Also: offset provider is read-only during compilation.)
-- In-memory caches in `workflow.CachedStep`. Workers see an empty cache, but the
-  second run hits the on-disk `FileCache` (`filecache.FileCache` under
-  `BUILD_CACHE_DIR/gtfn_cache`), which is already cross-process-safe
+  C++ compile. (Also: offset provider is read-only during compilation.) Verified
+  to round-trip correctly for a concrete `V2E` NeighborTable (smoke_conn.py).
+- In-memory caches in `workflow.CachedStep`. Workers see an empty cache, and the
+  executor-level `CachedStep` (`cached=True` trait) is explicitly bypassed by
+  its own `build_artifact` / `finalize_artifact` pass-through — the on-disk
+  `FileCache` at the translation layer (`FileCache` under
+  `BUILD_CACHE_DIR/gtfn_cache`) does the cross-run / cross-process caching
   (file-locked via `gt4py._core.locking`).
 - `id()`-keyed `hash_offset_provider_items_by_id`. Only used main-side to build
   the cache key before submit; never crosses the process boundary.
 - Metrics setup (`compile_variant_hook`, `_metrics_source_key_cache`,
   `_pools_per_root`). All runs before submit, main-side; unchanged.
+- Pickling `Backend` itself. Stdlib pickle fails (nested name-mangled classes,
+  lambdas, DaCe module refs), but cloudpickle handles it in ~8 KB per backend,
+  so the extra dep is the only cost.
 
 ## Design
 
@@ -124,10 +147,29 @@ Changes kept deliberately small and localized:
 - `gt4py/next/program_processors/runners/dace/workflow/compilation.py`: same
   split for DaCe: new `DaCeBuildArtifact` (build_folder + binding_source_code
   + bind_func_name), `DaCeCompiler.build` / `DaCeCompiler.load`.
-  `DaCeCompiler.load` uses `dace.codegen.compiler.load_precompiled_sdfg` to
-  rehydrate a live `dace.CompiledSDFG` from the build folder alone — no
-  recompile. The existing `CompiledDaceProgram` constructor is reused with
-  a minimal `SimpleNamespace` shim standing in for the `BindingSource`.
+  `DaCeCompiler.load` rehydrates a live `dace.CompiledSDFG` from the build
+  folder alone using only long-stable DaCe API: ``dace.SDFG.from_file`` on the
+  ``program.sdfgz`` / ``program.sdfg`` dump written by ``build``, followed by
+  ``sdfg.compile(validate=False)`` inside a ``compiler.use_cache = True``
+  context (which short-circuits to a library load, no re-codegen). The
+  newer ``dace.codegen.compiler.load_precompiled_sdfg`` helper would have
+  been slightly tidier but doesn't exist on older pinned DaCe versions
+  (e.g. the one icon4py ships with). The existing ``CompiledDaceProgram``
+  constructor is reused with a minimal ``types.SimpleNamespace`` shim
+  standing in for the ``BindingSource``.
+- `gt4py/next/otf/workflow.py`: `CachedStep` gains `build_artifact` and
+  `finalize_artifact` methods that delegate transparently to the wrapped
+  step, so the ``cached=True`` factory trait (which puts
+  ``CachedStep(OTFCompileWorkflow(...))`` in ``backend.executor``) doesn't
+  block the process-pool path. The in-memory ``compilable ->
+  ExecutableProgram`` cache is deliberately bypassed: its payload is the
+  final decorated program, which is produced main-side after the worker's
+  artifact is finalized, and the on-disk FileCache at the ``compilation``
+  layer already caches across runs cross-process.
+- `gt4py/next/type_system/type_translation.py`: ``NamespaceProxy.__getattr__``
+  now short-circuits dunder probes and uses ``object.__getattribute__`` to
+  reach ``_object``, so cloudpickle's dunder probes during unpickle don't
+  recurse before ``_object`` is bound.
 - `gt4py/next/otf/recipes.py`: `OTFCompileWorkflow` gains `build_artifact(inp)`
   and `finalize_artifact(artifact)` methods. Both dispatch through
   `self.compilation.build` / `self.compilation.load` — i.e. the workflow
@@ -142,26 +184,29 @@ Changes kept deliberately small and localized:
   - New `BUILD_JOBS_MODE` config knob (`thread` | `process`); pool selection is
     lazy and guarded (`multiprocessing.parent_process() is not None` means "I am
     a worker, don't create a pool").
-  - `_process_pool_compile_job(backend_name, compilable)` top-level function —
-    must be top-level for pickle.
+  - `_process_pool_compile_job(backend_blob: bytes, compilable)` top-level
+    function — must be top-level for pickle. Deserializes the backend via
+    cloudpickle and calls ``backend.executor.build_artifact(compilable)``.
   - Submit site branches on mode: thread submits full `backend.compile`; process
-    submits `_process_pool_compile_job` with a main-side-transformed
-    `CompilableProgramDef`.
+    cloudpickles the backend, runs `backend.transforms(...)` main-side, and
+    submits ``_process_pool_compile_job(backend_blob, compilable)``.
   - `_finish_compilation_job` detects any `CompilationArtifact` result
     (GTFN's `BuildArtifact` or DaCe's `DaCeBuildArtifact`) and runs
-    `backend.finalize_artifact(artifact)` main-side (import / precompiled-SDFG
-    reload + decoration).
+    `backend.finalize_artifact(artifact)` main-side (module import /
+    SDFG reload + decoration).
 
 ### Worker initializer
 
-In `spawn` mode each worker starts with:
+In `spawn` mode each worker starts by overriding
+`compilation.cache._session_cache_dir_path` with the main process's path —
+obstacle 4. The worker's own `TemporaryDirectory` still exists but is unused;
+its cleanup at exit touches only an empty dir.
 
-1. Override `compilation.cache._session_cache_dir_path` with the main process's
-   path — obstacle 4. The worker's own `TemporaryDirectory` still exists but is
-   unused; its cleanup at exit touches only an empty dir.
-(Backend modules do NOT need to be eagerly imported: the cloudpickle blob
-carries everything the worker needs to materialise the backend, and any modules
-the backend references get imported as a side effect of unpickling.)
+Backend modules are **not** eagerly imported in the initializer: the
+cloudpickle blob sent with each job carries everything the worker needs to
+materialise the backend, and any modules the backend references get imported
+as a side effect of unpickling (Python module import is cached, so this cost
+is paid once per worker regardless).
 
 ### User contract for the process-pool mode
 
@@ -200,9 +245,9 @@ Requirements on user code:
 - **Pool shutdown semantics.** `wait_for_compilation()` currently shuts the
   pool down and re-inits it. This is fine in thread mode (workers are threads
   in the same process, import state sticks). In process mode, shut-down kills
-  workers and their loaded compiled modules; re-init costs ~1s per worker for
-  `spawn` + eager import. Consider making shutdown on-exit only, and having
-  `wait_for_compilation()` just drain outstanding futures.
+  workers; re-init pays the `spawn` import cost again. Consider making
+  shutdown on-exit only, and having `wait_for_compilation()` just drain
+  outstanding futures.
 - **CompileTimeArgs still holds concrete OffsetProvider.** There's a pre-
   existing TODO on that in `arguments.py:148`. Moving it to `OffsetProviderType`
   would cut pickle cost for GPU backends. Orthogonal to this prototype.
@@ -215,12 +260,13 @@ Requirements on user code:
   iteration used `pkgutil.resolve_name` on a `"module:attr"` locator scanned
   from `sys.modules`. Both break for factory-constructed backends that live in
   a local variable — a legitimate pattern with the existing
-  `GTFNBackendFactory(cmake_build_type=..., ...)`. cloudpickle handles those
-  uniformly and costs ~8 KB per submit. The earlier "registry" design also
-  surfaced two latent name collisions in the runner modules
+  `GTFNBackendFactory` / `make_dace_backend` factories. cloudpickle handles
+  those uniformly and costs ~8 KB per submit. The earlier "registry" design
+  surfaced two latent name collisions
   (`run_gtfn_no_transforms` / `roundtrip.no_transforms` shared names with
-  their non-"no_transforms" siblings) — those fixes are kept, they're still
-  good hygiene for metrics and logs.
+  their non-"no_transforms" siblings) — those fixes are kept for metrics /
+  logging hygiene, even though the final cloudpickle-based design has no
+  dependence on unique names.
 - The right split inside `Backend.compile` is **after the C++ compile, before
   `importer.import_from_path`** — not after `decoration`. `decoration` must run
   main-side because it wraps the Python function that only exists in the main
@@ -239,15 +285,18 @@ Requirements on user code:
 Source changes, all small:
 
 ```
-src/gt4py/next/backend.py                                        + compile_to_artifact, finalize_artifact, serialize_backend_for_worker, deserialize_backend_from_worker
-src/gt4py/next/config.py                                         + BUILD_JOBS_MODE
-src/gt4py/next/otf/stages.py                                     + CompilationArtifact marker + BuildArtifact
-src/gt4py/next/otf/compilation/compiler.py                       + Compiler.build / Compiler.load
-src/gt4py/next/otf/recipes.py                                    + OTFCompileWorkflow.build_artifact / finalize_artifact (dispatch via compilation.build/load)
-src/gt4py/next/otf/compiled_program.py                           + process-pool branch, worker initializer, artifact finalization
-src/gt4py/next/program_processors/runners/dace/workflow/compilation.py   + DaCeBuildArtifact, DaCeCompiler.build / DaCeCompiler.load
-src/gt4py/next/program_processors/runners/gtfn.py                * run_gtfn_no_transforms gets name_postfix="_no_transforms"
-src/gt4py/next/program_processors/runners/roundtrip.py           * no_transforms renamed "roundtrip_no_transforms"
+src/gt4py/next/backend.py                                              + compile_to_artifact, finalize_artifact, serialize_backend_for_worker, deserialize_backend_from_worker
+src/gt4py/next/config.py                                               + BUILD_JOBS_MODE
+src/gt4py/next/otf/stages.py                                           + CompilationArtifact marker + BuildArtifact
+src/gt4py/next/otf/compilation/compiler.py                             + Compiler.build / Compiler.load
+src/gt4py/next/otf/recipes.py                                          + OTFCompileWorkflow.build_artifact / finalize_artifact (dispatch via compilation.build/load)
+src/gt4py/next/otf/workflow.py                                         + CachedStep.build_artifact / finalize_artifact (transparent pass-through)
+src/gt4py/next/otf/compiled_program.py                                 + process-pool branch, worker initializer, artifact finalization
+src/gt4py/next/type_system/type_translation.py                         * NamespaceProxy.__getattr__: guard against dunder probes + unbound `_object` (unpickle-safe)
+src/gt4py/next/program_processors/runners/dace/workflow/compilation.py + DaCeBuildArtifact, DaCeCompiler.build / DaCeCompiler.load (portable dace API: SDFG.from_file + compile(use_cache=True))
+src/gt4py/next/program_processors/runners/gtfn.py                      * run_gtfn_no_transforms gets name_postfix="_no_transforms"
+src/gt4py/next/program_processors/runners/roundtrip.py                 * no_transforms renamed "roundtrip_no_transforms"
+pyproject.toml                                                         + cloudpickle (new dep; currently under `test` group, should move to a proper optional feature group)
 ```
 
 Smoke tests under `tmp/`:
@@ -257,6 +306,12 @@ Smoke tests under `tmp/`:
   the same program, exercised with `.compile(...)` + `wait_for_compilation()`.
 - `tmp/smoke_dace.py` + `tmp/stencil_dace_mod.py` — DaCe CPU.
 - `tmp/smoke_gpu.py` + `tmp/stencil_gpu_mod.py` — gtfn + dace on CUDA GPU.
+- `tmp/smoke_cached.py` + `tmp/stencil_cached_mod.py` — `run_gtfn_cached` /
+  `run_dace_cpu_cached` (``cached=True`` trait → ``CachedStep`` wraps the
+  executor).
+- `tmp/smoke_gpu_cached.py` + `tmp/stencil_gpu_cached_mod.py` — cached + GPU
+  (matches the icon4py failure path for ``run_dace_gpu_cached_opt``-shaped
+  backends).
 - `tmp/smoke_conn.py` + `tmp/stencil_conn_mod.py` — unstructured mesh
   `neighbor_sum` with a concrete `V2E` connectivity (NeighborTable) in the
   offset provider, to verify concrete connectivity arrays round-trip under
@@ -277,9 +332,196 @@ On workloads with more and larger stencils (ICON4Py scale) the process-pool
 advantage widens — that is the use case to measure next.
 
 Regression: `tests/next_tests/unit_tests/program_processor_tests/runners_tests/`
-runs clean (366 passed) modulo one pre-existing failure
+and the relevant subsets of `unit_tests/otf_tests/` / `type_system_tests/` pass
+clean modulo one pre-existing failure
 (`dace_tests/test_dace.py::test_dace_fastcall[exec_alloc_descriptor1]`) that
 also fails on untouched `main` — unrelated to this prototype.
+
+## Refactoring opportunities
+
+These are things the prototype would have been **cleaner** with. None is a
+prerequisite for shipping — this section is a punch-list of follow-up work
+ordered roughly by "how much of the prototype's awkwardness goes away."
+
+### 1. Compile step as a first-class `build` / `load` protocol
+
+The natural unit for async compilation is the `(build, load)` pair:
+
+```python
+class CompilationStep(Protocol):
+    def build(self, inp: CompilableProject) -> CompilationArtifact: ...
+    def load(self, artifact: CompilationArtifact) -> ExecutableProgram: ...
+    def __call__(self, inp): return self.load(self.build(inp))  # default
+```
+
+Right now we have:
+- `Compiler.__call__` and `Compiler.build` / `Compiler.load` (GTFN),
+- `DaCeCompiler.__call__` and `DaCeCompiler.build` / `DaCeCompiler.load`,
+- pass-through `build_artifact` / `finalize_artifact` methods on
+  `OTFCompileWorkflow` and on `CachedStep`,
+- `hasattr(..., "build_artifact")` / `hasattr(..., "load")` runtime checks
+  scattered across `Backend.compile_to_artifact`,
+  `Backend.finalize_artifact`, `OTFCompileWorkflow.build_artifact`,
+  `OTFCompileWorkflow.finalize_artifact`, `CachedStep.build_artifact`,
+  `CachedStep.finalize_artifact`, and the worker entry point,
+- a `stages.CompilationArtifact` marker base to let the pool's finalizer
+  recognise artifact-shaped results.
+
+If the protocol above were the canonical contract on every `CompilationStep`
+and `Workflow`-step subclass, half of that machinery goes away: no
+`hasattr` checks, no marker class, no two names for the same thing
+(`build` vs `build_artifact`, `load` vs `finalize_artifact`). The pool just
+calls `step.build(...)` in the worker and `step.load(...)` in the main.
+
+### 2. Frontend-as-AST end-to-end
+
+`DSLFieldOperatorDef.definition` / `DSLProgramDef.definition` holds a raw
+`types.FunctionType`. The prototype is forced to run the
+DSL→FOAST/PAST→itir transform **in the main process** for two reasons:
+
+- Raw Python functions generally don't round-trip through pickle (the
+  `__main__.run_add_one` / wrapper-vs-raw-function issue we hit early).
+- Closure-captured variables are lost on pickle-by-reference.
+
+A cleaner design: the `@gtx.program` / `@gtx.field_operator` decorator
+captures the function as `(SourceDefinition, closure_vars)` at decoration
+time — infrastructure that already exists in `ffront/source_utils.py` and
+is used by `fingerprint_stage`. Downstream stages never see `types
+.FunctionType`. Then the *entire* pipeline, including frontend passes, can
+run in a worker. Removes the "frontend stays main-side" carve-out and
+lets process-pool parallelism scale to the frontend too (worth doing for
+ICON4Py where `past_to_itir` is non-trivial on large programs).
+
+### 3. Cache layering: remove the outer executor-level `CachedStep`
+
+`run_gtfn_cached` / `run_dace_gpu_cached` wrap the whole executor in
+`workflow.CachedStep(OTFCompileWorkflow(...))`, caching
+`compilable -> ExecutableProgram` in memory. In the process-pool path
+this is useless — the worker is a different process, its in-memory dict is
+ephemeral — and in the thread-pool path it's a minor hit-rate
+optimisation duplicating what the on-disk `FileCache` (attached to the
+`compilation` step for the `cached_translation` trait) already does
+cross-process.
+
+If that outer wrapper is removed, or replaced by a file-backed cache at
+the right layer, the `CachedStep.build_artifact` / `finalize_artifact`
+pass-through methods the prototype had to add become unnecessary.
+
+### 4. Decouple async strategy from `CompiledProgramsPool`
+
+`_compile_variant` branches on `_should_use_process_pool()` and has three
+code paths (synchronous, thread, process). An `AsyncCompileStrategy`
+abstraction — one implementation per pool mode — moves the branching out:
+
+```python
+class AsyncCompileStrategy(Protocol):
+    def submit(self, backend, compilable) -> Future[ExecutableProgram]: ...
+    # process impl: submit(cloudpickle.dumps(backend), compilable) + finalize callback
+    # thread impl:  submit(backend.compile, ...)
+    # sync impl:    return an already-resolved Future
+```
+
+`CompiledProgramsPool` then holds an `AsyncCompileStrategy` and submits
+through it; `_finish_compilation_job` disappears because finalization is
+attached as a future callback inside the strategy. The "main-side
+finalize" mechanism stops being a special case visible to the pool.
+
+### 5. Session cache as a service, not module-level mutable state
+
+`gt4py.next.otf.compilation.cache._session_cache_dir_path` is a module
+global that each worker mutates in `_pool_worker_initializer` to point at
+the main process's dir. That works but is fragile — anything that imports
+`cache` before the initializer runs sees the wrong value, and the
+mutation is invisible to readers of the module.
+
+A cleaner interface: `cache.get_cache_folder(...)` takes an explicit
+`SessionCache` handle (contextvar-bound in the main process, replaced
+with the main's handle on the worker via `initargs`). Same behaviour,
+but the "who owns the session dir" question has a single answer visible
+in the code.
+
+### 6. Robust proxy-class pattern
+
+`type_translation.NamespaceProxy.__getattr__` recursed on unpickle because
+it didn't guard against dunder probes before `_object` was bound. This is
+a generic failure mode for any class that defines `__getattr__` to
+delegate to an attribute-that-might-not-yet-exist. A small helper in Eve
+(or even a recipe in `CODING_GUIDELINES.md`) — something like:
+
+```python
+def delegating_getattr(backing_attr: str, key: str) -> Any:
+    if key.startswith("_"):
+        raise AttributeError(key)
+    return getattr(object.__getattribute__(self, backing_attr), key)
+```
+
+— would catch the class of bug once, rather than discovering it per-proxy.
+
+### 7. Unique backend names as an invariant
+
+Two backends shipped with the same `.name` before this prototype surfaced
+it (`run_gtfn_no_transforms` shared `"run_gtfn_cpu"` with `run_gtfn`;
+`roundtrip.no_transforms` shared `"roundtrip"` with `roundtrip.default`).
+The `.name` field is user-visible (metrics source keys, logs,
+`metrics_source_key`'s `_pools_per_root` counter) — collisions make those
+observables misleading.
+
+An assertion in `Backend.__post_init__` enforcing `existing_name != self
+.name` would have caught this at import time. The prototype avoids that
+check because some tests build Backends to probe factory behaviour and
+intentionally reuse names, but a test-only escape hatch
+(`_skip_name_check=True`) is cheap.
+
+### 8. Push the `OffsetProvider → OffsetProviderType` TODO through
+
+`CompileTimeArgs.offset_provider` is `OffsetProvider` (concrete
+connectivity ndarrays), not `OffsetProviderType`. The pre-existing TODO at
+`arguments.py:148` is to move the concrete side elsewhere. For the
+process pool this is not blocking — pickling a small concrete connectivity
+is fast — but for GPU with large unstructured meshes it becomes
+wasteful (cupy arrays round-trip via host memory). Once the TODO is
+resolved, the worker only ever sees types, and the offset-provider
+pickle cost disappears entirely.
+
+### 9. Replace factory-boy with plain constructors
+
+`GTFNBackendFactory` / `DaCeBackendFactory` use `factory.Factory` with
+`LazyAttribute` / `SubFactory` / `Trait`. Factory-boy is designed for test
+fixtures with random data; using it as a production composition framework
+means every "what does this attribute hold?" question requires reading
+the factory DSL and running it mentally. A plain function
+`make_gtfn_backend(*, gpu=False, cached=False, ...) -> Backend` would be
+easier to read, easier to type-check (factory-boy returns `Any`), and
+would make cloudpickle's job even simpler (no factory metaclasses in the
+pickle graph). The `cached` trait could then be a call site choice, not a
+trait:
+
+```python
+def make_gtfn_backend(...): ...                   # raw backend
+def cached(b: Backend) -> Backend: ...            # wraps in cached layer
+```
+
+Orthogonal to this prototype but would simplify every one of the
+refactorings above.
+
+### 10. Collapse `Backend.compile` / `compile_to_artifact` / `finalize_artifact`
+
+Once (1) and (4) are in place, the `Backend` class doesn't need three
+separate compile methods. `Backend.compile(...)` becomes the sole entry
+point, delegating to the configured `AsyncCompileStrategy`. Sync users
+see no difference; process-pool users get the build/load split
+transparently. The trade-off is that `Backend.compile` becomes async
+(returns a `Future` or `Awaitable`), which is a public-API change — so
+this is the last refactor to do, not the first.
+
+---
+
+Applying refactors 1, 2, 3 would shrink the process-pool patch to a
+handful of plumbing lines: the artifact split is already built into every
+compilation step, the frontend no longer needs a main-side carve-out,
+and the `CachedStep` pass-through methods go away. Refactors 4, 5, 6, 7
+are pure cleanup with no new features. 8, 9, 10 are larger and mostly
+independent of the process-pool motivation.
 
 ## Open questions for discussion
 
