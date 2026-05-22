@@ -17,7 +17,6 @@ from next_tests.integration_tests.cases import (
     IDim,
     JDim,
     KDim,
-    KHalfDim,
     C2E,
     E2V,
     V2E,
@@ -38,6 +37,7 @@ from next_tests.integration_tests.feature_tests.ffront_tests.ffront_test_utils i
     mesh_descriptor,
 )
 
+KHalfDim = gtx.Dimension("KHalf", kind=gtx.DimensionKind.VERTICAL)
 pytestmark = pytest.mark.uses_cartesian_shift
 
 

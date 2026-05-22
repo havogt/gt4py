@@ -21,7 +21,6 @@ from gt4py.eve import utils as eve_utils
 from gt4py.next import (
     astype,
     broadcast,
-    common,
     float32,
     float64,
     int32,

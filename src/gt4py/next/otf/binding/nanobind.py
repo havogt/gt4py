@@ -206,9 +206,7 @@ def make_argument(name: str, type_: ts.TypeSpec) -> str | BufferSID | Tuple:
             source_buffer=name,
             dimensions=[
                 DimensionSpec(
-                    name=dim.value
-                    if not common.is_staggered(dim)
-                    else common.flip_staggered(dim).value,
+                    name=dim.value,
                     static_stride=1
                     if (
                         config.UNSTRUCTURED_HORIZONTAL_HAS_UNIT_STRIDE

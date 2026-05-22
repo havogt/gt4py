@@ -588,7 +588,7 @@ def axis_literal(dim: common.Dimension) -> itir.AxisLiteral:
     return itir.AxisLiteral(value=dim.value, kind=dim.kind)
 
 
-def cartesian_offset(domain: common.Dimension, codomain: common.Dimension):
+def cartesian_offset(domain: common.Dimension, codomain: common.Dimension) -> itir.CartesianOffset:
     return itir.CartesianOffset(domain=axis_literal(domain), codomain=axis_literal(codomain))
 
 
