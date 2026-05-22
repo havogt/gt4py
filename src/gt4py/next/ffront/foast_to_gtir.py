@@ -304,14 +304,13 @@ class FieldOperatorLowering(eve.PreserveLocationVisitor, eve.NodeTranslator):
                 # `field(Dim + idx)`
                 case foast.BinOp(
                     op=dialect_ast_enums.BinaryOperator.ADD | dialect_ast_enums.BinaryOperator.SUB,
-                    left=foast.Name(),  # TODO(tehrengruber): use type instead
+                    left=foast.Name() as dim_name,
                     right=foast.Constant(value=offset_index),
                 ):
                     if arg.op == dialect_ast_enums.BinaryOperator.SUB:
                         offset_index *= -1
-                    conn = common.connectivity_for_cartesian_shift(
-                        node.args[0].left.type.dim, offset_index
-                    )
+                    assert isinstance(dim_name.type, ts.DimensionType)
+                    conn = common.connectivity_for_cartesian_shift(dim_name.type.dim, offset_index)
                     current_expr = im.as_fieldop(
                         im.lambda_("__it")(
                             im.deref(
