@@ -134,7 +134,7 @@ class GTFNTranslationStep(
                 arg_exprs.append(
                     f"gridtools::hymap::keys<generated::{name}_t>::make_values({nbtbl})"
                 )
-            elif isinstance(connectivity_type, common.CartesianConnectivityType):
+            elif isinstance(connectivity_type, common.Dimension):
                 pass
             else:
                 raise AssertionError(

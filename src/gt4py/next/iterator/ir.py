@@ -98,6 +98,10 @@ InfinityLiteral.NEGATIVE = InfinityLiteral(name="NEGATIVE")
 InfinityLiteral.POSITIVE = InfinityLiteral(name="POSITIVE")
 
 
+class OffsetLiteral(Expr):
+    value: Union[int, str]
+
+
 class AxisLiteral(Expr):
     # TODO(havogt): Refactor to use declare Axis/Dimension at the Program level.
     # Now every use of the literal has to provide the kind, where usually we only care of the name.
@@ -108,11 +112,6 @@ class AxisLiteral(Expr):
 class CartesianOffset(Expr):
     domain: AxisLiteral
     codomain: AxisLiteral
-
-
-# TODO(tehrengruber): allow int only and create OffsetRef for str instead
-class OffsetLiteral(Expr):
-    value: Union[int, str]
 
 
 class SymRef(Expr):
@@ -173,8 +172,8 @@ Sym.__hash__ = Node.__hash__  # type: ignore[method-assign]
 Expr.__hash__ = Node.__hash__  # type: ignore[method-assign]
 Literal.__hash__ = Node.__hash__  # type: ignore[method-assign]
 NoneLiteral.__hash__ = Node.__hash__  # type: ignore[method-assign]
-AxisLiteral.__hash__ = Node.__hash__  # type: ignore[method-assign]
 OffsetLiteral.__hash__ = Node.__hash__  # type: ignore[method-assign]
+AxisLiteral.__hash__ = Node.__hash__  # type: ignore[method-assign]
 CartesianOffset.__hash__ = Node.__hash__  # type: ignore[method-assign]
 SymRef.__hash__ = Node.__hash__  # type: ignore[method-assign]
 Lambda.__hash__ = Node.__hash__  # type: ignore[method-assign]

@@ -139,11 +139,9 @@ DimsType = TypeVar("DimsType")
 DType = TypeVar("DType")
 
 IDim = gtx.Dimension("IDim")
-IHalfDim = common.flip_staggered(IDim)
 JDim = gtx.Dimension("JDim")
-JHalfDim = common.flip_staggered(JDim)
 KDim = gtx.Dimension("KDim", kind=gtx.DimensionKind.VERTICAL)
-KHalfDim = common.flip_staggered(KDim)
+KHalfDim = gtx.Dimension("KHalf", kind=gtx.DimensionKind.VERTICAL)
 
 Vertex = gtx.Dimension("Vertex")
 Edge = gtx.Dimension("Edge")
@@ -177,11 +175,11 @@ class CartesianGridDescriptor(Protocol):
 
 
 def simple_cartesian_grid(
-    sizes: int | tuple[int, int, int, int] = (5, 7, 9),
+    sizes: int | tuple[int, int, int, int] = (5, 7, 9, 11),
 ) -> CartesianGridDescriptor:
     if isinstance(sizes, int):
-        sizes = (sizes,) * 3
-    assert len(sizes) == 3, "sizes must be a tuple of three integers"
+        sizes = (sizes,) * 4
+    assert len(sizes) == 4, "sizes must be a tuple of four integers"
 
     offset_provider = {}
 
