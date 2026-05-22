@@ -191,11 +191,11 @@ class StridedConnectivityField(common.Connectivity):
 
 
 # Offsets
-# A cartesian shift can be encoded by a `common.Dimension` tag (carrying its kind), shifting the
-# position along that dimension directly; named offsets use a string `Tag` resolved via the
-# offset provider.
-OffsetPart: TypeAlias = Tag | common.Dimension | common.IntIndex
-CompleteOffset: TypeAlias = tuple[Tag | common.Dimension, common.IntIndex]
+# A cartesian shift can be encoded by a `common.CartesianConnectivity` tag (carrying its dims with
+# kind), relocating the position from its domain to its codomain dimension; named offsets use a
+# string `Tag` resolved via the offset provider.
+OffsetPart: TypeAlias = Tag | common.CartesianConnectivity | common.IntIndex
+CompleteOffset: TypeAlias = tuple[Tag | common.CartesianConnectivity, common.IntIndex]
 OffsetProviderElem: TypeAlias = common.OffsetProviderElem
 OffsetProvider: TypeAlias = common.OffsetProvider
 
@@ -408,7 +408,7 @@ def lift(stencil):
                 self, stencil, args, *, offsets: Optional[list[OffsetPart]] = None, elem=None
             ) -> None:
                 assert not offsets or all(
-                    isinstance(o, (int, str, common.Dimension)) for o in offsets
+                    isinstance(o, (int, str, common.Connectivity)) for o in offsets
                 )
                 self.stencil = stencil
                 self.args = args
@@ -551,7 +551,7 @@ def _domain_iterator(domain: dict[Tag, range]) -> Iterable[ConcretePosition]:
 
 def execute_shift(
     pos: Position,
-    tag: Tag | common.Dimension,
+    tag: Tag | common.CartesianConnectivity,
     index: common.IntIndex,
     *,
     offset_provider: OffsetProvider,
@@ -587,17 +587,18 @@ def execute_shift(
         # the assertions above confirm pos is incomplete casting here to avoid duplicating work in a type guard
         return cast(IncompletePosition, pos) | {tag: new_entry}
 
-    # a `Dimension` tag is a self-describing cartesian shift (e.g. from a `CartesianOffset`);
-    # named offsets are resolved through the offset provider
+    # a `Connectivity` tag is a self-describing shift (e.g. a `CartesianConnectivity` from a
+    # `CartesianOffset`); named offsets are resolved through the offset provider
     offset_implementation = (
-        tag if isinstance(tag, common.Dimension) else common.get_offset(offset_provider, tag)
+        tag
+        if isinstance(tag, common.CartesianConnectivity)
+        else common.get_offset(offset_provider, tag)
     )
-    if isinstance(offset_implementation, common.Dimension):
+    if isinstance(offset_implementation, common.CartesianConnectivity):
         new_pos = copy.copy(pos)
-        if common.is_int_index(value := new_pos[offset_implementation.value]):
-            new_pos[offset_implementation.value] = value + index
-        else:
-            raise AssertionError()
+        cur = new_pos.pop(offset_implementation.domain_dim.value)
+        assert common.is_int_index(cur)
+        new_pos[offset_implementation.codomain.value] = cur + index + offset_implementation.offset
         return new_pos
     elif common.is_neighbor_connectivity(offset_implementation):
         source_dim = offset_implementation.__gt_type__().source_dim
@@ -625,7 +626,7 @@ def _is_list_of_complete_offsets(
     complete_offsets: list[tuple[Any, Any]],
 ) -> TypeGuard[list[CompleteOffset]]:
     return all(
-        isinstance(tag, (Tag, common.Dimension)) and isinstance(offset, (int, np.integer))
+        isinstance(tag, (Tag, common.Connectivity)) and isinstance(offset, (int, np.integer))
         for tag, offset in complete_offsets
     )
 
@@ -1663,7 +1664,11 @@ def _dimension_to_tag(
 
 def _validate_domain(domain: Domain, offset_provider_type: common.OffsetProviderType) -> None:
     if isinstance(domain, runtime.CartesianDomain):
-        if any(isinstance(o, common.ConnectivityType) for o in offset_provider_type.values()):
+        if any(
+            isinstance(o, common.ConnectivityType)
+            and not isinstance(o, common.CartesianConnectivityType)
+            for o in offset_provider_type.values()
+        ):
             raise RuntimeError(
                 "Got a 'CartesianDomain', but found a 'Connectivity' in 'offset_provider', expected 'UnstructuredDomain'."
             )

@@ -164,6 +164,7 @@ class SymbolicDomain:
         self: SymbolicDomain,
         shift: tuple[
             itir.OffsetLiteral
+            | itir.CartesianOffset
             | Literal[trace_shifts.Sentinel.VALUE, trace_shifts.Sentinel.ALL_NEIGHBORS],
             ...,
         ],
@@ -186,6 +187,7 @@ class SymbolicDomain:
                 connectivity = common.CartesianConnectivity(domain, codomain=codomain)
             elif isinstance(off, itir.OffsetLiteral):
                 assert isinstance(off.value, str)
+                assert common.is_offset_provider(offset_provider)
                 connectivity = common.get_offset(offset_provider, off.value)
             else:
                 raise AssertionError()
@@ -210,7 +212,9 @@ class SymbolicDomain:
                     for dim, range_ in new_ranges.items()
                 )
             elif isinstance(connectivity, common.NeighborConnectivity):
-                # unstructured shift
+                # unstructured shift; a `NeighborConnectivity` only arises from a named offset
+                assert isinstance(off, itir.OffsetLiteral) and isinstance(off.value, str)
+                assert not isinstance(val, itir.CartesianOffset)
                 assert (
                     isinstance(val, itir.OffsetLiteral) and isinstance(val.value, int)
                 ) or val in [

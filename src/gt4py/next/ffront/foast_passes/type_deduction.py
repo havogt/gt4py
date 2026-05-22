@@ -584,7 +584,8 @@ class FieldOperatorTypeDeduction(traits.VisitorWithSymbolTableTrait, NodeTransla
     ) -> Optional[ts.TypeSpec]:
         # e.g. `IDim+1` or `IDim+0.5`
         if (
-            isinstance(left.type, ts.DimensionType)
+            node.op in (dialect_ast_enums.BinaryOperator.ADD, dialect_ast_enums.BinaryOperator.SUB)
+            and isinstance(left.type, ts.DimensionType)
             and isinstance(right.type, ts.ScalarType)
             and type_info.is_arithmetic(right.type)
         ):

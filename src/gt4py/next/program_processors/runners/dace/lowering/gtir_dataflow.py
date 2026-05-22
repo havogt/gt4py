@@ -1757,6 +1757,7 @@ class LambdaToDataflow(eve.NodeVisitor):
             node.args[0], node.fun.args
         )
 
+        offset_provider_type: gtx_common.OffsetProviderTypeElem
         if isinstance(offset_provider_arg, gtir.CartesianOffset):
             conn = itir_misc.connectivity_from_cartesian_offset(offset_provider_arg)
             offset_provider_type = conn.__gt_type__()
@@ -1778,6 +1779,9 @@ class LambdaToDataflow(eve.NodeVisitor):
             return self._make_cartesian_shift(it, offset_provider_type, offset_expr)
         else:
             assert isinstance(offset_value_arg, gtir.OffsetLiteral)
+            assert isinstance(offset_provider_arg, gtir.OffsetLiteral) and isinstance(
+                offset_provider_arg.value, str
+            )
             # initially, the storage for the connectivity tables is created as transient;
             # when the tables are used, the storage is changed to non-transient,
             # so the corresponding arrays are supposed to be allocated by the SDFG caller

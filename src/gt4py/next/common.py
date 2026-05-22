@@ -102,10 +102,10 @@ class Dimension:
     def __call__(self, val: int) -> NamedIndex:
         return NamedIndex(self, val)
 
-    def __add__(self, offset: int) -> Connectivity:
-        return CartesianConnectivity(self, offset)
+    def __add__(self, offset: int | float) -> Connectivity:
+        return connectivity_for_cartesian_shift(self, offset)
 
-    def __sub__(self, offset: int) -> Connectivity:
+    def __sub__(self, offset: int | float) -> Connectivity:
         return self + (-offset)
 
     def __gt__(self, value: core_defs.IntegralScalar) -> Domain:
@@ -1307,7 +1307,7 @@ class NeighborTable(
     NeighborConnectivity
 ):  # TODO(havogt): try to express by inheriting from NdArrayConnectivityField (but this would require a protocol to move it out of `embedded.nd_array_field`)
     @property
-    def ndarray(self) -> core_defs.NDArrayObject:
+    def ndarray(self) -> core_defs.NDArrayObject:  # type: ignore[empty-body]  # intentional stub, see below
         # Note that this property is currently already there from inheriting from `Field`,
         # however this seems wrong, therefore we explicitly introduce it here (or it should come
         # implicitly from the `NdArrayConnectivityField` protocol).
@@ -1332,20 +1332,29 @@ OffsetProviderType: TypeAlias = Mapping[Tag, OffsetProviderTypeElem]
 def is_offset_provider(obj: Any) -> TypeGuard[OffsetProvider]:
     if not isinstance(obj, Mapping):
         return False
-    return all(isinstance(el, OffsetProviderElem) for el in obj.values())
+    # a bare `Dimension` is accepted as a (deprecated) shorthand for a cartesian translation
+    return all(
+        isinstance(el, OffsetProviderElem) or isinstance(el, Dimension) for el in obj.values()
+    )
 
 
 def is_offset_provider_type(obj: Any) -> TypeGuard[OffsetProviderType]:
     if not isinstance(obj, Mapping):
         return False
-    return all(isinstance(el, OffsetProviderTypeElem) for el in obj.values())
+    return all(
+        isinstance(el, OffsetProviderTypeElem) or isinstance(el, Dimension) for el in obj.values()
+    )
 
 
 def offset_provider_to_type(
     offset_provider: OffsetProvider | OffsetProviderType,
 ) -> OffsetProviderType:
     return {
-        k: v.__gt_type__() if isinstance(v, Connectivity) else v for k, v in offset_provider.items()
+        # a bare `Dimension` is a deprecated shorthand for a cartesian translation
+        k: CartesianConnectivity(v).__gt_type__()
+        if isinstance(v, Dimension)
+        else (v.__gt_type__() if isinstance(v, Connectivity) else v)
+        for k, v in offset_provider.items()
     }
 
 
@@ -1364,10 +1373,21 @@ def get_offset(offset_provider: OffsetProvider, offset_tag: str) -> OffsetProvid
     # TODO(havogt): Once we have a custom class for `OffsetProvider`, we can absorb this functionality into it.
     if offset_tag not in offset_provider:
         raise KeyError(f"Offset '{offset_tag}' not found in offset provider.")
-    return offset_provider[offset_tag]  # TODO return a valid dimension
+    elem = offset_provider[offset_tag]
+    if isinstance(elem, Dimension):  # deprecated shorthand for a cartesian translation
+        return CartesianConnectivity(elem)
+    return elem
 
 
-get_offset_type: Callable[[OffsetProviderType, str], OffsetProviderTypeElem] = get_offset  # type: ignore[assignment] # overload not possible since OffsetProvider and OffsetProviderType overlap
+def get_offset_type(
+    offset_provider_type: OffsetProviderType, offset_tag: str
+) -> OffsetProviderTypeElem:
+    if offset_tag not in offset_provider_type:
+        raise KeyError(f"Offset '{offset_tag}' not found in offset provider.")
+    elem = offset_provider_type[offset_tag]
+    if isinstance(elem, Dimension):  # deprecated shorthand for a cartesian translation
+        return CartesianConnectivity(elem).__gt_type__()
+    return elem
 
 
 def has_offset(offset_provider: OffsetProvider | OffsetProviderType, offset_tag: str) -> bool:
@@ -1520,7 +1540,7 @@ def connectivity_for_cartesian_shift(dim: Dimension, offset: int | float) -> Car
     if isinstance(offset, float):
         integral_offset, half = divmod(offset, 1)
         assert half == 0.5
-        if not dim.value.startswith(_STAGGERED_PREFIX):
+        if dim.value.startswith(_STAGGERED_PREFIX):
             integral_offset += 1
         return CartesianConnectivity(dim, int(integral_offset), codomain=flip_staggered(dim))
     else:

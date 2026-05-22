@@ -66,11 +66,12 @@ class EmbeddedDSL(codegen.TemplatedGenerator):
     AxisLiteral = as_fmt("{value}")
 
     def visit_CartesianOffset(self, node: itir.CartesianOffset, **kwargs: Any) -> str:
-        # shift along the dimension directly. The dimension is injected as a `gtx.Dimension`
-        # in the generated module (see `axis_literals` below) and the embedded `shift` accepts
-        # it as a self-describing cartesian offset.
-        assert node.domain == node.codomain, "relocation (staggering) is not supported"
-        return node.codomain.value
+        # render as a self-describing `CartesianConnectivity`; its dims are injected as
+        # `gtx.Dimension` in the generated module (see `axis_literals` below) and the embedded
+        # `shift` consumes it directly (handles both translation and relocation/staggering).
+        return (
+            f"gtx.common.CartesianConnectivity({node.domain.value}, codomain={node.codomain.value})"
+        )
 
     FunCall = as_fmt("{fun}({','.join(args)})")
     Lambda = as_mako("(lambda ${','.join(params)}: ${expr})")
