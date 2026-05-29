@@ -28,6 +28,7 @@ from gt4py.next.common import (
 from gt4py.next.embedded import exceptions as embedded_exceptions, nd_array_field
 from gt4py.next.embedded.nd_array_field import _get_slices_from_domain_slice
 from gt4py.next.ffront import fbuiltins
+from gt4py.next.ffront.experimental import as_offset
 
 from next_tests.integration_tests.feature_tests.math_builtin_test_data import math_builtin_test_data
 
@@ -761,6 +762,142 @@ def test_premap_non_contiguous_inverse_image_raises():
         f.premap(conn)
 
 
+def test_as_offset_1d():
+    # Dynamic per-point shift along I: out[i] == f[i + off[i]], full domain when all shifts in-bounds.
+    I = Dimension("I")
+    Ioff = fbuiltins.FieldOffset("Ioff", source=I, target=(I,))
+
+    f = common._field(
+        np.arange(10).astype(float), domain=common.Domain(dims=(I,), ranges=(UnitRange(0, 10),))
+    )
+    off_arr = np.asarray([1, 0, -1, 0, 1, 0, -1, 0, 1, 0], dtype=int)
+    off = common._field(off_arr, domain=common.Domain(dims=(I,), ranges=(UnitRange(0, 10),)))
+
+    result = f.premap(as_offset(Ioff, off))
+
+    assert result.domain == common.Domain(dims=(I,), ranges=(UnitRange(0, 10),))
+    assert np.all(result.ndarray == f.ndarray[np.arange(10) + off_arr])
+
+
+def test_as_offset_narrow_offset_dtype_no_wrap():
+    # An int8 offset field over a domain larger than 128 must not wrap into the index table.
+    I = Dimension("I")
+    Ioff = fbuiltins.FieldOffset("Ioff", source=I, target=(I,))
+
+    N = 200
+    f = common._field(
+        np.arange(N).astype(float), domain=common.Domain(dims=(I,), ranges=(UnitRange(0, N),))
+    )
+    off_arr = np.zeros(N, dtype=np.int8)
+    off = common._field(off_arr, domain=common.Domain(dims=(I,), ranges=(UnitRange(0, N),)))
+
+    result = f.premap(as_offset(Ioff, off))
+
+    assert result.domain == common.Domain(dims=(I,), ranges=(UnitRange(0, N),))
+    assert np.all(result.ndarray == f.ndarray)
+
+
+def test_as_offset_2d_shift_one_keep_other():
+    # Shift along I by a per-(i, j) offset, leave J: out[i, j] == f[i + off[i, j], j].
+    I = Dimension("I")
+    J = Dimension("J")
+    Ioff = fbuiltins.FieldOffset("Ioff", source=I, target=(I,))
+
+    NI, NJ = 4, 3
+    dom = common.Domain(dims=(I, J), ranges=(UnitRange(0, NI), UnitRange(0, NJ)))
+    f = common._field(np.arange(NI * NJ).reshape(NI, NJ).astype(float), domain=dom)
+    off_arr = np.asarray([[1, 1, 0], [0, 0, 1], [1, -1, 0], [-1, 0, -1]], dtype=int)
+    off = common._field(off_arr, domain=dom)
+
+    result = f.premap(as_offset(Ioff, off))
+
+    assert result.domain == dom
+    i = np.arange(NI)[:, None]
+    j = np.arange(NJ)[None, :]
+    assert np.all(result.ndarray == f.ndarray[i + off_arr, j])
+
+
+def test_as_offset_boundary_narrows_domain():
+    # A uniform out-of-bounds shift narrows the result to the contiguous in-range sub-domain.
+    I = Dimension("I")
+    Ioff = fbuiltins.FieldOffset("Ioff", source=I, target=(I,))
+
+    f = common._field(
+        np.arange(10).astype(float), domain=common.Domain(dims=(I,), ranges=(UnitRange(0, 10),))
+    )
+    off = common._field(
+        np.full(10, -1, dtype=int), domain=common.Domain(dims=(I,), ranges=(UnitRange(0, 10),))
+    )
+
+    result = f.premap(as_offset(Ioff, off))
+
+    assert result.domain == common.Domain(dims=(I,), ranges=(UnitRange(1, 10),))
+    assert np.all(result.ndarray == f.ndarray[0:9])  # out[i] == f[i - 1]
+
+
+def test_as_offset_scattered_oob_raises():
+    # An out-of-bounds shift in the interior cannot yield a contiguous domain.
+    I = Dimension("I")
+    Ioff = fbuiltins.FieldOffset("Ioff", source=I, target=(I,))
+
+    f = common._field(
+        np.arange(10).astype(float), domain=common.Domain(dims=(I,), ranges=(UnitRange(0, 10),))
+    )
+    off = common._field(
+        np.asarray([0, 0, 0, 99, 0, 0, 0, 0, 0, 0], dtype=int),
+        domain=common.Domain(dims=(I,), ranges=(UnitRange(0, 10),)),
+    )
+
+    with pytest.raises(ValueError, match="non-contiguous"):
+        f.premap(as_offset(Ioff, off))
+
+
+def test_as_offset_introduces_dimension():
+    # `off` carries a dim the field lacks: the result gains it, out[i, j] == f[i + off[i, j]].
+    I = Dimension("I")
+    J = Dimension("J")
+    Ioff = fbuiltins.FieldOffset("Ioff", source=I, target=(I,))
+
+    f = common._field(
+        np.arange(10).astype(float), domain=common.Domain(dims=(I,), ranges=(UnitRange(0, 10),))
+    )
+    off_arr = np.tile(np.asarray([1, 0, -1, 0, 1, 0, -1, 0, 1, 0], dtype=int)[:, None], (1, 3))
+    off = common._field(
+        off_arr, domain=common.Domain(dims=(I, J), ranges=(UnitRange(0, 10), UnitRange(0, 3)))
+    )
+
+    result = f.premap(as_offset(Ioff, off))
+
+    assert result.domain == common.Domain(dims=(I, J), ranges=(UnitRange(0, 10), UnitRange(0, 3)))
+    assert np.all(result.ndarray == f.ndarray[np.arange(10)[:, None] + off_arr])
+
+
+def test_as_offset_non_cartesian_offset_raises():
+    # `as_offset` only supports Cartesian (self-shift) offsets: single target equal to source.
+    I = Dimension("I")
+    J = Dimension("J")
+    Vertex = Dimension("Vertex", kind=DimensionKind.HORIZONTAL)
+    Edge = Dimension("Edge", kind=DimensionKind.HORIZONTAL)
+    V2EDim = Dimension("V2EDim", kind=DimensionKind.LOCAL)
+
+    off_I = common._field(
+        np.zeros(3, dtype=int), domain=common.Domain(dims=(I,), ranges=(UnitRange(0, 3),))
+    )
+    off_V = common._field(
+        np.zeros(3, dtype=int), domain=common.Domain(dims=(Vertex,), ranges=(UnitRange(0, 3),))
+    )
+
+    # 2-element target (neighbor offset)
+    V2E = fbuiltins.FieldOffset("V2E", source=Edge, target=(Vertex, V2EDim))
+    with pytest.raises(ValueError, match="Cartesian"):
+        as_offset(V2E, off_V)
+
+    # 1-element target but source != target[0] (cross-dim)
+    IfromJ = fbuiltins.FieldOffset("IfromJ", source=I, target=(J,))
+    with pytest.raises(ValueError, match="Cartesian"):
+        as_offset(IfromJ, off_I)
+
+
 @pytest.mark.parametrize(
     "new_dims,field,expected_domain",
     [
@@ -1367,91 +1504,44 @@ def test_hyperslice(index_array, expected):
 
 @pytest.mark.uses_concat_where
 @pytest.mark.parametrize(
-    "mask_data, true_data, false_data, expected",
+    "cond, true_data, false_data, expected",
     [
+        (D0 == 0, ([0, 0], None), ([1, 1], None), ([0, 1], None)),
+        (D0 == -1, ([0, 0], {D0: (-1, 1)}), ([1, 1], {D0: (0, 2)}), ([0, 1, 1], {D0: (-1, 2)})),
+        (D0 < 0, ([0, 0], {D0: (-2, 0)}), ([1, 1], {D0: (0, 2)}), ([0, 0, 1, 1], {D0: (-2, 2)})),
+        (D0 == 1, ([0, 0, 0], None), ([1, 1, 1], None), ([1, 0, 1], None)),
+        # non-contiguous domain
+        (D0 <= 0, ([0, 0], {D0: (-2, 0)}), ([1, 1], {D0: (0, 2)}), None),
+        # empty result domain
         (
-            ([True, False, True, False, True], None),
-            ([1, 2, 3, 4, 5], None),
-            ([6, 7, 8, 9, 10], None),
-            ([1, 7, 3, 9, 5], None),
-        ),
-        (
-            ([True, False, True, False], None),
-            ([1, 2, 3, 4, 5], {D0: (-2, 3)}),
-            ([6, 7, 8, 9], {D0: (1, 5)}),
-            ([3, 6, 5, 8], {D0: (0, 4)}),
-        ),
-        (
-            ([True, False, True, False, True], None),
-            ([1, 2, 3, 4, 5], {D0: (-2, 3)}),
-            ([6, 7, 8, 9, 10], {D0: (1, 6)}),
-            ([3, 6, 5, 8], {D0: (0, 4)}),
-        ),
-        (
-            ([True, False, True, False, True], None),
-            ([1, 2, 3, 4, 5], {D0: (-2, 3)}),
-            ([6, 7, 8, 9, 10], {D0: (2, 7)}),
-            None,
-        ),
-        (
-            # empty result domain
-            ([True, False, True, False, True], None),
-            ([1, 2, 3, 4, 5], {D0: (-5, 0)}),
-            ([6, 7, 8, 9, 10], {D0: (5, 10)}),
+            D0 < 0,
+            ([0, 0], {D0: (0, 2)}),
+            ([1, 1], {D0: (-2, 0)}),
             ([], {D0: (0, 0)}),
         ),
-        (
-            ([True, False, True, False, True], None),
-            ([1, 2, 3, 4, 5], {D0: (-4, 1)}),
-            ([6, 7, 8, 9, 10], {D0: (5, 10)}),
-            ([5], {D0: (0, 1)}),
-        ),
-        (
-            # broadcasting true_field
-            ([True, False, True, False, True], {D0: 5}),
-            ([1, 2, 3, 4, 5], {D0: 5}),
-            ([[6, 11], [7, 12], [8, 13], [9, 14], [10, 15]], {D0: 5, D1: 2}),
-            ([[1, 1], [7, 12], [3, 3], [9, 14], [5, 5]], {D0: 5, D1: 2}),
-        ),
-        (
-            ([True, False, True, False, True], None),
-            (42, None),
-            ([6, 7, 8, 9, 10], None),
-            ([42, 7, 42, 9, 42], None),
-        ),
-        (
-            # parts of mask_ranges are concatenated
-            ([True, True, False, False], None),
-            ([1, 2], {D0: (1, 3)}),
-            ([3, 4], {D0: (1, 3)}),
-            ([1, 4], {D0: (1, 3)}),
-        ),
-        (
-            # parts of mask_ranges are concatenated and yield non-contiguous domain
-            ([True, False, True, False], None),
-            ([1, 2], {D0: (0, 2)}),
-            ([3, 4], {D0: (2, 4)}),
-            None,
+        # broadcasting from scalar (needs infinite domain support)
+        pytest.param(
+            D0 == 0,
+            ([0, 0], None),
+            (1, None),
+            ([0, 1], None),
+            marks=[
+                pytest.mark.embedded_concat_where_infinite_domain,
+                pytest.mark.xfail(reason="requires infinite domain support"),
+            ],
         ),
     ],
 )
 def test_concat_where(
     nd_array_implementation,
-    mask_data: tuple[list[bool], Optional[common.DomainLike]],
+    cond: common.Domain,
     true_data: tuple[list[int], Optional[common.DomainLike]],
     false_data: tuple[list[int], Optional[common.DomainLike]],
     expected: Optional[tuple[list[int], Optional[common.DomainLike]]],
 ):
-    mask_lst, mask_domain = mask_data
     true_lst, true_domain = true_data
     false_lst, false_domain = false_data
 
-    mask_field = _make_field_or_scalar(
-        mask_lst,
-        nd_array_implementation=nd_array_implementation,
-        domain=common.domain(mask_domain) if mask_domain is not None else None,
-        dtype=bool,
-    )
     true_field = _make_field_or_scalar(
         true_lst,
         nd_array_implementation=nd_array_implementation,
@@ -1467,7 +1557,7 @@ def test_concat_where(
 
     if expected is None:
         with pytest.raises(embedded_exceptions.NonContiguousDomain):
-            nd_array_field._concat_where(mask_field, true_field, false_field)
+            nd_array_field._concat_where(cond, true_field, false_field)
     else:
         expected_lst, expected_domain_like = expected
         expected_array = np.asarray(expected_lst)
@@ -1477,7 +1567,141 @@ def test_concat_where(
             else _make_default_domain(expected_array.shape)
         )
 
-        result = nd_array_field._concat_where(mask_field, true_field, false_field)
+        result = nd_array_field._concat_where(cond, true_field, false_field)
 
         assert expected_domain == result.domain
+        np.testing.assert_allclose(result.asnumpy(), expected_array)
+
+
+@pytest.mark.parametrize(
+    "domain, expected",
+    [
+        # finite domain → two complement regions (left and right of the domain)
+        (
+            common.Domain(dims=(D0,), ranges=(UnitRange(2, 5),)),
+            (
+                common.Domain(dims=(D0,), ranges=(UnitRange(common.Infinity.NEGATIVE, 2),)),
+                common.Domain(dims=(D0,), ranges=(UnitRange(5, common.Infinity.POSITIVE),)),
+            ),
+        ),
+        # single-point domain
+        (
+            D0 == 3,
+            (
+                common.Domain(dims=(D0,), ranges=(UnitRange(common.Infinity.NEGATIVE, 3),)),
+                common.Domain(dims=(D0,), ranges=(UnitRange(4, common.Infinity.POSITIVE),)),
+            ),
+        ),
+        # open on the left (D0 < 5) → only a right complement
+        (
+            common.Domain(dims=(D0,), ranges=(UnitRange(common.Infinity.NEGATIVE, 5),)),
+            (common.Domain(dims=(D0,), ranges=(UnitRange(5, common.Infinity.POSITIVE),)),),
+        ),
+        # open on the right (D0 >= 5) → only a left complement
+        (
+            common.Domain(dims=(D0,), ranges=(UnitRange(5, common.Infinity.POSITIVE),)),
+            (common.Domain(dims=(D0,), ranges=(UnitRange(common.Infinity.NEGATIVE, 5),)),),
+        ),
+        # full line (both infinite) → empty complement
+        (
+            common.Domain(
+                dims=(D0,),
+                ranges=(UnitRange(common.Infinity.NEGATIVE, common.Infinity.POSITIVE),),
+            ),
+            (),
+        ),
+        # empty domain → complement is the full line
+        (
+            common.Domain(dims=(D0,), ranges=(UnitRange(3, 3),)),
+            (common.Domain(dims=(D0,), ranges=(UnitRange.infinite(),)),),
+        ),
+    ],
+)
+def test_invert_domain(domain, expected):
+    result = nd_array_field._invert_domain(domain)
+    assert result == expected
+
+
+@pytest.mark.uses_concat_where
+@pytest.mark.parametrize(
+    "fields_data, dim, expected_data, expect_error",
+    [
+        # two adjacent fields, already ordered
+        (
+            [([1, 2], {D0: (0, 2)}), ([3, 4], {D0: (2, 4)})],
+            D0,
+            ([1, 2, 3, 4], {D0: (0, 4)}),
+            None,
+        ),
+        # two adjacent fields, reverse order → _concat sorts them
+        (
+            [([3, 4], {D0: (2, 4)}), ([1, 2], {D0: (0, 2)})],
+            D0,
+            ([1, 2, 3, 4], {D0: (0, 4)}),
+            None,
+        ),
+        # three fields
+        (
+            [([1], {D0: (0, 1)}), ([2], {D0: (1, 2)}), ([3], {D0: (2, 3)})],
+            D0,
+            ([1, 2, 3], {D0: (0, 3)}),
+            None,
+        ),
+        # single field (trivial concat)
+        (
+            [([10, 20, 30], {D0: (5, 8)})],
+            D0,
+            ([10, 20, 30], {D0: (5, 8)}),
+            None,
+        ),
+        # gap between fields → NonContiguousDomain
+        (
+            [([1, 2], {D0: (0, 2)}), ([3, 4], {D0: (3, 5)})],
+            D0,
+            None,
+            embedded_exceptions.NonContiguousDomain,
+        ),
+        # overlapping fields → ValueError
+        (
+            [([1, 2, 3], {D0: (0, 3)}), ([4, 5, 6], {D0: (2, 5)})],
+            D0,
+            None,
+            ValueError,
+        ),
+        # three fields: first two overlap, third is disjoint from both
+        (
+            [
+                ([1, 2], {D0: (0, 2)}),
+                ([3, 4], {D0: (1, 3)}),
+                ([5, 6], {D0: (10, 12)}),
+            ],
+            D0,
+            None,
+            ValueError,
+        ),
+        # negative domain indices
+        (
+            [([1, 2], {D0: (-3, -1)}), ([3], {D0: (-1, 0)})],
+            D0,
+            ([1, 2, 3], {D0: (-3, 0)}),
+            None,
+        ),
+    ],
+)
+def test_concat(fields_data, dim, expected_data, expect_error):
+    fields = [
+        common._field(np.asarray(data, dtype=np.int32), domain=common.domain(domain))
+        for data, domain in fields_data
+    ]
+
+    if expect_error is not None:
+        with pytest.raises(expect_error):
+            nd_array_field._concat(*fields, dim=dim)
+    else:
+        expected_array = np.asarray(expected_data[0], dtype=np.int32)
+        expected_domain = common.domain(expected_data[1])
+
+        result = nd_array_field._concat(*fields, dim=dim)
+
+        assert result.domain == expected_domain
         np.testing.assert_allclose(result.asnumpy(), expected_array)
