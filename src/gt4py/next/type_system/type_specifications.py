@@ -73,7 +73,7 @@ class IndexType(TypeSpec):
 class OffsetType(TypeSpec):
     # TODO(havogt): replace by ConnectivityType
     source: common.Dimension
-    target: tuple[common.Dimension] | tuple[common.Dimension, common.Dimension]
+    target: tuple[common.Dimension, ...]
 
     def __str__(self) -> str:
         return f"Offset[{self.source}, {self.target}]"

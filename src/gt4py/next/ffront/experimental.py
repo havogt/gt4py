@@ -18,6 +18,14 @@ def as_offset(offset: FieldOffset, field: common.Field, /) -> common.Connectivit
     raise NotImplementedError()
 
 
+@BuiltInFunction
+def as_index(dim: common.Dimension, index_field: common.Field, /) -> common.Connectivity:
+    # Absolute-index sibling of `as_offset`: turns a field-operator-produced integer
+    # field into a connectivity that gathers along an arbitrary codomain dimension
+    # (the values are used directly as indices, not added to the current position).
+    raise NotImplementedError()
+
+
 @WhereBuiltinFunction
 def concat_where(
     domain: common.Domain,
@@ -49,4 +57,4 @@ def concat_where(
     raise NotImplementedError()
 
 
-EXPERIMENTAL_FUN_BUILTIN_NAMES = ["as_offset", "concat_where"]
+EXPERIMENTAL_FUN_BUILTIN_NAMES = ["as_offset", "as_index", "concat_where"]

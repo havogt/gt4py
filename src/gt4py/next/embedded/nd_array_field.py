@@ -920,6 +920,13 @@ def _as_offset(offset: fbuiltins.FieldOffset, offset_field: NdArrayField) -> com
 NdArrayField.register_builtin_func(experimental.as_offset, _as_offset)  # type: ignore[arg-type]
 
 
+def _as_index(dim: common.Dimension, index_field: NdArrayField) -> common.Connectivity:
+    return common._connectivity(index_field.ndarray, codomain=dim, domain=index_field.domain)
+
+
+NdArrayField.register_builtin_func(experimental.as_index, _as_index)  # type: ignore[arg-type]
+
+
 def _make_reduction(
     builtin_name: str, array_builtin_name: str, initial_value_op: Callable
 ) -> Callable[..., NdArrayField[common.DimsT, core_defs.ScalarT]]:

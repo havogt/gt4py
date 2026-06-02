@@ -918,6 +918,28 @@ class FieldOperatorTypeDeduction(traits.VisitorWithSymbolTableTrait, NodeTransla
             func=node.func, args=node.args, kwargs=node.kwargs, type=arg_0, location=node.location
         )
 
+    def _visit_as_index(self, node: foast.Call, **kwargs: Any) -> foast.Call:
+        arg_0 = node.args[0].type
+        arg_1 = node.args[1].type
+        assert isinstance(arg_0, ts.DimensionType)
+        assert isinstance(arg_1, ts.FieldType)
+        if not type_info.is_integral(arg_1):
+            raise errors.DSLError(
+                node.location,
+                f"Incompatible argument in call to '{node.func!s}': "
+                f"expected integer for index field dtype, got '{arg_1.dtype}'. "
+                f"{node.location}",
+            )
+
+        assert arg_1.dims is not ...
+        return foast.Call(
+            func=node.func,
+            args=node.args,
+            kwargs=node.kwargs,
+            type=ts.OffsetType(source=arg_0.dim, target=tuple(arg_1.dims)),
+            location=node.location,
+        )
+
     def _deduce_where_return_type(
         self,
         func_name: str,

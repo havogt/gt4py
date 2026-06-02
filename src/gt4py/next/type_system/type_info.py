@@ -658,11 +658,16 @@ def return_type_field(
     new_dims = []
     # TODO: This code does not handle ellipses for dimensions. Fix it.
     assert field_type.dims is not ...
+    # Target dims already present in the field are batch (homomorphic) dims: they index the
+    # field in place and stay where they are. The codomain is replaced only by the introduced
+    # (new) target dims. This mirrors the embedded `premap` (`_gather_output_domain`) and makes
+    # batched gathers (index sharing the field's dims) well-typed.
+    introduced = [d for d in target_dims if d not in field_type.dims]
     for d in field_type.dims:
         if d != source_dim:
             new_dims.append(d)
         else:
-            new_dims.extend(target_dims)
+            new_dims.extend(introduced)
     return ts.FieldType(dims=new_dims, dtype=field_type.dtype)
 
 
