@@ -593,7 +593,10 @@ def _gather_output_domain(
     field_domain: common.Domain, connectivities: Sequence[common.GatherConnectivity]
 ) -> common.Domain:
     """Output domain of a simultaneous gather: each codomain is replaced by the dimensions of its
-    connectivity's domain; dimensions shared with the field domain are intersected in place."""
+    connectivity's domain; dimensions shared with the field domain are intersected. The result is
+    returned in canonical order so an introduced dim of a different kind than the codomain it
+    replaced (e.g. a vertical iteration axis) lands in its canonical slot, keeping the gather output
+    a valid field domain and consistent with the frontend-deduced type."""
     domain = field_domain
     for conn in connectivities:
         cod = conn.codomain
@@ -616,7 +619,7 @@ def _gather_output_domain(
             else:
                 result.append(nr)
         domain = common.Domain(*result)
-    return domain
+    return common.Domain(*(domain[d] for d in common.order_dimensions(domain.dims)))
 
 
 def _gather_premap(data: NdArrayField, *connectivities: common.GatherConnectivity) -> NdArrayField:

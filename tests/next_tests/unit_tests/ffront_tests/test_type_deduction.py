@@ -31,7 +31,7 @@ from gt4py.next import (
 )
 from gt4py.next.ffront.experimental import concat_where
 from gt4py.next.ffront.ast_passes import single_static_assign as ssa
-from gt4py.next.ffront.experimental import as_offset
+from gt4py.next.ffront.experimental import as_index, as_offset
 from gt4py.next.ffront.func_to_foast import FieldOperatorParser
 from gt4py.next.type_system import type_specifications as ts
 
@@ -290,6 +290,41 @@ def test_premap_nbfield_with_vertical(premap_setup):
 
     assert parsed.body.stmts[0].value.type == ts.FieldType(
         dims=[Y, Y2XDim, K], dtype=ts.ScalarType(kind=ts.ScalarKind.INT64)
+    )
+
+
+def test_premap_introduced_vertical_dim_canonicalized():
+    # An `as_index` gather introducing a vertical dim (K) while a local dim (B) survives: in-place
+    # codomain replacement yields the non-canonical (H, K, B); the deduced type must be canonical.
+    Src = Dimension("Src")
+    B = Dimension("B", kind=DimensionKind.LOCAL)
+    H = Dimension("H")
+    K = Dimension("K", kind=DimensionKind.VERTICAL)
+
+    def premap_fo(bar: Field[[Src, B], int64], idx: Field[[H, K], int32]) -> Field[[H, B, K], int64]:
+        return bar(as_index(Src, idx))
+
+    parsed = FieldOperatorParser.apply_to_function(premap_fo)
+
+    assert parsed.body.stmts[0].value.type == ts.FieldType(
+        dims=[H, B, K], dtype=ts.ScalarType(kind=ts.ScalarKind.INT64)
+    )
+
+
+def test_premap_same_dim_connectivity_keeps_source():
+    # A same-dim connectivity (V2V shape: source == primary target dim) keeps the source dim as the
+    # iteration axis and adds the local neighbor dim: a(V2V) over [V] -> [V, V2VDim].
+    V = Dimension("V")
+    V2VDim = Dimension("V2V", kind=DimensionKind.LOCAL)
+    V2V = FieldOffset("V2V", source=V, target=(V, V2VDim))
+
+    def premap_fo(bar: Field[[V], int64]) -> Field[[V, V2VDim], int64]:
+        return bar(V2V)
+
+    parsed = FieldOperatorParser.apply_to_function(premap_fo)
+
+    assert parsed.body.stmts[0].value.type == ts.FieldType(
+        dims=[V, V2VDim], dtype=ts.ScalarType(kind=ts.ScalarKind.INT64)
     )
 
 
