@@ -126,6 +126,37 @@ def test_generic_tuple_return(cartesian_case):
         assert out[0].asnumpy().dtype == dtype
 
 
+def test_generic_operator_called_in_program(cartesian_case):
+    @gtx.field_operator
+    def diff(
+        a: gtx.Field[gtx.Dims[IDim], FloatT], b: gtx.Field[gtx.Dims[IDim], FloatT]
+    ) -> gtx.Field[gtx.Dims[IDim], FloatT]:
+        return a - b
+
+    @gtx.program
+    def diff_program(
+        a32: gtx.Field[gtx.Dims[IDim], gtx.float32],
+        b32: gtx.Field[gtx.Dims[IDim], gtx.float32],
+        out32: gtx.Field[gtx.Dims[IDim], gtx.float32],
+        a64: gtx.Field[gtx.Dims[IDim], gtx.float64],
+        b64: gtx.Field[gtx.Dims[IDim], gtx.float64],
+        out64: gtx.Field[gtx.Dims[IDim], gtx.float64],
+    ):
+        # the same generic operator is instantiated at two dtypes in one program
+        diff(a32, b32, out=out32)
+        diff(a64, b64, out=out64)
+
+    a32, b32, out32 = _allocate_diff_args(cartesian_case, np.float32)
+    a64, b64, out64 = _allocate_diff_args(cartesian_case, np.float64)
+
+    cases.run(cartesian_case, diff_program, a32, b32, out32, a64, b64, out64)
+
+    assert out32.asnumpy().dtype == np.float32
+    assert np.allclose(out32.asnumpy(), a32.asnumpy() - b32.asnumpy())
+    assert out64.asnumpy().dtype == np.float64
+    assert np.allclose(out64.asnumpy(), a64.asnumpy() - b64.asnumpy())
+
+
 def test_generic_math_builtin(cartesian_case):
     @gtx.field_operator
     def generic_sin(a: gtx.Field[gtx.Dims[IDim], FloatT]) -> gtx.Field[gtx.Dims[IDim], FloatT]:

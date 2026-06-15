@@ -44,6 +44,7 @@ from gt4py.next.ffront import (
     type_info as ffront_type_info,
     type_specifications as ts_ffront,
 )
+from gt4py.next.ffront.foast_passes.specialize_type_vars import specialize_and_rename
 from gt4py.next.ffront.gtcallable import GTCallable
 from gt4py.next.instrumentation import hook_machinery, metrics
 from gt4py.next.iterator import ir as itir
@@ -642,6 +643,19 @@ class FieldOperator(_CompilableGTEntryPointMixin[ffront_stages.DSLFieldOperatorD
 
     def __gt_closure_vars__(self) -> dict[str, Any]:
         return self.foast_stage.closure_vars
+
+    def __gt_specialize__(self, binding: dict[str, ts.ScalarType], name: str) -> GTCallable:
+        # local import to avoid a module import cycle (foast_to_past imports decorator transitively)
+        from gt4py.next.ffront import foast_to_past
+
+        renamed = specialize_and_rename(self.foast_stage.foast_node, binding, name)
+        new_stage = dataclasses.replace(self.foast_stage, foast_node=renamed)
+        return foast_to_past.ItirShim(
+            definition=toolchain.ConcreteArtifact(
+                data=new_stage, args=arguments.CompileTimeArgs.empty()
+            ),
+            foast_to_itir=foast_to_gtir.adapted_foast_to_gtir_factory(),
+        )
 
     def __call__(self, *args: Any, enable_jit: bool | None = None, **kwargs: Any) -> Any:
         if not next_embedded.context.within_valid_context() and self.backend is not None:

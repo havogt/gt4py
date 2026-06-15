@@ -238,3 +238,45 @@ def test_invalid_call_sig_program(invalid_call_sig_program_def):
         re.search(r"Missing required keyword argument 'out'", exc_info.value.__cause__.args[0])
         is not None
     )
+
+
+def test_generic_operator_monomorphized_per_binding():
+    """A generic operator called at two dtypes in one program lowers to two function defs."""
+    import typing
+
+    from gt4py.next.ffront.past_to_itir import past_to_gtir
+    from gt4py.next.otf import arguments, toolchain
+
+    FloatT = typing.TypeVar("FloatT", gtx.float32, gtx.float64)
+
+    @gtx.field_operator
+    def diff(
+        a: gtx.Field[gtx.Dims[IDim], FloatT], b: gtx.Field[gtx.Dims[IDim], FloatT]
+    ) -> gtx.Field[gtx.Dims[IDim], FloatT]:
+        return a - b
+
+    @gtx.program
+    def prog(
+        a32: gtx.Field[gtx.Dims[IDim], gtx.float32],
+        b32: gtx.Field[gtx.Dims[IDim], gtx.float32],
+        o32: gtx.Field[gtx.Dims[IDim], gtx.float32],
+        a64: gtx.Field[gtx.Dims[IDim], gtx.float64],
+        b64: gtx.Field[gtx.Dims[IDim], gtx.float64],
+        o64: gtx.Field[gtx.Dims[IDim], gtx.float64],
+    ):
+        diff(a32, b32, out=o32)
+        diff(a64, b64, out=o64)
+
+    compile_time_args = arguments.CompileTimeArgs(
+        args=tuple(param.type for param in prog.past_stage.past_node.params),
+        kwargs={},
+        offset_provider={"I": IDim},
+        column_axis=None,
+        argument_descriptor_contexts={},
+    )
+    lowered = past_to_gtir(toolchain.ConcreteArtifact(prog.past_stage, compile_time_args))
+
+    fundef_ids = sorted(str(fundef.id) for fundef in lowered.data.function_definitions)
+    assert len(fundef_ids) == 2
+    assert all(fid.startswith("diff__") for fid in fundef_ids)
+    assert fundef_ids[0] != fundef_ids[1]

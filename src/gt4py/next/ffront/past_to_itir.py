@@ -25,6 +25,7 @@ from gt4py.next.ffront import (
     type_info as ffront_ti,
     type_specifications as ts_ffront,
 )
+from gt4py.next.ffront.past_passes.monomorphize_generic_calls import monomorphize_generic_calls
 from gt4py.next.ffront.stages import ConcretePASTProgramDef
 from gt4py.next.iterator import ir as itir
 from gt4py.next.iterator.ir_utils import ir_makers as im
@@ -72,7 +73,11 @@ def past_to_gtir(inp: ConcretePASTProgramDef) -> definitions.CompilableProgramDe
         >>> print(type(itir_copy.data))
         <class 'gt4py.next.iterator.ir.Program'>
     """
-    all_closure_vars = transform_utils._get_closure_vars_recursively(inp.data.closure_vars)
+    # monomorphize calls to dtype-generic operators: bind type variables per call site,
+    # name-mangle the callee, and replace it by a concrete specialization in the closure vars
+    past_node, closure_vars = monomorphize_generic_calls(inp.data.past_node, inp.data.closure_vars)
+
+    all_closure_vars = transform_utils._get_closure_vars_recursively(closure_vars)
     offsets_and_dimensions = transform_utils._filter_closure_vars_by_type(
         all_closure_vars, fbuiltins.FieldOffset, common.Dimension
     )
@@ -94,7 +99,7 @@ def past_to_gtir(inp: ConcretePASTProgramDef) -> definitions.CompilableProgramDe
         lowered_funcs.append(gt_callable.__gt_gtir__())
 
     itir_program = ProgramLowering.apply(
-        inp.data.past_node, function_definitions=lowered_funcs, grid_type=grid_type
+        past_node, function_definitions=lowered_funcs, grid_type=grid_type
     )
 
     # TODO(tehrengruber): Put this in a dedicated transformation step.

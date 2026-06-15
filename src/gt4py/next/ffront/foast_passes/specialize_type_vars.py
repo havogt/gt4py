@@ -8,12 +8,28 @@
 
 from typing import Any, Mapping, TypeVar
 
-from gt4py.eve import NodeTranslator
+from gt4py.eve import NodeTranslator, datamodels
 from gt4py.next.ffront import field_operator_ast as foast, type_specifications as ts_ffront
 from gt4py.next.type_system import type_info, type_specifications as ts
 
 
 _NodeT = TypeVar("_NodeT", bound=foast.LocatedNode)
+_OperatorNodeT = TypeVar("_OperatorNodeT", bound=foast.OperatorNode)
+
+
+def specialize_and_rename(
+    node: _OperatorNodeT, binding: Mapping[str, ts.ScalarType], name: str
+) -> _OperatorNodeT:
+    """Specialize a generic operator's FOAST tree and rename it (for monomorphization).
+
+    The rename gives each per-binding variant a distinct identity so that the lowering
+    produces one ``itir.FunctionDefinition`` per variant.
+    """
+    specialized = SpecializeTypeVars.apply(node, binding)
+    if isinstance(specialized, (foast.FieldOperator, foast.ScanOperator)):
+        new_definition = datamodels.evolve(specialized.definition, id=name)
+        return datamodels.evolve(specialized, id=name, definition=new_definition)
+    return datamodels.evolve(specialized, id=name)
 
 
 class SpecializeTypeVars(NodeTranslator):
