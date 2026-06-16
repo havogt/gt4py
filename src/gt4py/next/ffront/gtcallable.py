@@ -32,6 +32,18 @@ class GTCallable(typing.Protocol):
         """
         return None
 
+    def __gt_specialize__(self, binding: dict[str, ts.ScalarType], name: str) -> "GTCallable":
+        """
+        Return a concrete (monomorphic) copy of a generic callable, named ``name``.
+
+        Only meaningful for generic callables (e.g. dtype-generic field operators); the
+        type variables of the signature are substituted according to ``binding``. Used by
+        the program lowering to produce one variant per call-site binding.
+        """
+        raise NotImplementedError(
+            f"'{type(self).__name__}' does not support specialization of generic operators."
+        )
+
     @abc.abstractmethod
     def __gt_type__(self) -> ts.CallableType:
         """

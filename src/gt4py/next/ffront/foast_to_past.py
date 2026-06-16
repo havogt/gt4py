@@ -17,6 +17,7 @@ from gt4py.next.ffront import (
     type_info as ffront_type_info,
     type_specifications as ts_ffront,
 )
+from gt4py.next.ffront.foast_passes.specialize_type_vars import specialize_and_rename
 from gt4py.next.ffront.past_passes import closure_var_type_deduction, type_deduction
 from gt4py.next.ffront.stages import ConcreteFOASTOperatorDef, ConcretePASTProgramDef
 from gt4py.next.iterator import ir as itir
@@ -38,6 +39,14 @@ class ItirShim:
 
     def __gt_closure_vars__(self) -> Optional[dict[str, Any]]:
         return self.definition.data.closure_vars
+
+    def __gt_specialize__(self, binding: dict[str, ts.ScalarType], name: str) -> "ItirShim":
+        renamed = specialize_and_rename(self.definition.data.foast_node, binding, name)
+        new_data = dataclasses.replace(self.definition.data, foast_node=renamed)
+        return ItirShim(
+            definition=dataclasses.replace(self.definition, data=new_data),
+            foast_to_itir=self.foast_to_itir,
+        )
 
     def __gt_type__(self) -> ts.CallableType:
         assert isinstance(self.definition.data.foast_node.type, ts.CallableType)

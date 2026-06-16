@@ -81,6 +81,48 @@ def promote_zero_dims(
     return tuple(new_args), new_kwargs
 
 
+def bind_fieldop_type_vars(
+    fieldop_type: ts_ffront.FieldOperatorType,
+    args: Sequence[ts.TypeSpec],
+    kwargs: dict[str, ts.TypeSpec],
+) -> dict[str, ts.ScalarType]:
+    """Bind the type variables of a generic field operator from concrete call arguments.
+
+    Mirrors the argument alignment of `promote_zero_dims`: after canonicalization the
+    positional arguments line up with the positional parameters and the remaining keyword
+    arguments with the keyword-only parameters.
+    """
+    definition = fieldop_type.definition
+    cargs, ckwargs = type_info.canonicalize_arguments(
+        fieldop_type, args, kwargs, ignore_errors=True
+    )
+    param_types: list[ts.TypeSpec] = [
+        *definition.pos_only_args,
+        *definition.pos_or_kw_args.values(),
+    ]
+    arg_types: list[ts.TypeSpec] = list(cargs)
+    for name, arg_type in ckwargs.items():
+        if name in definition.kw_only_args:
+            param_types.append(definition.kw_only_args[name])
+            arg_types.append(arg_type)
+    return type_info.bind_type_vars(param_types, arg_types)
+
+
+def _specialized_fieldop_definition(
+    fieldop_type: ts_ffront.FieldOperatorType,
+    args: Sequence[ts.TypeSpec],
+    kwargs: dict[str, ts.TypeSpec],
+) -> ts.FunctionType:
+    """Substitute the field operator's type variables from the call arguments (no-op if concrete)."""
+    definition = fieldop_type.definition
+    if not type_info.is_generic(definition):
+        return definition
+    binding = bind_fieldop_type_vars(fieldop_type, args, kwargs)
+    specialized = type_info.substitute_type_vars(definition, binding)
+    assert isinstance(specialized, ts.FunctionType)
+    return specialized
+
+
 @type_info.return_type.register
 def return_type_fieldop(
     fieldop_type: ts_ffront.FieldOperatorType,
@@ -88,9 +130,8 @@ def return_type_fieldop(
     with_args: list[ts.TypeSpec],
     with_kwargs: dict[str, ts.TypeSpec],
 ) -> ts.TypeSpec:
-    ret_type = type_info.return_type(
-        fieldop_type.definition, with_args=with_args, with_kwargs=with_kwargs
-    )
+    definition = _specialized_fieldop_definition(fieldop_type, with_args, with_kwargs)
+    ret_type = type_info.return_type(definition, with_args=with_args, with_kwargs=with_kwargs)
     return ret_type
 
 
@@ -134,22 +175,28 @@ def function_signature_incompatibilities_fieldop(
     args: Sequence[ts.TypeSpec],
     kwargs: dict[str, ts.TypeSpec],
 ) -> Iterator[str]:
-    args, kwargs = type_info.canonicalize_arguments(
-        fieldop_type.definition, args, kwargs, ignore_errors=True
-    )
+    if type_info.is_generic(fieldop_type.definition):
+        try:
+            definition = _specialized_fieldop_definition(fieldop_type, args, kwargs)
+        except ValueError as err:
+            # inconsistent / out-of-constraint type variable binding
+            yield str(err)
+            return
+    else:
+        definition = fieldop_type.definition
+
+    args, kwargs = type_info.canonicalize_arguments(definition, args, kwargs, ignore_errors=True)
 
     error_list = list(
-        type_info.structural_function_signature_incompatibilities(
-            fieldop_type.definition, args, kwargs
-        )
+        type_info.structural_function_signature_incompatibilities(definition, args, kwargs)
     )
     if len(error_list) > 0:
         yield from error_list
         return
 
-    new_args, new_kwargs = promote_zero_dims(fieldop_type.definition, args, kwargs)
+    new_args, new_kwargs = promote_zero_dims(definition, args, kwargs)
     yield from type_info.function_signature_incompatibilities_func(
-        fieldop_type.definition, new_args, new_kwargs, skip_canonicalization=True
+        definition, new_args, new_kwargs, skip_canonicalization=True
     )
 
 
