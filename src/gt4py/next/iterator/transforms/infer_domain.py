@@ -97,7 +97,12 @@ def _domain_union(
     filtered_domains: list[domain_utils.SymbolicDomain] = [
         d  # type: ignore[misc]  # domain can never be unknown as these cases are filtered above
         for d in domains
+        # `NEVER` and (equivalently) empty domains are the identity element of the union and are
+        # dropped. Keeping empty domains would over-approximate the result, since the union is
+        # computed as the convex hull: e.g. the union of `[10, 10[` and `[11, 11[` would wrongly
+        # yield `[10, 11[` instead of the empty set (see issue #2205).
         if d != DomainAccessDescriptor.NEVER
+        and not (isinstance(d, domain_utils.SymbolicDomain) and d.empty())
     ]
     if len(filtered_domains) == 0:
         return DomainAccessDescriptor.NEVER
@@ -219,9 +224,25 @@ def _infer_as_fieldop(
             raise ValueError(f"Unsupported expression of type '{type(in_field)}'.")
         input_ids.append(id_)
 
-    inputs_accessed_domains: dict[str, NonTupleDomainAccess] = _extract_accessed_domains(
-        stencil, input_ids, target_domain, offset_provider, symbolic_domain_sizes
+    # An `as_fieldop` evaluated over an empty domain accesses none of its inputs. Deriving the
+    # input domains by translating the empty target domain by the stencil's shifts and unioning
+    # the results would otherwise over-approximate them (the convex-hull union of e.g. the shifted
+    # `[10, 10[` and `[11, 11[` is the non-empty `[10, 11[`; see issue #2205) and, for unstructured
+    # shifts, fail (translating over an empty connectivity slice or unioning domains over
+    # inconsistent dimensions). The (empty) domain is still kept on the node itself so that a
+    # subsequent `prune_empty_concat_where` can remove the surrounding branch.
+    target_is_empty = isinstance(target_domain, domain_utils.SymbolicDomain) and bool(
+        target_domain.empty()
     )
+    inputs_accessed_domains: dict[str, NonTupleDomainAccess]
+    if target_is_empty:
+        inputs_accessed_domains = {
+            in_field_id: DomainAccessDescriptor.NEVER for in_field_id in input_ids
+        }
+    else:
+        inputs_accessed_domains = _extract_accessed_domains(
+            stencil, input_ids, target_domain, offset_provider, symbolic_domain_sizes
+        )
 
     # Recursively infer domain of inputs and update domain arg of nested `as_fieldop`s
     accessed_domains: AccessedDomains = {}
@@ -232,7 +253,9 @@ def _infer_as_fieldop(
             inputs_accessed_domains[in_field_id],
             offset_provider=offset_provider,
             symbolic_domain_sizes=symbolic_domain_sizes,
-            allow_uninferred=allow_uninferred,
+            # In an empty domain all inputs are `NEVER`; permit the consequently never-accessed
+            # (and later pruned) nested `as_fieldop`s instead of raising on the `NEVER` domain.
+            allow_uninferred=allow_uninferred or target_is_empty,
             keep_existing_domains=keep_existing_domains,
         )
         transformed_inputs.append(transformed_input)
