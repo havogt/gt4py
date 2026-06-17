@@ -324,17 +324,26 @@ class GTFNCodegen(codegen.TemplatedGenerator):
                         f"gridtools::integral_constant<int, {block_sizes[i]}>>"
                     )
             sizes_str = ",\n".join(block_dims)
-            return f"using block_sizes_t = gridtools::meta::list<{sizes_str}>;"
+            return (
+                f"using block_sizes_t = gridtools::meta::list<{sizes_str}>;\n"
+                "using loop_block_sizes_t = gridtools::meta::list<>;"
+            )
         else:
-            # EXPERIMENT(h3): allow sweeping the unstructured thread-block shape via env.
+            # EXPERIMENT(h3/h4): sweep the unstructured thread-block shape and the
+            # per-thread loop-block (coarsening) shape via env.
             import os as _os
 
             _h = _os.environ.get("GT4PY_GTFN_BLOCK_H", "32")
             _v = _os.environ.get("GT4PY_GTFN_BLOCK_V", "8")
+            _lh = _os.environ.get("GT4PY_GTFN_LOOP_H", "1")
+            _lv = _os.environ.get("GT4PY_GTFN_LOOP_V", "1")
             return (
                 "using block_sizes_t = gridtools::meta::list<"
                 f"gridtools::meta::list<gtfn::unstructured::dim::horizontal, gridtools::integral_constant<int, {_h}>>, "
-                f"gridtools::meta::list<gtfn::unstructured::dim::vertical, gridtools::integral_constant<int, {_v}>>>;"
+                f"gridtools::meta::list<gtfn::unstructured::dim::vertical, gridtools::integral_constant<int, {_v}>>>;\n"
+                "using loop_block_sizes_t = gridtools::meta::list<"
+                f"gridtools::meta::list<gtfn::unstructured::dim::horizontal, gridtools::integral_constant<int, {_lh}>>, "
+                f"gridtools::meta::list<gtfn::unstructured::dim::vertical, gridtools::integral_constant<int, {_lv}>>>;"
             )
 
     @classmethod
