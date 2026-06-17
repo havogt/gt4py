@@ -481,7 +481,7 @@ def infer_expr(
         domain,
         fill_value=DomainAccessDescriptor.NEVER,
         # el_types already has the right structure, we only want to change domain
-        bidirectional=False if not isinstance(expr.type, ts.DeferredType) else True,
+        bidirectional=expr.type is not None and ts.is_deferred(expr.type),
     )
 
     if cpm.is_applied_as_fieldop(expr) and cpm.is_call_to(expr.fun.args[0], "scan"):
@@ -500,7 +500,7 @@ def infer_expr(
                 type_info.extract_dims(t),
                 additional_dims=a,
             )
-            if not isinstance(t, ts.DeferredType) and isinstance(d, domain_utils.SymbolicDomain)
+            if not ts.is_deferred(t) and isinstance(d, domain_utils.SymbolicDomain)
             else d
         )
     )(domain, el_types, additional_dims)

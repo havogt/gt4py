@@ -33,7 +33,7 @@ def _is_representable_as_int(s: int | str) -> bool:
 
 
 def _set_node_type(node: itir.Node, type_: ts.TypeSpec) -> None:
-    if node.type and not isinstance(type_, ts.DeferredType):
+    if node.type and not ts.is_deferred(type_):
         assert type_info.is_compatible_type(node.type, type_), (
             f"Node {node!s} already has a type {node.type} which differs from {type_}."
         )
@@ -151,7 +151,7 @@ class ObservableTypeSynthesizer(type_synthesizer.TypeSynthesizer):
     store_inferred_type_in_node: bool = False
 
     def infer_type(
-        self, return_type: ts.DataType | ts.DeferredType, *args: ts.DataType | ts.DeferredType
+        self, return_type: ts.DataType | ts.TypeVarType, *args: ts.DataType | ts.TypeVarType
     ) -> ts.FunctionType:
         return ts.FunctionType(
             pos_only_args=list(args), pos_or_kw_args={}, kw_only_args={}, returns=return_type
@@ -386,7 +386,7 @@ class ITIRTypeInference(eve.NodeTranslator):
 
         if isinstance(node, itir.Node):
             if isinstance(result, ts.TypeSpec):
-                if node.type and not isinstance(node.type, ts.DeferredType):
+                if node.type and not ts.is_deferred(node.type):
                     assert type_info.is_compatible_type(node.type, result)
                 node.type = result
             elif isinstance(result, ObservableTypeSynthesizer) or result is None:
@@ -447,15 +447,15 @@ class ITIRTypeInference(eve.NodeTranslator):
             expr_type = functools.reduce(
                 lambda tuple_type, i: (
                     tuple_type.types[i]  # type: ignore[attr-defined]  # format ensured by primitive_constituents
-                    # `ts.DeferredType` only occurs for scans returning a tuple
-                    if not isinstance(tuple_type, ts.DeferredType)
+                    # a deferred type only occurs for scans returning a tuple
+                    if not ts.is_deferred(tuple_type)
                     else ts.DeferredType(constraint=None)
                 ),
                 path,
                 node.expr.type,
             )
-            assert isinstance(target_type, (ts.FieldType, ts.DeferredType))
-            assert isinstance(expr_type, (ts.FieldType, ts.DeferredType))
+            assert isinstance(target_type, ts.FieldType) or ts.is_deferred(target_type)
+            assert isinstance(expr_type, ts.FieldType) or ts.is_deferred(expr_type)
             if isinstance(target_type, ts.FieldType) and isinstance(expr_type, ts.FieldType):
                 assert expr_type.dims == target_type.dims
                 assert target_type.dtype == expr_type.dtype
@@ -534,7 +534,7 @@ class ITIRTypeInference(eve.NodeTranslator):
             self.visit(tuple_, ctx=ctx)  # ensure tuple is typed
             assert isinstance(index_literal, itir.Literal)
             index = int(index_literal.value)
-            if isinstance(tuple_.type, ts.DeferredType):
+            if tuple_.type is not None and ts.is_deferred(tuple_.type):
                 return ts.DeferredType(constraint=None)
             assert isinstance(tuple_.type, ts.TupleType)
             return tuple_.type.types[index]

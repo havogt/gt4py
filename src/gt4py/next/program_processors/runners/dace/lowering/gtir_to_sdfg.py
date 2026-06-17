@@ -885,6 +885,8 @@ class GTIRToSDFG(eve.NodeVisitor, SDFGBuilder):
         elif isinstance(gt_type, ts.FieldType):
             if len(gt_type.dims) == 0:
                 # represent zero-dimensional fields as scalar arguments
+                # (generics are already monomorphized, so the dtype is a concrete data type)
+                assert isinstance(gt_type.dtype, ts.DataType)
                 return self._add_storage(
                     sdfg=sdfg,
                     symbolic_params=set(),  # force use of scalar data container

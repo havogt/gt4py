@@ -160,7 +160,7 @@ def fuse_as_fieldop(
         else:
             # just a safety check if typing information is available
             type_inference.reinfer(arg)
-            if arg.type and not isinstance(arg.type, ts.DeferredType):
+            if arg.type and not ts.is_deferred(arg.type):
                 assert isinstance(arg.type, ts.TypeSpec)
 
                 assert not isinstance(

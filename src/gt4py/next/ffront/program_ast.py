@@ -24,7 +24,7 @@ SymbolT = TypeVar("SymbolT", bound=ts.TypeSpec)
 
 class Symbol(eve.GenericNode, LocatedNode, Generic[SymbolT]):
     id: Coerced[SymbolName]
-    type: Union[SymbolT, ts.DeferredType]  # A003
+    type: Union[SymbolT, ts.TypeVarType]  # A003
     namespace: dialect_ast_enums.Namespace = dialect_ast_enums.Namespace(
         dialect_ast_enums.Namespace.LOCAL
     )
@@ -103,7 +103,7 @@ class Stmt(LocatedNode): ...
 
 class Program(LocatedNode, SymbolTableTrait):
     id: Coerced[SymbolName]
-    type: Union[ts_ffront.ProgramType, ts.DeferredType]  # A003
+    type: Union[ts_ffront.ProgramType, ts.TypeVarType]  # A003
     params: list[DataSymbol]
     body: list[Call]
     closure_vars: list[Symbol]

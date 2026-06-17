@@ -150,7 +150,7 @@ def _type_conversion_helper(t: type) -> type[ts.TypeSpec] | tuple[type[ts.TypeSp
         raise AssertionError("Illegal type encountered.")
 
 
-def _type_conversion(t: type) -> ts.DeferredType:
+def _type_conversion(t: type) -> ts.TypeVarType:
     return ts.DeferredType(constraint=_type_conversion_helper(t))
 
 

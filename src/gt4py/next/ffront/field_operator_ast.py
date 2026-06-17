@@ -72,7 +72,7 @@ SymbolT = TypeVar("SymbolT", bound=ts.TypeSpec)
 #
 class Symbol(LocatedNode, Generic[SymbolT]):
     id: Coerced[SymbolName]
-    type: Union[SymbolT, ts.DeferredType]  # A003
+    type: Union[SymbolT, ts.TypeVarType]  # A003
     namespace: dialect_ast_enums.Namespace = dialect_ast_enums.Namespace(
         dialect_ast_enums.Namespace.LOCAL
     )
@@ -225,13 +225,13 @@ class FunctionDefinition(LocatedNode, SymbolTableTrait):
     params: list[DataSymbol]
     body: BlockStmt
     closure_vars: list[Symbol]
-    type: Union[ts.FunctionType, ts.DeferredType] = ts.DeferredType(constraint=ts.FunctionType)
+    type: Union[ts.FunctionType, ts.TypeVarType] = ts.DeferredType(constraint=ts.FunctionType)
 
 
 class FieldOperator(LocatedNode, SymbolTableTrait):
     id: Coerced[SymbolName]
     definition: FunctionDefinition
-    type: Union[ts_ffront.FieldOperatorType, ts.DeferredType] = ts.DeferredType(
+    type: Union[ts_ffront.FieldOperatorType, ts.TypeVarType] = ts.DeferredType(
         constraint=ts_ffront.FieldOperatorType
     )
 
@@ -242,7 +242,7 @@ class ScanOperator(LocatedNode, SymbolTableTrait):
     forward: Constant
     init: Constant
     definition: FunctionDefinition  # scan pass
-    type: Union[ts_ffront.ScanOperatorType, ts.DeferredType] = ts.DeferredType(
+    type: Union[ts_ffront.ScanOperatorType, ts.TypeVarType] = ts.DeferredType(
         constraint=ts_ffront.ScanOperatorType
     )
 

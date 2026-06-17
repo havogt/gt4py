@@ -271,7 +271,9 @@ class CollapseTuple(
                     return None
 
             itir_type_inference.reinfer(first_expr)  # type is needed so reinfer on-demand
-            assert isinstance(first_expr.type, (ts.TupleType, ts.DeferredType))
+            assert first_expr.type is not None and (
+                isinstance(first_expr.type, ts.TupleType) or ts.is_deferred(first_expr.type)
+            )
             if isinstance(first_expr.type, ts.TupleType) and len(first_expr.type.types) == len(
                 node.args
             ):

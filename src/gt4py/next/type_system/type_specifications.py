@@ -38,12 +38,6 @@ class CallableType(TypeSpec):
     """
 
 
-class DeferredType(TypeSpec):
-    """Dummy used to represent a type not yet inferred."""
-
-    constraint: Optional[type[TypeSpec] | tuple[type[TypeSpec], ...]]
-
-
 class VoidType(TypeSpec):
     """
     Return type of a function without return values.
@@ -111,30 +105,80 @@ def _canonicalize_constraints(constraints: Sequence[ScalarType]) -> tuple[Scalar
     return tuple(sorted(constraints, key=lambda c: c.kind))
 
 
-class TypeVarType(DataType):
+class TypeVarType(TypeSpec):
     """
-    A scalar type variable, universally quantified over its constraints.
+    A type variable, spanning two roles unified into one representation.
 
-    Represents the type of a value-constrained Python ``typing.TypeVar`` (e.g.
-    ``TypeVar("T", float32, float64)``) used in the signature of a generic operator.
-    Two occurrences with the same ``name`` within one signature denote the same type.
+    - **Named** (``name`` is set): a universally quantified, value-constrained generic
+      parameter. Represents the type of a value-constrained Python ``typing.TypeVar``
+      (e.g. ``TypeVar("T", float32, float64)``, or the PEP 695 ``def op[T: (float32,
+      float64)]``) used in the signature of a generic operator. Identity is the ``name``,
+      scoped to one operator signature: two occurrences with the same ``name`` denote the
+      same type, and each use resolves to exactly one of ``constraints``.
+    - **Deferred / anonymous** (``name`` is ``None``): a placeholder for a type that is
+      not yet inferred. It carries no identity, and ``bound`` optionally constrains the
+      *category* of the eventual type (any subclass of the given ``TypeSpec`` class(es)),
+      or is ``None`` for no constraint at all. Build these via the :func:`DeferredType`
+      factory and test for them via :func:`is_deferred`.
+
+    Subclassing ``TypeSpec`` (rather than ``DataType``) lets a deferred type stand in for
+    non-data types as well (e.g. ``OffsetType``, ``FunctionType``, ``ProgramType``), while
+    still fitting into ``FieldType.dtype``, tuple members and ``foast.Symbol`` via the
+    explicit unions that list ``TypeVarType``.
     """
 
-    name: str
-    constraints: tuple[ScalarType, ...] = eve_datamodels.field(converter=_canonicalize_constraints)
+    name: Optional[str] = None
+    bound: Optional[type[TypeSpec] | tuple[type[TypeSpec], ...]] = None
+    constraints: tuple[ScalarType, ...] = eve_datamodels.field(
+        default=(), converter=_canonicalize_constraints
+    )
 
     def __str__(self) -> str:
-        return f"{self.name}: ({' | '.join(map(str, self.constraints))})"
+        if self.name is not None:
+            return f"{self.name}: ({' | '.join(map(str, self.constraints))})"
+        if self.bound is None:
+            return "<deferred>"
+        bound = self.bound if isinstance(self.bound, tuple) else (self.bound,)
+        return f"<deferred: {' | '.join(b.__name__ for b in bound)}>"
 
     @eve_datamodels.validator("constraints")
     def _constraints_validator(
         self, attribute: eve_datamodels.Attribute, constraints: tuple[ScalarType, ...]
     ) -> None:
-        if not constraints:
+        if self.name is not None and not constraints:
             raise ValueError(
                 f"Type variable '{self.name}' must be value-constrained, i.e. have at"
                 " least one constraint."
             )
+
+
+def DeferredType(
+    constraint: Optional[type[TypeSpec] | tuple[type[TypeSpec], ...]] = None,
+) -> TypeVarType:
+    """Construct an anonymous, not-yet-inferred type placeholder.
+
+    Thin factory over :class:`TypeVarType`: a deferred type is just a type variable
+    without identity (``name is None``) whose optional ``constraint`` bounds the category
+    of the eventual type. Kept as a named factory for readability and backwards
+    compatibility of the many construction sites.
+    """
+    return TypeVarType(name=None, bound=constraint)
+
+
+def is_deferred(type_: TypeSpec) -> xtyping.TypeGuard[TypeVarType]:
+    """Whether ``type_`` is an anonymous, not-yet-inferred placeholder (see :func:`DeferredType`)."""
+    return isinstance(type_, TypeVarType) and type_.name is None
+
+
+def is_type_var(type_: TypeSpec) -> xtyping.TypeGuard[TypeVarType]:
+    """Whether ``type_`` is a *named*, value-constrained generic type variable.
+
+    The complement of :func:`is_deferred` among ``TypeVarType`` instances: ``True`` only
+    for type variables with identity (``name is not None``), whose ``constraints`` carry
+    the value set the variable ranges over. The constraint-evaluating predicates and the
+    binding/promotion utilities apply only to these.
+    """
+    return isinstance(type_, TypeVarType) and type_.name is not None
 
 
 class ListType(DataType):
@@ -165,15 +209,15 @@ class FieldType(DataType, CallableType):
 
 
 class TupleType(DataType):
-    # TODO(tehrengruber): Remove `DeferredType` again. This was erroneously
+    # TODO(tehrengruber): Remove the deferred `TypeVarType` again. This was erroneously
     #  introduced before we checked the annotations at runtime. All attributes of
     #  a type that are types themselves must be concrete.
-    types: list[DataType | DimensionType | DeferredType]
+    types: list[DataType | DimensionType | TypeVarType]
 
     def __str__(self) -> str:
         return f"tuple[{', '.join(map(str, self.types))}]"
 
-    def __iter__(self) -> Iterator[DataType | DimensionType | DeferredType]:
+    def __iter__(self) -> Iterator[DataType | DimensionType | TypeVarType]:
         yield from self.types
 
     def __len__(self) -> int:
@@ -202,7 +246,7 @@ ANY_PYTHON_TYPE_NAME: Final[str] = "typing:Any"
 
 
 class NamedCollectionType(DataType):
-    types: list[DataType | DimensionType | DeferredType]
+    types: list[DataType | DimensionType | TypeVarType]
     keys: list[str]
     #: The original python type. It should be only used in the boundaries between
     #: Python and GT4Py DSL, that is, `type translation` and in constructor/extractor
@@ -213,7 +257,7 @@ class NamedCollectionType(DataType):
         str  # Format: '__module__:__qualname__' (as required by `pkgutil.resolve_name()`)
     )
 
-    def __getattr__(self, name: str) -> DataType | DimensionType | DeferredType:
+    def __getattr__(self, name: str) -> DataType | DimensionType | TypeVarType:
         keys = object.__getattribute__(self, "keys")
         if name in keys:
             return self.types[keys.index(name)]
@@ -222,7 +266,7 @@ class NamedCollectionType(DataType):
     def __str__(self) -> str:
         return f"NamedTuple{{{', '.join(f'{k}: {v}' for k, v in zip(self.keys, self.types))}}}"
 
-    def __iter__(self) -> Iterator[DataType | DimensionType | DeferredType]:
+    def __iter__(self) -> Iterator[DataType | DimensionType | TypeVarType]:
         # Note: Unlike `Mapping`s, we iterate the values (not the keys) by default.
         yield from self.types
 

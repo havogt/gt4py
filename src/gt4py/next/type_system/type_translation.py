@@ -233,10 +233,12 @@ def from_type_hint(
                 arg: from_type_hint_same_ns(arg_type)
                 for arg, arg_type in kwargs_info[0].data.items()
             }
-            assert all(isinstance(val, (ts.DataType, ts.DeferredType)) for val in kwargs.values())
+            assert all(
+                isinstance(val, ts.DataType) or ts.is_deferred(val) for val in kwargs.values()
+            )
 
             returns = from_type_hint_same_ns(return_type)
-            assert isinstance(returns, (ts.DataType, ts.DeferredType, ts.VoidType))
+            assert isinstance(returns, (ts.DataType, ts.VoidType)) or ts.is_deferred(returns)
 
             # TODO(tehrengruber): print better error when no return type annotation is given
             return ts.FunctionType(

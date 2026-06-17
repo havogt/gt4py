@@ -167,15 +167,12 @@ class _PrettyPrinter(TemplatedGenerator):
     def visit_FunctionDefinition(self, node: foast.FunctionDefinition, **kwargs: Any) -> str:
         params = self.visit(node.params)
         types = [
-            str(param.type) if not isinstance(param.type, ts.DeferredType) else None
-            for param in node.params
+            str(param.type) if not ts.is_deferred(param.type) else None for param in node.params
         ]
         params_annotated = [
             f"{param}: {type_}" if type_ else param for param, type_ in zip(params, types)
         ]
-        return_type = (
-            f" -> {node.type.returns}" if not isinstance(node.type, ts.DeferredType) else ""
-        )
+        return_type = f" -> {node.type.returns}" if isinstance(node.type, ts.FunctionType) else ""
         indented_body = textwrap.indent(self.visit(node.body), INDENTATION_PREFIX)
         res = self.generic_visit(
             node,

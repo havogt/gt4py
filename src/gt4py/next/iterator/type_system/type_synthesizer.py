@@ -134,9 +134,9 @@ def power(base: ts.ScalarType, exponent: ts.ScalarType) -> ts.ScalarType:
 
 @_register_builtin_type_synthesizer(fun_names=builtins.BINARY_MATH_NUMBER_BUILTINS)
 def _(lhs: ts.ScalarType, rhs: ts.ScalarType) -> ts.ScalarType:
-    if isinstance(lhs, ts.DeferredType):
+    if ts.is_deferred(lhs):
         return rhs
-    if isinstance(rhs, ts.DeferredType):
+    if ts.is_deferred(rhs):
         return lhs
     assert lhs == rhs
     return lhs
@@ -156,7 +156,7 @@ def synthesize_binary_math_comparison_builtins(
         return ts.DomainType(dims=[rhs.dim])
     if isinstance(lhs, ts.DimensionType) and isinstance(rhs, ts.ScalarType):
         return ts.DomainType(dims=[lhs.dim])
-    assert all(isinstance(lhs, (ts.ScalarType, ts.DeferredType)) for arg in (lhs, rhs))
+    assert all(isinstance(lhs, ts.ScalarType) or ts.is_deferred(lhs) for arg in (lhs, rhs))
     return ts.ScalarType(kind=ts.ScalarKind.BOOL)
 
 
@@ -175,8 +175,8 @@ def _(lhs, rhs) -> ts.ScalarType | ts.TupleType | ts.DomainType:
 
 
 @_register_builtin_type_synthesizer
-def deref(it: it_ts.IteratorType | ts.DeferredType) -> ts.DataType | ts.DeferredType:
-    if isinstance(it, ts.DeferredType):
+def deref(it: it_ts.IteratorType | ts.TypeVarType) -> ts.DataType | ts.TypeVarType:
+    if ts.is_deferred(it):
         return ts.DeferredType(constraint=None)
     assert isinstance(it, it_ts.IteratorType)
     assert _is_derefable_iterator_type(it)
@@ -184,8 +184,8 @@ def deref(it: it_ts.IteratorType | ts.DeferredType) -> ts.DataType | ts.Deferred
 
 
 @_register_builtin_type_synthesizer
-def can_deref(it: it_ts.IteratorType | ts.DeferredType) -> ts.ScalarType:
-    assert isinstance(it, ts.DeferredType) or isinstance(it, it_ts.IteratorType)
+def can_deref(it: it_ts.IteratorType | ts.TypeVarType) -> ts.ScalarType:
+    assert ts.is_deferred(it) or isinstance(it, it_ts.IteratorType)
     # note: We don't check if the iterator is derefable here as the iterator only needs to
     # to have a valid position. Consider a nested reduction, e.g.
     #  `reduce(plus, 0)(neighbors(V2Eₒ, (↑(λ(a) → reduce(plus, 0)(neighbors(E2Vₒ, a))))(it))`
@@ -200,7 +200,7 @@ def can_deref(it: it_ts.IteratorType | ts.DeferredType) -> ts.ScalarType:
 
 @_register_builtin_type_synthesizer
 def if_(
-    pred: ts.ScalarType | ts.DeferredType, true_branch: ts.DataType, false_branch: ts.DataType
+    pred: ts.ScalarType | ts.TypeVarType, true_branch: ts.DataType, false_branch: ts.DataType
 ) -> ts.DataType:
     if isinstance(true_branch, ts.TupleType) and isinstance(false_branch, ts.TupleType):
         return tree_map(
@@ -209,7 +209,7 @@ def if_(
         )(functools.partial(if_, pred))(true_branch, false_branch)
 
     assert not isinstance(true_branch, ts.TupleType) and not isinstance(false_branch, ts.TupleType)
-    assert isinstance(pred, ts.DeferredType) or (
+    assert ts.is_deferred(pred) or (
         isinstance(pred, ts.ScalarType) and pred.kind == ts.ScalarKind.BOOL
     )
     # TODO(tehrengruber): Enable this or a similar check. In case the true- and false-branch are
@@ -266,10 +266,10 @@ def index(arg: ts.DimensionType) -> ts.FieldType:
 @_register_builtin_type_synthesizer
 def concat_where(
     domain: ts.DomainType,
-    true_field: ts.FieldType | ts.TupleType | ts.DeferredType,
-    false_field: ts.FieldType | ts.TupleType | ts.DeferredType,
-) -> ts.FieldType | ts.TupleType | ts.DeferredType:
-    if isinstance(true_field, ts.DeferredType) or isinstance(false_field, ts.DeferredType):
+    true_field: ts.FieldType | ts.TupleType | ts.TypeVarType,
+    false_field: ts.FieldType | ts.TupleType | ts.TypeVarType,
+) -> ts.FieldType | ts.TupleType | ts.TypeVarType:
+    if ts.is_deferred(true_field) or ts.is_deferred(false_field):
         return ts.DeferredType(constraint=None)
 
     @utils.tree_map(
@@ -277,7 +277,7 @@ def concat_where(
         result_collection_constructor=lambda _, elts: ts.TupleType(types=list(elts)),
     )
     def deduce_return_type(tb: ts.FieldType | ts.ScalarType, fb: ts.FieldType | ts.ScalarType):
-        if any(isinstance(b, ts.DeferredType) for b in [tb, fb]):
+        if any(ts.is_deferred(b) for b in [tb, fb]):
             return ts.DeferredType(constraint=ts.FieldType)
 
         tb_dtype, fb_dtype = (type_info.extract_dtype(b) for b in [tb, fb])
@@ -298,9 +298,9 @@ def concat_where(
 
 @_register_builtin_type_synthesizer
 def broadcast(
-    arg: ts.FieldType | ts.ScalarType | ts.DeferredType, dims: tuple[ts.DimensionType]
-) -> ts.FieldType | ts.DeferredType:
-    if isinstance(arg, ts.DeferredType):
+    arg: ts.FieldType | ts.ScalarType | ts.TypeVarType, dims: tuple[ts.DimensionType]
+) -> ts.FieldType | ts.TypeVarType:
+    if ts.is_deferred(arg):
         return arg
 
     dims_ = [dim.dim for dim in dims]
@@ -382,7 +382,11 @@ def _convert_as_fieldop_input_to_iterator(
     Convert a field operation input into an iterator type, preserving its dimensions and data type.
     """
     input_dims = _collect_and_check_dimensions(input_)
-    element_type: ts.DataType = type_info.tree_map_type(type_info.extract_dtype)(input_)
+    # in ITIR generics are already monomorphized, so `extract_dtype` never yields a type
+    # variable here, only concrete data types
+    element_type: ts.DataType = cast(
+        ts.DataType, type_info.tree_map_type(type_info.extract_dtype)(input_)
+    )
 
     return it_ts.IteratorType(
         position_dims=domain.dims, defined_dims=input_dims, element_type=element_type
@@ -434,7 +438,11 @@ def _canonicalize_nb_fields(
             )
         case ts.FieldType():
             input_dims = _collect_and_check_dimensions(input_)
-            element_type: ts.DataType = type_info.tree_map_type(type_info.extract_dtype)(input_)
+            # in ITIR generics are already monomorphized, so `extract_dtype` never yields a
+            # type variable here, only concrete data types
+            element_type: ts.DataType = cast(
+                ts.DataType, type_info.tree_map_type(type_info.extract_dtype)(input_)
+            )
             defined_dims = []
             neighbor_dim = None
             for dim in input_dims:
@@ -531,12 +539,8 @@ def as_fieldop(
         # For each stencil parameter all locations it is `deref`ed on
         #  see :func:`gt4py.next.iterator.transforms.trace_stencil`.
         shift_sequences_per_param: list[set[tuple[itir.OffsetLiteral, ...]]] | None,
-    ) -> ts.FieldType | ts.TupleType | ts.DeferredType:
-        if any(
-            isinstance(el, ts.DeferredType)
-            for f in fields
-            for el in type_info.primitive_constituents(f)
-        ):
+    ) -> ts.FieldType | ts.TupleType | ts.TypeVarType:
+        if any(ts.is_deferred(el) for f in fields for el in type_info.primitive_constituents(f)):
             return ts.DeferredType(constraint=None)
         nonlocal domain
 
@@ -646,9 +650,9 @@ def reduce(op: TypeSynthesizer, init: ts.TypeSpec) -> TypeSynthesizer:
 def shift(*offset_literals, offset_provider_type: common.OffsetProviderType) -> TypeSynthesizer:
     @type_synthesizer
     def apply_shift(
-        it: it_ts.IteratorType | ts.DeferredType,
-    ) -> it_ts.IteratorType | ts.DeferredType:
-        if isinstance(it, ts.DeferredType):
+        it: it_ts.IteratorType | ts.TypeVarType,
+    ) -> it_ts.IteratorType | ts.TypeVarType:
+        if ts.is_deferred(it):
             return ts.DeferredType(constraint=None)
         assert isinstance(it, it_ts.IteratorType)
         if it.position_dims == "unknown":  # nothing to do here

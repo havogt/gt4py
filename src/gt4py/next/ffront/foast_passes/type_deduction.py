@@ -206,7 +206,9 @@ class FieldOperatorTypeDeduction(traits.VisitorWithSymbolTableTrait, NodeTransla
         new_body = self.visit(node.body, **kwargs)
         new_closure_vars = self.visit(node.closure_vars, **kwargs)
         return_type = deduce_stmt_return_type(new_body)
-        if not isinstance(return_type, (ts.DataType, ts.DeferredType, ts.VoidType)):
+        if return_type is None or not (
+            isinstance(return_type, (ts.DataType, ts.VoidType)) or ts.is_deferred(return_type)
+        ):
             raise errors.DSLError(
                 node.location,
                 f"Function must return 'DataType', 'DeferredType', or 'VoidType', got '{return_type}'.",
