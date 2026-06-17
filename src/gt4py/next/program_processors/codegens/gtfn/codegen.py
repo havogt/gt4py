@@ -326,7 +326,16 @@ class GTFNCodegen(codegen.TemplatedGenerator):
             sizes_str = ",\n".join(block_dims)
             return f"using block_sizes_t = gridtools::meta::list<{sizes_str}>;"
         else:
-            return "using block_sizes_t = gridtools::meta::list<gridtools::meta::list<gtfn::unstructured::dim::horizontal, gridtools::integral_constant<int, 32>>, gridtools::meta::list<gtfn::unstructured::dim::vertical, gridtools::integral_constant<int, 8>>>;"
+            # EXPERIMENT(h3): allow sweeping the unstructured thread-block shape via env.
+            import os as _os
+
+            _h = _os.environ.get("GT4PY_GTFN_BLOCK_H", "32")
+            _v = _os.environ.get("GT4PY_GTFN_BLOCK_V", "8")
+            return (
+                "using block_sizes_t = gridtools::meta::list<"
+                f"gridtools::meta::list<gtfn::unstructured::dim::horizontal, gridtools::integral_constant<int, {_h}>>, "
+                f"gridtools::meta::list<gtfn::unstructured::dim::vertical, gridtools::integral_constant<int, {_v}>>>;"
+            )
 
     @classmethod
     def apply(cls, root: Any, **kwargs: Any) -> str:
