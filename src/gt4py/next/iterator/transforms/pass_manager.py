@@ -5,6 +5,7 @@
 #
 # Please, refer to the LICENSE file in the root directory.
 # SPDX-License-Identifier: BSD-3-Clause
+import os
 import warnings
 from typing import Optional, Protocol
 
@@ -129,19 +130,24 @@ def _process_symbolic_domains_option(
     return symbolic_domain_sizes
 
 
-def _merge_same_domain_temporaries(
-    program: itir.Program, *, offset_provider_type: common.OffsetProviderType, uids: utils.IDGeneratorPool
-) -> itir.Program:
+def _merge_same_domain_temporaries(program: itir.Program) -> itir.Program:
     """Merge runs of same-domain, mutually-independent temporary `SetAt`s (whose RHS is an
-    applied `as_fieldop`) into a single tuple-valued `SetAt`. `FuseAsFieldOp` then fuses the
-    resulting `make_tuple(as_fieldop, ...)` into one `as_fieldop` (sharing common loads via
-    CSE), so they lower to a single kernel instead of one kernel per temporary."""
+    applied `as_fieldop`) into a single tuple-valued `SetAt` of the form
+    `make_tuple(t0, ...) ← make_tuple(as_fieldop_0, ...)`. A subsequent `FuseAsFieldOp` pass
+    fuses the `make_tuple(as_fieldop, ...)` into one `as_fieldop` (sharing common loads via
+    CSE), so they lower to a single kernel instead of one kernel per temporary.
+
+    Only temporaries over a statically-known iteration domain are merged: merging
+    dynamic (runtime-bound) domains yields a fused tuple-returning `as_fieldop` that
+    `FuseAsFieldOp`'s reinfer mishandles and that gtfn cannot lower. Others are left untouched."""
 
     def is_mergeable(stmt: itir.Stmt) -> bool:
         return (
             isinstance(stmt, itir.SetAt)
             and isinstance(stmt.target, itir.SymRef)
             and cpm.is_applied_as_fieldop(stmt.expr)
+            and not cpm.is_identity_as_fieldop(stmt.expr)  # not a trivial copy
+            and not symbol_ref_utils.collect_symbol_refs(stmt.domain)  # static domain only
         )
 
     stmts = program.body
@@ -166,17 +172,11 @@ def _merge_same_domain_temporaries(
                 group_targets.add(stmts[j].target.id)  # type: ignore[attr-defined]
                 j += 1
             if len(group) >= 2:
-                merged_expr = fuse_as_fieldop.FuseAsFieldOp.apply(
-                    im.make_tuple(*(g.expr for g in group)),
-                    offset_provider_type=offset_provider_type,
-                    uids=uids,
-                    allow_undeclared_symbols=True,
-                )
                 new_body.append(
                     itir.SetAt(
                         target=im.make_tuple(*(g.target for g in group)),
                         domain=dom,
-                        expr=merged_expr,
+                        expr=im.make_tuple(*(g.expr for g in group)),
                     )
                 )
                 i = j
@@ -304,12 +304,21 @@ def apply_common_transforms(
             symbolic_domain_sizes=symbolic_domain_sizes,
             uids=uids,
         )
-        # EXPERIMENT(h7): merge same-domain independent temporaries into one kernel
-        # (e.g. the 4 Green-Gauss gradient reductions → 1, sharing C2E2CO gathers).
-        ir = _merge_same_domain_temporaries(
-            ir, offset_provider_type=offset_provider_type, uids=uids
-        )
-        ir = infer(ir, inplace=True, offset_provider_type=offset_provider_type)
+        # EXPERIMENT(h7): opt-in merge of same-domain independent temporaries into one kernel
+        # (the 4 Green-Gauss gradient reductions → 1, sharing C2E2CO gathers). Env-gated: the
+        # merge is not yet robust for dynamic-domain programs (gtfn lowering rejects the fused
+        # tuple-returning as_fieldop), so it is off by default and enabled for the compile-time-
+        # domain benchmark. Eligible temps: static domain, non-identity. Best-effort: if the
+        # fusion raises, fall back to the un-merged program (separate kernels).
+        if os.environ.get("GT4PY_GTFN_MERGE_TMPS"):
+            merged = _merge_same_domain_temporaries(ir)
+            try:
+                merged = fuse_as_fieldop.FuseAsFieldOp.apply(
+                    merged, offset_provider_type=offset_provider_type, uids=uids
+                )
+                ir = infer(merged, inplace=True, offset_provider_type=offset_provider_type)
+            except Exception:
+                ir = infer(ir, inplace=True, offset_provider_type=offset_provider_type)
 
     ir = NormalizeShifts().visit(ir)
 
