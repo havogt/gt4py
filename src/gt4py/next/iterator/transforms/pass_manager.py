@@ -129,6 +129,70 @@ def _process_symbolic_domains_option(
     return symbolic_domain_sizes
 
 
+def _merge_same_domain_temporaries(
+    program: itir.Program, *, offset_provider_type: common.OffsetProviderType, uids: utils.IDGeneratorPool
+) -> itir.Program:
+    """Merge runs of same-domain, mutually-independent temporary `SetAt`s (whose RHS is an
+    applied `as_fieldop`) into a single tuple-valued `SetAt`. `FuseAsFieldOp` then fuses the
+    resulting `make_tuple(as_fieldop, ...)` into one `as_fieldop` (sharing common loads via
+    CSE), so they lower to a single kernel instead of one kernel per temporary."""
+
+    def is_mergeable(stmt: itir.Stmt) -> bool:
+        return (
+            isinstance(stmt, itir.SetAt)
+            and isinstance(stmt.target, itir.SymRef)
+            and cpm.is_applied_as_fieldop(stmt.expr)
+        )
+
+    stmts = program.body
+    new_body: list[itir.Stmt] = []
+    i = 0
+    while i < len(stmts):
+        stmt = stmts[i]
+        if is_mergeable(stmt):
+            dom = stmt.domain
+            group = [stmt]
+            group_targets = {stmt.target.id}  # type: ignore[attr-defined]
+            j = i + 1
+            while (
+                j < len(stmts)
+                and is_mergeable(stmts[j])
+                and stmts[j].domain == dom
+                and not (
+                    set(symbol_ref_utils.collect_symbol_refs(stmts[j].expr)) & group_targets
+                )
+            ):
+                group.append(stmts[j])
+                group_targets.add(stmts[j].target.id)  # type: ignore[attr-defined]
+                j += 1
+            if len(group) >= 2:
+                merged_expr = fuse_as_fieldop.FuseAsFieldOp.apply(
+                    im.make_tuple(*(g.expr for g in group)),
+                    offset_provider_type=offset_provider_type,
+                    uids=uids,
+                    allow_undeclared_symbols=True,
+                )
+                new_body.append(
+                    itir.SetAt(
+                        target=im.make_tuple(*(g.target for g in group)),
+                        domain=dom,
+                        expr=merged_expr,
+                    )
+                )
+                i = j
+                continue
+        new_body.append(stmt)
+        i += 1
+
+    return itir.Program(
+        id=program.id,
+        function_definitions=program.function_definitions,
+        params=program.params,
+        declarations=program.declarations,
+        body=new_body,
+    )
+
+
 # TODO(tehrengruber): Revisit interface to configure temporary extraction. We currently forward
 #  `extract_temporaries` and `temporary_extraction_heuristics` which is inconvenient.
 def apply_common_transforms(
@@ -240,6 +304,18 @@ def apply_common_transforms(
             symbolic_domain_sizes=symbolic_domain_sizes,
             uids=uids,
         )
+        import os as _os
+
+        if _os.environ.get("GT4PY_DUMP_POSTGTMP"):
+            with open(_os.environ["GT4PY_DUMP_POSTGTMP"], "w") as _f:
+                _f.write(str(ir))
+
+        # EXPERIMENT(h7): merge same-domain independent temporaries into one kernel
+        # (e.g. the 4 Green-Gauss gradient reductions → 1, sharing C2E2CO gathers).
+        ir = _merge_same_domain_temporaries(
+            ir, offset_provider_type=offset_provider_type, uids=uids
+        )
+        ir = infer(ir, inplace=True, offset_provider_type=offset_provider_type)
 
     ir = NormalizeShifts().visit(ir)
 
