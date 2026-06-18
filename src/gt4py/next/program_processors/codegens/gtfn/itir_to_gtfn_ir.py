@@ -837,43 +837,59 @@ class GTFN_lowering(eve.NodeTranslator, eve.VisitorWithSymbolTableTrait):
                 return s
             return {sym for inp in e.inputs for sym in _symref_ids(inp)}
 
+        _dbg = os.environ.get("GT4PY_POSTSCAN_FOLD_DEBUG")
+
+        def reject(why: str) -> None:
+            if _dbg:
+                print(f"[postscan_fold] reject: {why}")
+
         def try_fold(scan_exec: ScanExecution, sten: StencilExecution, idx: int) -> Optional[ScanExecution]:
-            if len(scan_exec.scans) != 1:
-                return None
-            scan = scan_exec.scans[0]
-            if scan.tail is not None:
-                return None
-            if scan_forward.get(scan.function.id) is not False:  # backward scan only
-                return None
-            scan_out = scan_exec.args[scan.output]
-            if not isinstance(scan_out, SymRef):
-                return None
-            T = scan_out.id
-            # The temp must be a producer-only temp here: not a program param, written by no other
-            # execution, and read by no execution other than this consumer.
+            # Find the single backward scan in this (possibly fwd+bwd merged) kernel whose output
+            # temp is consumed only by `sten`. Other substages (e.g. the forward sweep) are kept.
+            bwd_candidates = [
+                k
+                for k, sc in enumerate(scan_exec.scans)
+                if sc.tail is None and scan_forward.get(sc.function.id) is False
+            ]
+            target = None
+            for k in bwd_candidates:
+                out_arg = scan_exec.args[scan_exec.scans[k].output]
+                if isinstance(out_arg, SymRef):
+                    target = k
+                    break
+            if target is None:
+                return reject("no backward substage with a SymRef output temp")
+            scan = scan_exec.scans[target]
+            T = scan_exec.args[scan.output].id
+            # Temp must be a producer-only temp: written by no other execution, read by no execution
+            # other than this consumer (and not read by another substage of this kernel).
             if any(T in out_syms(e) for e in executions if e is not scan_exec):
-                return None
+                return reject(f"{T} written elsewhere")
             if any(T in in_syms(e) for e in executions if e is not sten):
-                return None
+                return reject(f"{T} read by an execution other than the consumer")
+            for k, sc in enumerate(scan_exec.scans):
+                if k == target:
+                    continue
+                if any(T in _symref_ids(scan_exec.args[i]) for i in sc.inputs):
+                    return reject(f"{T} read by sibling substage {sc.function.id}")
             # Consumer must be a plain field-op referencing an extracted function, cell-local.
             if not isinstance(sten.stencil, SymRef) or sten.stencil.id not in fun_by_id:
-                return None
+                return reject("consumer is not an extracted field-op")
             fun = fun_by_id[sten.stencil.id]
             if self._has_connectivity_offset(fun.expr):
-                return None
-            # Map the consumer's params to its SID inputs positionally; find the one bound to T.
+                return reject("consumer has a connectivity (horizontal) shift")
             if len(fun.params) != len(sten.inputs):
-                return None
+                return reject("consumer param/input count mismatch")
             t_positions = [
                 j for j, inp in enumerate(sten.inputs) if isinstance(inp, SymRef) and inp.id == T
             ]
             if len(t_positions) != 1:
-                return None
+                return reject(f"{T} appears {len(t_positions)} times among consumer inputs")
             t_pos = t_positions[0]
             t_param = fun.params[t_pos].id
             # Single-output consumer only (milestone 1).
             if not isinstance(sten.output, SymRef):
-                return None
+                return reject("consumer is multi-output")
 
             res_name, acc_name, surf_name = (
                 f"{t_param}__res",
@@ -883,10 +899,24 @@ class GTFN_lowering(eve.NodeTranslator, eve.VisitorWithSymbolTableTrait):
             rewriter = _ScanOutputRewriter(sym=t_param, res=res_name, acc=acc_name)
             new_expr = rewriter.visit(fun.expr)
             if not rewriter.ok:
-                return None
+                return reject(f"{t_param} accessed in an unfoldable way (not deref/Koff[1])")
 
-            # Build the merged composite: scan body inputs + the consumer's other (lifted) inputs +
-            # the consumer's output. The dropped scan-output SID does not appear.
+            scan_b = _domain_k_bounds(scan_exec.backend.domain, scan_exec.axis)
+            cons_b = _domain_k_bounds(sten.backend.domain, scan_exec.axis)
+            if scan_b is None or cons_b is None:
+                return None
+            top_trim = _static_diff(scan_b[1], cons_b[1])  # scan_stop - cons_stop
+            bot_trim = _static_diff(cons_b[0], scan_b[0])  # cons_start - scan_start
+            if top_trim is None or bot_trim is None or top_trim < 0 or bot_trim < 0:
+                return reject(f"K-trim not a static non-negative int (top={top_trim}, bot={bot_trim})")
+            # In a merged kernel the substages already carry per-substage trims relative to the
+            # kernel's union column; the consumer's trim must be expressed on top of the bwd
+            # substage's own range, so add the substage trims.
+            top_trim += scan.top_trim
+            bot_trim += scan.bot_trim
+
+            # Rebuild the kernel's composite, keeping all substages' args and adding the consumer's
+            # lifted inputs + its output; the dropped scan-output SID is omitted.
             new_args: list[Expr] = []
 
             def arg_index(a: Expr) -> int:
@@ -895,6 +925,22 @@ class GTFN_lowering(eve.NodeTranslator, eve.VisitorWithSymbolTableTrait):
                         return k
                 new_args.append(a)
                 return len(new_args) - 1
+
+            new_scans: list[Scan] = []
+            for k, sc in enumerate(scan_exec.scans):
+                if k == target:
+                    new_scans.append(sc)  # placeholder, replaced below
+                    continue
+                new_scans.append(
+                    Scan(
+                        function=sc.function,
+                        output=arg_index(scan_exec.args[sc.output]),
+                        inputs=[arg_index(scan_exec.args[i]) for i in sc.inputs],
+                        init=sc.init,
+                        top_trim=sc.top_trim,
+                        bot_trim=sc.bot_trim,
+                    )
+                )
 
             scan_in_idx = [arg_index(scan_exec.args[i]) for i in scan.inputs]
             lifted: list[tuple[Sym, int]] = []
@@ -905,38 +951,27 @@ class GTFN_lowering(eve.NodeTranslator, eve.VisitorWithSymbolTableTrait):
             out_idx = arg_index(sten.output)
 
             tail_id = next(self.uids["_tail"])
-            tail_def = ScanTailDefinition(
-                id=tail_id,
-                res=Sym(id=res_name),
-                acc=Sym(id=acc_name),
-                surface=Sym(id=surf_name),
-                input_params=lifted,
-                outputs=[(out_idx, new_expr)],
+            extracted_functions.append(
+                ScanTailDefinition(
+                    id=tail_id,
+                    res=Sym(id=res_name),
+                    acc=Sym(id=acc_name),
+                    surface=Sym(id=surf_name),
+                    input_params=lifted,
+                    outputs=[(out_idx, new_expr)],
+                )
             )
-            extracted_functions.append(tail_def)
 
-            # Tail writes only where the consumer's domain is defined; for a backward scan the
-            # column-top (K = N-1) level computes acc = scan-result(K+1) which is the seed, so the
-            # consumer that reads acc must exclude it -> top_trim from the K-range difference. The
-            # absolute K bounds are runtime (get_domain_range), but their *difference* must be a
-            # static int (the dynamic parts cancel) or we can't pick a fixed trim.
-            scan_b = _domain_k_bounds(scan_exec.backend.domain, scan_exec.axis)
-            cons_b = _domain_k_bounds(sten.backend.domain, scan_exec.axis)
-            if scan_b is None or cons_b is None:
-                return None
-            top_trim = _static_diff(scan_b[1], cons_b[1])  # scan_stop - cons_stop
-            bot_trim = _static_diff(cons_b[0], scan_b[0])  # cons_start - scan_start
-            if top_trim is None or bot_trim is None or top_trim < 0 or bot_trim < 0:
-                return None
-
-            new_scan = Scan(
+            new_scans[target] = Scan(
                 function=scan.function,
-                output=scan.output,  # kept for layout but unused by scan_with_tail
+                output=scan.output,  # unused by scan_with_tail
                 inputs=scan_in_idx,
                 init=scan.init,
+                top_trim=scan.top_trim,
+                bot_trim=scan.bot_trim,
                 tail=ScanTail(
                     definition=SymRef(id=tail_id),
-                    inputs=[idx for _, idx in lifted],
+                    inputs=[i for _, i in lifted],
                     top_trim=top_trim,
                     bot_trim=bot_trim,
                 ),
@@ -944,9 +979,10 @@ class GTFN_lowering(eve.NodeTranslator, eve.VisitorWithSymbolTableTrait):
             dropped.add(T)
             return ScanExecution(
                 backend=Backend(domain=scan_exec.backend.domain),
-                scans=[new_scan],
+                scans=new_scans,
                 args=new_args,
                 axis=scan_exec.axis,
+                merged_kernel=scan_exec.merged_kernel,
             )
 
         res: list[Union[StencilExecution, ScanExecution]] = []

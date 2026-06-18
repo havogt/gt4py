@@ -215,27 +215,33 @@ class GTFNCodegen(codegen.TemplatedGenerator):
         backend = self.visit(node.backend, **kwargs)
         axis = self.visit(node.axis, **kwargs)
         args = "".join(f".arg({self.visit(a, **kwargs)})" for a in node.args)
-        if len(node.scans) == 1 and node.scans[0].tail is not None:
-            # Folded post-scan consumer: scan_with_tail_raw carries the scan struct, the Tail
-            # struct (template on AO), the tail-write trims and the scan's *body* input indices
-            # (the Ins). The tail's own inputs/outputs are baked into the Tail struct.
-            s = node.scans[0]
+        def scan_with_tail_raw(s: gtfn_ir.Scan) -> str:
+            # scan_with_tail_raw carries the scan struct, the Tail struct (template on AO), the
+            # tail-write trims and the scan's *body* input indices (the Ins). The tail's own
+            # inputs/outputs are baked into the Tail struct.
             t = s.tail
             ins = "".join(f", {i}" for i in s.inputs)
-            raw = (
+            return (
                 f"gtfn::scan_with_tail_raw<{self.visit(s.function, **kwargs)}, "
                 f"{self.visit(t.definition, **kwargs)}, {t.top_trim}, {t.bot_trim}{ins}>{{}}"
             )
+
+        if not node.merged_kernel and len(node.scans) == 1 and node.scans[0].tail is not None:
+            # Folded post-scan consumer of a standalone backward scan.
+            s = node.scans[0]
             return (
                 f"{backend}.vertical_executor({axis})(){args}"
-                f".assign_scan_with_tail({raw}, {self.visit(s.init, **kwargs)}).execute();"
+                f".assign_scan_with_tail({scan_with_tail_raw(s)}, {self.visit(s.init, **kwargs)}).execute();"
             )
         if node.merged_kernel:
-            # one fused kernel: each scan struct (e.g. _scan_0, carrying its fwd/bwd base and
-            # body) is the ScanOrFold of a scan_substage_raw; inits become the per-stage seeds.
+            # one fused kernel: each scan struct (e.g. _scan_0, carrying its fwd/bwd base and body)
+            # is the ScanOrFold of a scan_substage_raw; inits become the per-stage seeds. A substage
+            # with a folded post-scan consumer is emitted as a scan_with_tail_raw instead.
             seeds = ", ".join(self.visit(s.init, **kwargs) for s in node.scans)
             substages = ", ".join(
-                "gtfn::scan_substage_raw<{fn}, {tt}, {bt}, {out}{ins}>{{}}".format(
+                scan_with_tail_raw(s)
+                if s.tail is not None
+                else "gtfn::scan_substage_raw<{fn}, {tt}, {bt}, {out}{ins}>{{}}".format(
                     fn=self.visit(s.function, **kwargs),
                     tt=s.top_trim,
                     bt=s.bot_trim,
