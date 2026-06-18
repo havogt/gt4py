@@ -304,12 +304,6 @@ def apply_common_transforms(
             symbolic_domain_sizes=symbolic_domain_sizes,
             uids=uids,
         )
-        import os as _os
-
-        if _os.environ.get("GT4PY_DUMP_POSTGTMP"):
-            with open(_os.environ["GT4PY_DUMP_POSTGTMP"], "w") as _f:
-                _f.write(str(ir))
-
         # EXPERIMENT(h7): merge same-domain independent temporaries into one kernel
         # (e.g. the 4 Green-Gauss gradient reductions → 1, sharing C2E2CO gathers).
         ir = _merge_same_domain_temporaries(
