@@ -699,6 +699,15 @@ class GTFN_lowering(eve.NodeTranslator, eve.VisitorWithSymbolTableTrait):
             false_branch=self.visit(node.false_branch, **kwargs),
         )
 
+    def _stencil_has_vertical_shift(self, stencil: itir.Node) -> bool:
+        for o in self._collect_offset_or_axis_node(itir.OffsetLiteral, stencil):
+            if o in self.offset_provider_type and isinstance(
+                common.get_offset_type(self.offset_provider_type, o), common.Dimension
+            ):
+                # in unstructured a Dimension-typed offset is the vertical (Koff) dimension
+                return True
+        return False
+
     def visit_SetAt(
         self, node: itir.SetAt, *, extracted_functions: list, **kwargs: Any
     ) -> Union[StencilExecution, ScanExecution]:
@@ -735,7 +744,12 @@ class GTFN_lowering(eve.NodeTranslator, eve.VisitorWithSymbolTableTrait):
 
             lowered_inputs.append(lowered_input_as_sid)
 
-        backend = Backend(domain=self.visit(domain, stencil=stencil, **kwargs))
+        backend_domain = self.visit(domain, stencil=stencil, **kwargs)
+        # K-coarsening (loop-block) only pays off for kernels with a vertical (Koff) shift —
+        # cell-local kernels gain nothing and only lose occupancy to the extra registers, and
+        # scans are themselves the K-loop. So mark only vertical-shift stencils as loop-blocked.
+        loop_blocked = (not _is_scan(stencil)) and self._stencil_has_vertical_shift(stencil)
+        backend = Backend(domain=backend_domain, loop_blocked=loop_blocked)
         if _is_scan(stencil):
             scan_id = next(self.uids["_scan"])
             scan_lambda = self.visit(stencil.args[0], **kwargs)

@@ -170,7 +170,9 @@ class GTFNCodegen(codegen.TemplatedGenerator):
         "[=](${','.join('auto ' + p for p in params)}){return ${expr};}"
     )  # TODO capture
 
-    Backend = as_fmt("make_backend(backend, {domain})")
+    Backend = as_mako(
+        "make_backend(${'backend' if _this_node.loop_blocked else 'backend_nlb'}, ${domain})"
+    )
 
     StencilExecution = as_mako(
         """
@@ -328,7 +330,7 @@ class GTFNCodegen(codegen.TemplatedGenerator):
     ${block_sizes}
 
     inline auto ${id} = [](auto... connectivities__){
-        return [connectivities__...](auto backend, ${','.join('auto&& ' + p for p in params)}){
+        return [connectivities__...](auto backend, auto backend_nlb, ${','.join('auto&& ' + p for p in params)}){
             auto tmp_alloc__ = gtfn::backend::tmp_allocator(backend);
             ${'\\n'.join(temporaries)}
             ${'\\n'.join(executions)}
@@ -357,7 +359,8 @@ class GTFNCodegen(codegen.TemplatedGenerator):
             sizes_str = ",\n".join(block_dims)
             return (
                 f"using block_sizes_t = gridtools::meta::list<{sizes_str}>;\n"
-                "using loop_block_sizes_t = gridtools::meta::list<>;"
+                "using loop_block_sizes_t = gridtools::meta::list<>;\n"
+                "using loop_block_sizes_none_t = gridtools::meta::list<>;"
             )
         else:
             # Unstructured GPU thread-block shape and per-thread loop-block (K-coarsening) shape.
@@ -369,7 +372,10 @@ class GTFNCodegen(codegen.TemplatedGenerator):
                 f"gridtools::meta::list<gtfn::unstructured::dim::vertical, gridtools::integral_constant<int, {tv}>>>;\n"
                 "using loop_block_sizes_t = gridtools::meta::list<"
                 f"gridtools::meta::list<gtfn::unstructured::dim::horizontal, gridtools::integral_constant<int, {lh}>>, "
-                f"gridtools::meta::list<gtfn::unstructured::dim::vertical, gridtools::integral_constant<int, {lv}>>>;"
+                f"gridtools::meta::list<gtfn::unstructured::dim::vertical, gridtools::integral_constant<int, {lv}>>>;\n"
+                "using loop_block_sizes_none_t = gridtools::meta::list<"
+                "gridtools::meta::list<gtfn::unstructured::dim::horizontal, gridtools::integral_constant<int, 1>>, "
+                "gridtools::meta::list<gtfn::unstructured::dim::vertical, gridtools::integral_constant<int, 1>>>;"
             )
 
     @classmethod

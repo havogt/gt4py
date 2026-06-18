@@ -95,6 +95,8 @@ class UnstructuredDomain(Node):
 
 class Backend(Node):
     domain: Union[SymRef, CartesianDomain, UnstructuredDomain]
+    #: per-executor K-coarsening: True → use the loop-blocked backend, False → the plain one.
+    loop_blocked: bool = False
 
 
 def _is_tuple_expr_of(pred: Callable[[Expr], bool], expr: Expr) -> bool:

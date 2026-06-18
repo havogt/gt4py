@@ -59,7 +59,9 @@ class GTFNTranslationStep(
     #: Per-thread loop-block (K-coarsening) shape (horizontal, vertical); None → no coarsening.
     loop_block_sizes: tuple[int, int] | None = None
     #: Merge same-domain independent temporaries into one kernel (see apply_common_transforms).
-    enable_tmp_merge: bool = False
+    #: On by default: the merge is robust (direct construction + safety-net fallback, never
+    #: emits unlowerable IR) and is a no-op for programs with no independent same-domain temps.
+    enable_tmp_merge: bool = True
 
     def _default_code_spec(self) -> code_specs.HeaderAndSourceCodeSpec:
         match self.device_type:
@@ -230,7 +232,8 @@ class GTFNTranslationStep(
         # combine into a format that is aligned with what the backend expects
         parameters: list[interface.Parameter] = regular_parameters + connectivity_parameters
         backend_arg = self._backend_type()
-        args_expr: list[str] = [backend_arg, *regular_args_expr]
+        backend_nlb_arg = self._backend_type_nlb()
+        args_expr: list[str] = [backend_arg, backend_nlb_arg, *regular_args_expr]
 
         function = interface.Function(program.id, tuple(parameters))
         decl_body = (
@@ -274,6 +277,17 @@ class GTFNTranslationStep(
         match self.device_type:
             case core_defs.DeviceType.CUDA | core_defs.DeviceType.ROCM:
                 return "gridtools::fn::backend::gpu<generated::block_sizes_t, generated::loop_block_sizes_t>{}"
+            case core_defs.DeviceType.CPU:
+                return "gridtools::fn::backend::naive{}"
+            case _:
+                raise self._not_implemented_for_device_type()
+
+    def _backend_type_nlb(self) -> str:
+        # No-loop-block variant: same device backend but with (1,1)/empty loop-block, for the
+        # executors that should NOT be K-coarsened (cell-local field-ops + scans).
+        match self.device_type:
+            case core_defs.DeviceType.CUDA | core_defs.DeviceType.ROCM:
+                return "gridtools::fn::backend::gpu<generated::block_sizes_t, generated::loop_block_sizes_none_t>{}"
             case core_defs.DeviceType.CPU:
                 return "gridtools::fn::backend::naive{}"
             case _:
