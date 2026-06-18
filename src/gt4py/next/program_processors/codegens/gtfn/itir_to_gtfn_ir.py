@@ -43,6 +43,7 @@ from gt4py.next.program_processors.codegens.gtfn.gtfn_ir import (
     SidComposite,
     SidFromScalar,
     StencilExecution,
+    Stmt,
     TagDefinition,
     TaggedValues,
     TemporaryAllocation,
@@ -823,19 +824,35 @@ class GTFN_lowering(eve.NodeTranslator, eve.VisitorWithSymbolTableTrait):
         # consumer is its sole reader. Count reads/writes across all executions.
         dropped: set[str] = set()
 
-        def out_syms(e: Union[StencilExecution, ScanExecution]) -> set[str]:
+        def out_syms(e: Stmt) -> set[str]:
             if isinstance(e, ScanExecution):
                 return {e.args[s.output].id for s in e.scans if isinstance(e.args[s.output], SymRef)}
-            return _symref_ids(e.output) if isinstance(e.output, (SymRef, SidComposite)) else set()
-
-        def in_syms(e: Union[StencilExecution, ScanExecution]) -> set[str]:
-            if isinstance(e, ScanExecution):
+            if isinstance(e, StencilExecution):
+                return _symref_ids(e.output) if isinstance(e.output, (SymRef, SidComposite)) else set()
+            if isinstance(e, IfStmt):
                 s: set[str] = set()
+                for b in (e.true_branch, e.false_branch):
+                    for inner in b:
+                        s |= out_syms(inner)
+                return s
+            return set()
+
+        def in_syms(e: Stmt) -> set[str]:
+            if isinstance(e, ScanExecution):
+                s = set[str]()
                 for sc in e.scans:
                     for i in sc.inputs:
                         s |= _symref_ids(e.args[i])
                 return s
-            return {sym for inp in e.inputs for sym in _symref_ids(inp)}
+            if isinstance(e, StencilExecution):
+                return {sym for inp in e.inputs for sym in _symref_ids(inp)}
+            if isinstance(e, IfStmt):
+                s = set[str]()
+                for b in (e.true_branch, e.false_branch):
+                    for inner in b:
+                        s |= in_syms(inner)
+                return s
+            return set()
 
         _dbg = os.environ.get("GT4PY_POSTSCAN_FOLD_DEBUG")
 
