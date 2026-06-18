@@ -54,6 +54,12 @@ class GTFNTranslationStep(
     device_type: core_defs.DeviceType = core_defs.DeviceType.CPU
     symbolic_domain_sizes: dict[str, itir.Expr] | None = None
     use_max_domain_range_on_unstructured_shift: bool | None = None
+    #: Unstructured GPU thread-block shape (horizontal, vertical); None → backend default.
+    thread_block_sizes: tuple[int, int] | None = None
+    #: Per-thread loop-block (K-coarsening) shape (horizontal, vertical); None → no coarsening.
+    loop_block_sizes: tuple[int, int] | None = None
+    #: Merge same-domain independent temporaries into one kernel (see apply_common_transforms).
+    enable_tmp_merge: bool = False
 
     def _default_code_spec(self) -> code_specs.HeaderAndSourceCodeSpec:
         match self.device_type:
@@ -155,6 +161,7 @@ class GTFNTranslationStep(
             offset_provider=offset_provider,
             symbolic_domain_sizes=self.symbolic_domain_sizes,
             use_max_domain_range_on_unstructured_shift=self.use_max_domain_range_on_unstructured_shift,
+            merge_tmps=self.enable_tmp_merge,
         )
 
         new_program = apply_common_transforms(
@@ -189,11 +196,15 @@ class GTFNTranslationStep(
             column_axis=column_axis,
         )
 
+        block_size_kwargs = {
+            "thread_block_sizes": self.thread_block_sizes,
+            "loop_block_sizes": self.loop_block_sizes,
+        }
         if self.use_imperative_backend:
             gtfn_im_ir = GTFN_IM_lowering().visit(node=gtfn_ir)
-            generated_code = GTFNIMCodegen.apply(gtfn_im_ir)
+            generated_code = GTFNIMCodegen.apply(gtfn_im_ir, **block_size_kwargs)
         else:
-            generated_code = GTFNCodegen.apply(gtfn_ir)
+            generated_code = GTFNCodegen.apply(gtfn_ir, **block_size_kwargs)
 
         return codegen.format_source("cpp", generated_code, style="LLVM")
 

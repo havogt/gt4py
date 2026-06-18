@@ -5,7 +5,6 @@
 #
 # Please, refer to the LICENSE file in the root directory.
 # SPDX-License-Identifier: BSD-3-Clause
-import os
 import warnings
 from typing import Optional, Protocol
 
@@ -32,7 +31,7 @@ from gt4py.next.iterator.transforms.collapse_tuple import CollapseTuple
 from gt4py.next.iterator.transforms.constant_folding import ConstantFolding
 from gt4py.next.iterator.transforms.cse import CommonSubexpressionElimination
 from gt4py.next.iterator.transforms.fuse_maps import FuseMaps
-from gt4py.next.iterator.transforms.inline_lambdas import InlineLambdas
+from gt4py.next.iterator.transforms.inline_lambdas import InlineLambdas, rename_symbols
 from gt4py.next.iterator.transforms.inline_scalar import InlineScalar
 from gt4py.next.iterator.transforms.merge_let import MergeLet
 from gt4py.next.iterator.transforms.normalize_shifts import NormalizeShifts
@@ -130,28 +129,56 @@ def _process_symbolic_domains_option(
     return symbolic_domain_sizes
 
 
-def _merge_same_domain_temporaries(program: itir.Program) -> itir.Program:
+def _merge_same_domain_temporaries(
+    program: itir.Program,
+    *,
+    offset_provider_type: common.OffsetProviderType,
+    uids: utils.IDGeneratorPool,
+) -> itir.Program:
     """Merge runs of same-domain, mutually-independent temporary `SetAt`s (whose RHS is an
-    applied `as_fieldop`) into a single tuple-valued `SetAt` of the form
-    `make_tuple(t0, ...) ← make_tuple(as_fieldop_0, ...)`. A subsequent `FuseAsFieldOp` pass
-    fuses the `make_tuple(as_fieldop, ...)` into one `as_fieldop` (sharing common loads via
-    CSE), so they lower to a single kernel instead of one kernel per temporary.
+    applied `as_fieldop`) into a single tuple-valued `SetAt` whose RHS is ONE tuple-returning
+    `as_fieldop`, sharing common loads via CSE — so they lower to a single kernel instead of one
+    kernel per temporary (e.g. the 4 Green-Gauss gradient reductions → 1, sharing C2E2CO gathers).
 
-    Only temporaries over a statically-known iteration domain are merged: merging
-    dynamic (runtime-bound) domains yields a fused tuple-returning `as_fieldop` that
-    `FuseAsFieldOp`'s reinfer mishandles and that gtfn cannot lower. Others are left untouched."""
+    The merged `as_fieldop` is constructed DIRECTLY (not via `make_tuple` + `FuseAsFieldOp`): each
+    member's sub-stencil body is remapped onto a structurally-deduplicated union of the members'
+    arguments, then combined into `λ(merged_params) → make_tuple(bodies...)`. The result is always
+    a single applied `as_fieldop` (gtfn-lowerable) regardless of (dynamic) domain. As a safety net,
+    a group that cannot be constructed this way is left unmerged."""
+
+    def build_merged(group: list[itir.Stmt]) -> Optional[itir.Expr]:
+        merged_args: list[itir.Expr] = []
+        merged_params: list[str] = []
+        bodies: list[itir.Expr] = []
+        key_to_param: dict[str, str] = {}
+        for g in group:
+            stencil = g.expr.fun.args[0]  # type: ignore[attr-defined]
+            args = g.expr.args  # type: ignore[attr-defined]
+            if not isinstance(stencil, itir.Lambda) or len(stencil.params) != len(args):
+                return None  # only handle lambda stencils with matching arity
+            rename_map: dict[str, str | itir.SymRef] = {}
+            for param, arg in zip(stencil.params, args):
+                key = arg.id if isinstance(arg, itir.SymRef) else str(arg)
+                if key not in key_to_param:
+                    fresh = next(uids["__merged_arg"])
+                    key_to_param[key] = fresh
+                    merged_params.append(fresh)
+                    merged_args.append(arg)
+                rename_map[param.id] = key_to_param[key]
+            bodies.append(rename_symbols(stencil.expr, rename_map))
+        merged_stencil = im.lambda_(*merged_params)(im.make_tuple(*bodies))
+        return im.as_fieldop(merged_stencil, group[0].domain)(*merged_args)  # type: ignore[attr-defined]
 
     def is_mergeable(stmt: itir.Stmt) -> bool:
         return (
             isinstance(stmt, itir.SetAt)
             and isinstance(stmt.target, itir.SymRef)
             and cpm.is_applied_as_fieldop(stmt.expr)
-            and not cpm.is_identity_as_fieldop(stmt.expr)  # not a trivial copy
-            and not symbol_ref_utils.collect_symbol_refs(stmt.domain)  # static domain only
         )
 
     stmts = program.body
     new_body: list[itir.Stmt] = []
+    merged_any = False
     i = 0
     while i < len(stmts):
         stmt = stmts[i]
@@ -172,25 +199,37 @@ def _merge_same_domain_temporaries(program: itir.Program) -> itir.Program:
                 group_targets.add(stmts[j].target.id)  # type: ignore[attr-defined]
                 j += 1
             if len(group) >= 2:
-                new_body.append(
-                    itir.SetAt(
-                        target=im.make_tuple(*(g.target for g in group)),
-                        domain=dom,
-                        expr=im.make_tuple(*(g.expr for g in group)),
+                merged_expr = build_merged(group)
+                # safety net: only commit a single applied `as_fieldop` (gtfn-lowerable)
+                if merged_expr is not None and cpm.is_applied_as_fieldop(merged_expr):
+                    new_body.append(
+                        itir.SetAt(
+                            target=im.make_tuple(*(g.target for g in group)),  # type: ignore[attr-defined]
+                            domain=dom,
+                            expr=merged_expr,
+                        )
                     )
-                )
-                i = j
-                continue
+                    merged_any = True
+                    i = j
+                    continue
         new_body.append(stmt)
         i += 1
 
-    return itir.Program(
+    if not merged_any:
+        return program
+    merged = itir.Program(
         id=program.id,
         function_definitions=program.function_definitions,
         params=program.params,
         declarations=program.declarations,
         body=new_body,
     )
+    # type, then CSE to share the common gathers across the merged tuple stencil
+    merged = infer(merged, inplace=True, offset_provider_type=offset_provider_type)
+    merged = CommonSubexpressionElimination.apply(
+        merged, offset_provider_type=offset_provider_type, uids=uids
+    )
+    return merged
 
 
 # TODO(tehrengruber): Revisit interface to configure temporary extraction. We currently forward
@@ -209,6 +248,10 @@ def apply_common_transforms(
     # TODO(tehrengruber): Remove this option again as soon as we have the necessary builtins
     #  to work with / translate domains.
     use_max_domain_range_on_unstructured_shift: Optional[bool] = None,
+    #: Merge same-domain, independent, statically-shaped temporaries into a single kernel
+    #: (e.g. the Green-Gauss gradient reductions). Not yet robust for dynamic-domain programs,
+    #: hence opt-in.
+    merge_tmps: bool = False,
 ) -> itir.Program:
     assert isinstance(ir, itir.Program)
     # TODO(tehrengruber): Allow `common.OffsetProviderType`, but domain inference currently
@@ -304,21 +347,17 @@ def apply_common_transforms(
             symbolic_domain_sizes=symbolic_domain_sizes,
             uids=uids,
         )
-        # EXPERIMENT(h7): opt-in merge of same-domain independent temporaries into one kernel
-        # (the 4 Green-Gauss gradient reductions → 1, sharing C2E2CO gathers). Env-gated: the
-        # merge is not yet robust for dynamic-domain programs (gtfn lowering rejects the fused
-        # tuple-returning as_fieldop), so it is off by default and enabled for the compile-time-
-        # domain benchmark. Eligible temps: static domain, non-identity. Best-effort: if the
-        # fusion raises, fall back to the un-merged program (separate kernels).
-        if os.environ.get("GT4PY_GTFN_MERGE_TMPS"):
-            merged = _merge_same_domain_temporaries(ir)
+        # EXPERIMENT(h7): merge same-domain independent temporaries into one kernel (the 4
+        # Green-Gauss gradient reductions → 1, sharing C2E2CO gathers). The merge constructs a
+        # single tuple-returning `as_fieldop` directly and only commits gtfn-lowerable results,
+        # so it is safe for any program; best-effort try/except is a final safety net.
+        if merge_tmps:
             try:
-                merged = fuse_as_fieldop.FuseAsFieldOp.apply(
-                    merged, offset_provider_type=offset_provider_type, uids=uids
+                ir = _merge_same_domain_temporaries(
+                    ir, offset_provider_type=offset_provider_type, uids=uids
                 )
-                ir = infer(merged, inplace=True, offset_provider_type=offset_provider_type)
             except Exception:
-                ir = infer(ir, inplace=True, offset_provider_type=offset_provider_type)
+                pass  # merge is best-effort; on any failure keep the un-merged program
 
     ir = NormalizeShifts().visit(ir)
 

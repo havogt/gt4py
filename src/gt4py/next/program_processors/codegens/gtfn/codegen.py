@@ -262,7 +262,11 @@ class GTFNCodegen(codegen.TemplatedGenerator):
         return self.generic_visit(
             node,
             grid_type_str=self._grid_type_str[node.grid_type],
-            block_sizes=self._block_sizes(node.offset_definitions),
+            block_sizes=self._block_sizes(
+                node.offset_definitions,
+                thread_block_sizes=kwargs.get("thread_block_sizes"),
+                loop_block_sizes=kwargs.get("loop_block_sizes"),
+            ),
             **kwargs,
         )
 
@@ -313,7 +317,12 @@ class GTFNCodegen(codegen.TemplatedGenerator):
     """
     )
 
-    def _block_sizes(self, offset_definitions: list[gtfn_ir.TagDefinition]) -> str:
+    def _block_sizes(
+        self,
+        offset_definitions: list[gtfn_ir.TagDefinition],
+        thread_block_sizes: tuple[int, int] | None = None,
+        loop_block_sizes: tuple[int, int] | None = None,
+    ) -> str:
         if self.is_cartesian:
             block_dims = []
             block_sizes = [32, 8] + [1] * (len(offset_definitions) - 2)
@@ -329,21 +338,16 @@ class GTFNCodegen(codegen.TemplatedGenerator):
                 "using loop_block_sizes_t = gridtools::meta::list<>;"
             )
         else:
-            # EXPERIMENT(h3/h4): sweep the unstructured thread-block shape and the
-            # per-thread loop-block (coarsening) shape via env.
-            import os as _os
-
-            _h = _os.environ.get("GT4PY_GTFN_BLOCK_H", "32")
-            _v = _os.environ.get("GT4PY_GTFN_BLOCK_V", "8")
-            _lh = _os.environ.get("GT4PY_GTFN_LOOP_H", "1")
-            _lv = _os.environ.get("GT4PY_GTFN_LOOP_V", "1")
+            # Unstructured GPU thread-block shape and per-thread loop-block (K-coarsening) shape.
+            th, tv = thread_block_sizes if thread_block_sizes is not None else (32, 8)
+            lh, lv = loop_block_sizes if loop_block_sizes is not None else (1, 1)
             return (
                 "using block_sizes_t = gridtools::meta::list<"
-                f"gridtools::meta::list<gtfn::unstructured::dim::horizontal, gridtools::integral_constant<int, {_h}>>, "
-                f"gridtools::meta::list<gtfn::unstructured::dim::vertical, gridtools::integral_constant<int, {_v}>>>;\n"
+                f"gridtools::meta::list<gtfn::unstructured::dim::horizontal, gridtools::integral_constant<int, {th}>>, "
+                f"gridtools::meta::list<gtfn::unstructured::dim::vertical, gridtools::integral_constant<int, {tv}>>>;\n"
                 "using loop_block_sizes_t = gridtools::meta::list<"
-                f"gridtools::meta::list<gtfn::unstructured::dim::horizontal, gridtools::integral_constant<int, {_lh}>>, "
-                f"gridtools::meta::list<gtfn::unstructured::dim::vertical, gridtools::integral_constant<int, {_lv}>>>;"
+                f"gridtools::meta::list<gtfn::unstructured::dim::horizontal, gridtools::integral_constant<int, {lh}>>, "
+                f"gridtools::meta::list<gtfn::unstructured::dim::vertical, gridtools::integral_constant<int, {lv}>>>;"
             )
 
     @classmethod
