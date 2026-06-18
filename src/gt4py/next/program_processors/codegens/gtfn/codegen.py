@@ -181,9 +181,31 @@ class GTFNCodegen(codegen.TemplatedGenerator):
     Scan = as_fmt(
         "assign({output}_c, {function}(), {', '.join([init] + [input + '_c' for input in inputs])})"
     )
-    ScanExecution = as_fmt(
-        "{backend}.vertical_executor({axis})().{'.'.join('arg(' + a + ')' for a in args)}.{'.'.join(scans)}.execute();"
-    )
+
+    def visit_ScanExecution(self, node: gtfn_ir.ScanExecution, **kwargs: Any) -> str:
+        backend = self.visit(node.backend, **kwargs)
+        axis = self.visit(node.axis, **kwargs)
+        args = "".join(f".arg({self.visit(a, **kwargs)})" for a in node.args)
+        if node.merged_kernel:
+            # one fused kernel: each scan struct (e.g. _scan_0, carrying its fwd/bwd base and
+            # body) is the ScanOrFold of a scan_substage_raw; inits become the per-stage seeds.
+            seeds = ", ".join(self.visit(s.init, **kwargs) for s in node.scans)
+            substages = ", ".join(
+                "gtfn::scan_substage_raw<{fn}, {tt}, {bt}, {out}{ins}>{{}}".format(
+                    fn=self.visit(s.function, **kwargs),
+                    tt=s.top_trim,
+                    bt=s.bot_trim,
+                    out=s.output,
+                    ins="".join(f", {i}" for i in s.inputs),
+                )
+                for s in node.scans
+            )
+            return (
+                f"{backend}.vertical_executor({axis})(){args}"
+                f".assign_merged_scans(gtfn::make_tuple({seeds}), {substages}).execute();"
+            )
+        scans = ".".join(self.visit(s, **kwargs) for s in node.scans)
+        return f"{backend}.vertical_executor({axis})(){args}.{scans}.execute();"
 
     IfStmt = as_mako(
         """

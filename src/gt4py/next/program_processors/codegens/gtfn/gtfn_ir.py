@@ -206,6 +206,10 @@ class Scan(Node):
     output: int
     inputs: list[int]
     init: Expr
+    #: For single-kernel scan merges only: vertical levels to skip at the top/bottom of the
+    #: merged (union) column so this scan still runs over exactly its original K-range.
+    top_trim: int = 0
+    bot_trim: int = 0
 
 
 class ScanExecution(Stmt):
@@ -213,6 +217,9 @@ class ScanExecution(Stmt):
     scans: list[Scan]
     args: list[Expr]
     axis: SymRef
+    #: When set, the scans are emitted as one fused kernel (merged_seeded_column_stage) via
+    #: assign_merged_scans, instead of one column-stage launch per scan.
+    merged_kernel: bool = False
 
 
 class IfStmt(Stmt):

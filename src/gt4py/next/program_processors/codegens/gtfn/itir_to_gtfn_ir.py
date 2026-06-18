@@ -8,6 +8,7 @@
 
 import dataclasses
 import functools
+import os
 from typing import Any, Callable, ClassVar, Iterable, Optional, Type, TypeGuard, Union
 
 import gt4py.eve as eve
@@ -196,6 +197,48 @@ def _literal_as_integral_constant(node: itir.Literal) -> IntegralConstant:
 
 def _is_scan(node: itir.Node) -> TypeGuard[itir.FunCall]:
     return isinstance(node, itir.FunCall) and node.fun == itir.SymRef(id="scan")
+
+
+def _static_int(expr: Expr) -> Optional[int]:
+    if isinstance(expr, IntegralConstant):
+        return expr.value
+    if isinstance(expr, Literal):
+        try:
+            return int(expr.value)
+        except ValueError:
+            return None
+    if isinstance(expr, BinaryExpr):
+        lhs, rhs = _static_int(expr.lhs), _static_int(expr.rhs)
+        if lhs is None or rhs is None:
+            return None
+        return {"+": lhs + rhs, "-": lhs - rhs, "*": lhs * rhs}.get(expr.op)
+    return None
+
+
+def _static_k_range(domain: Any, axis: SymRef) -> Optional[tuple[int, int]]:
+    """(start, stop) of the `axis` dimension if both are static integers, else None."""
+    if not isinstance(domain, UnstructuredDomain):
+        return None
+    tags = domain.tagged_offsets.tags
+    for i, tag in enumerate(tags):
+        if getattr(tag, "id", getattr(tag, "value", None)) != axis.id:
+            continue
+        start = _static_int(domain.tagged_offsets.values[i])
+        size = domain.tagged_sizes.values[i]
+        # size is built as BinaryExpr('-', stop, start); recover stop directly when possible
+        stop = (
+            _static_int(size.lhs)
+            if isinstance(size, BinaryExpr) and size.op == "-"
+            else (None if (s := _static_int(size)) is None or start is None else start + s)
+        )
+        if start is None or stop is None:
+            return None
+        return start, stop
+    return None
+
+
+def _symref_ids(expr: Expr) -> set[str]:
+    return set(expr.pre_walk_values().if_isinstance(SymRef).getattr("id").to_set())
 
 
 def _bool_from_literal(node: itir.Node) -> bool:
@@ -532,11 +575,11 @@ class GTFN_lowering(eve.NodeTranslator, eve.VisitorWithSymbolTableTrait):
     @staticmethod
     def _merge_scans(
         executions: list[Union[StencilExecution, ScanExecution]],
+        scan_forward: Optional[dict[str, bool]] = None,
     ) -> list[Union[StencilExecution, ScanExecution]]:
-        def merge(a: ScanExecution, b: ScanExecution) -> ScanExecution:
-            assert a.backend == b.backend
-            assert a.axis == b.axis
+        scan_forward = scan_forward or {}
 
+        def _dedup_b_into_a(a: ScanExecution, b: ScanExecution) -> tuple[dict[int, int], list[Expr]]:
             index_map = dict[int, int]()
             compacted_b_args = list[Expr]()
             for b_idx, b_arg in enumerate(b.args):
@@ -546,6 +589,12 @@ class GTFN_lowering(eve.NodeTranslator, eve.VisitorWithSymbolTableTrait):
                 except ValueError:
                     index_map[b_idx] = len(a.args) + len(compacted_b_args)
                     compacted_b_args.append(b_arg)
+            return index_map, compacted_b_args
+
+        def merge(a: ScanExecution, b: ScanExecution) -> ScanExecution:
+            assert a.backend == b.backend
+            assert a.axis == b.axis
+            index_map, compacted_b_args = _dedup_b_into_a(a, b)
 
             def remap_args(s: Scan) -> Scan:
                 return Scan(
@@ -562,16 +611,82 @@ class GTFN_lowering(eve.NodeTranslator, eve.VisitorWithSymbolTableTrait):
                 axis=a.axis,
             )
 
+        def merge_fwd_bwd(a: ScanExecution, b: ScanExecution) -> Optional[ScanExecution]:
+            # Fuse a forward sweep (a) and the back-substitution (b) that consumes its output
+            # into ONE kernel. They run over different K-extents (forward [1, N) avoids the
+            # Koff[-1] read at the top, back-substitution [0, N)); we launch over the union K
+            # range and give each scan vertical trims so it covers exactly its original range.
+            if os.environ.get("GT4PY_DISABLE_FWDBWD_MERGE"):
+                return None
+            if not (len(a.scans) == 1 and len(b.scans) == 1):
+                return None
+            if not (
+                scan_forward.get(a.scans[0].function.id) is True
+                and scan_forward.get(b.scans[0].function.id) is False
+            ):
+                return None
+            a_range = _static_k_range(a.backend.domain, a.axis)
+            b_range = _static_k_range(b.backend.domain, b.axis)
+            if a_range is None or b_range is None:
+                return None
+            # producer -> consumer: b reads a's output field(s)
+            a_out_syms = _symref_ids(a.args[a.scans[0].output])
+            b_in_syms: set[str] = set()
+            for i in b.scans[0].inputs:
+                b_in_syms |= _symref_ids(b.args[i])
+            if not (a_out_syms & b_in_syms):
+                return None
+            u_start = min(a_range[0], b_range[0])
+            u_stop = max(a_range[1], b_range[1])
+            # union must coincide with one of the two domains (one contains the other)
+            if a_range == (u_start, u_stop):
+                union_domain = a.backend.domain
+            elif b_range == (u_start, u_stop):
+                union_domain = b.backend.domain
+            else:
+                return None
+            index_map, compacted_b_args = _dedup_b_into_a(a, b)
+            a_s, b_s = a.scans[0], b.scans[0]
+            a_scan = Scan(
+                function=a_s.function,
+                output=a_s.output,
+                inputs=a_s.inputs,
+                init=a_s.init,
+                top_trim=a_range[0] - u_start,
+                bot_trim=u_stop - a_range[1],
+            )
+            b_scan = Scan(
+                function=b_s.function,
+                output=index_map[b_s.output],
+                inputs=[index_map[i] for i in b_s.inputs],
+                init=b_s.init,
+                top_trim=b_range[0] - u_start,
+                bot_trim=u_stop - b_range[1],
+            )
+            return ScanExecution(
+                backend=Backend(domain=union_domain),
+                scans=[a_scan, b_scan],
+                args=a.args + compacted_b_args,
+                axis=a.axis,
+                merged_kernel=True,
+            )
+
         res = executions[:1]
         for execution in executions[1:]:
+            prev = res[-1]
             if (
                 isinstance(execution, ScanExecution)
-                and isinstance(res[-1], ScanExecution)
-                and execution.backend == res[-1].backend
+                and isinstance(prev, ScanExecution)
+                and execution.axis == prev.axis
             ):
-                res[-1] = merge(res[-1], execution)
-            else:
-                res.append(execution)
+                fused = merge_fwd_bwd(prev, execution)
+                if fused is not None:
+                    res[-1] = fused
+                    continue
+                if execution.backend == prev.backend:
+                    res[-1] = merge(prev, execution)
+                    continue
+            res.append(execution)
         return res
 
     def visit_Stmt(self, node: itir.Stmt, **kwargs: Any) -> None:
@@ -663,7 +778,12 @@ class GTFN_lowering(eve.NodeTranslator, eve.VisitorWithSymbolTableTrait):
     def visit_Program(self, node: itir.Program, **kwargs: Any) -> Program:
         extracted_functions: list[Union[FunctionDefinition, ScanPassDefinition]] = []
         executions = self.visit(node.body, extracted_functions=extracted_functions)
-        executions = self._merge_scans(executions)
+        scan_forward = {
+            str(f.id): f.forward
+            for f in extracted_functions
+            if isinstance(f, ScanPassDefinition)
+        }
+        executions = self._merge_scans(executions, scan_forward)
         function_definitions = self.visit(node.function_definitions) + extracted_functions
         offset_definitions = {
             **_collect_dimensions_from_domain(node.body),
