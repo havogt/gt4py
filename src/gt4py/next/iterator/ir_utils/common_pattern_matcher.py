@@ -128,10 +128,13 @@ def is_identity_as_fieldop(node: itir.Expr) -> TypeGuard[_FunCallToFunCallToRef]
     if not is_applied_as_fieldop(node):
         return False
     stencil = node.fun.args[0]
+    # structural check (type-annotation agnostic): stencil is `λ(p) → ·p`
     if (
         isinstance(stencil, itir.Lambda)
         and len(stencil.params) == 1
-        and stencil == im.lambda_(stencil.params[0])(im.deref(stencil.params[0].id))
+        and is_call_to(stencil.expr, "deref")
+        and isinstance(stencil.expr.args[0], itir.SymRef)
+        and stencil.expr.args[0].id == stencil.params[0].id
     ):
         return True
     return False
