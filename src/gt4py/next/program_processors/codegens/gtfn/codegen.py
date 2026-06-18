@@ -184,10 +184,52 @@ class GTFNCodegen(codegen.TemplatedGenerator):
         "assign({output}_c, {function}(), {', '.join([init] + [input + '_c' for input in inputs])})"
     )
 
+    def visit_ScanTailDefinition(self, node: gtfn_ir.ScanTailDefinition, **kwargs: Any) -> str:
+        res = self.visit(node.res, **kwargs)
+        acc = self.visit(node.acc, **kwargs)
+        surface = self.visit(node.surface, **kwargs)
+        # Bind each lifted SID input param to an iterator at the current level (its raw arg index
+        # + the backend offset AO); the rewritten output exprs deref these as usual.
+        input_binds = "".join(
+            f"auto const& {self.visit(p, **kwargs)} = make_iterator("
+            f"::gridtools::integral_constant<int, {idx} + AO>{{}}, ptr, strides);"
+            for p, idx in node.input_params
+        )
+        writes = "".join(
+            f"*::gridtools::host_device::at_key<::gridtools::integral_constant<int, {out} + AO>>(ptr) = "
+            f"{self.visit(expr, **kwargs)};"
+            for out, expr in node.outputs
+        )
+        return (
+            f"template <int AO> struct {node.id} {{\n"
+            f"  template <class Res, class Acc, class Surface, class Mk, class Ptr, class Strides>\n"
+            f"  GT_FUNCTION void operator()(Res const& {res}, Acc const& {acc}, Surface const& {surface},\n"
+            f"      Mk&& make_iterator, Ptr const& ptr, Strides const& strides) const {{\n"
+            f"    {input_binds}\n"
+            f"    {writes}\n"
+            f"  }}\n"
+            f"}};"
+        )
+
     def visit_ScanExecution(self, node: gtfn_ir.ScanExecution, **kwargs: Any) -> str:
         backend = self.visit(node.backend, **kwargs)
         axis = self.visit(node.axis, **kwargs)
         args = "".join(f".arg({self.visit(a, **kwargs)})" for a in node.args)
+        if len(node.scans) == 1 and node.scans[0].tail is not None:
+            # Folded post-scan consumer: scan_with_tail_raw carries the scan struct, the Tail
+            # struct (template on AO), the tail-write trims and the scan's *body* input indices
+            # (the Ins). The tail's own inputs/outputs are baked into the Tail struct.
+            s = node.scans[0]
+            t = s.tail
+            ins = "".join(f", {i}" for i in s.inputs)
+            raw = (
+                f"gtfn::scan_with_tail_raw<{self.visit(s.function, **kwargs)}, "
+                f"{self.visit(t.definition, **kwargs)}, {t.top_trim}, {t.bot_trim}{ins}>{{}}"
+            )
+            return (
+                f"{backend}.vertical_executor({axis})(){args}"
+                f".assign_scan_with_tail({raw}, {self.visit(s.init, **kwargs)}).execute();"
+            )
         if node.merged_kernel:
             # one fused kernel: each scan struct (e.g. _scan_0, carrying its fwd/bwd base and
             # body) is the ScanOrFold of a scan_substage_raw; inits become the per-stage seeds.

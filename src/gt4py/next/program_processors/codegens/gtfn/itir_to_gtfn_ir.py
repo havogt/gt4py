@@ -38,6 +38,8 @@ from gt4py.next.program_processors.codegens.gtfn.gtfn_ir import (
     Scan,
     ScanExecution,
     ScanPassDefinition,
+    ScanTail,
+    ScanTailDefinition,
     SidComposite,
     SidFromScalar,
     StencilExecution,
@@ -239,6 +241,111 @@ def _static_k_range(domain: Any, axis: SymRef) -> Optional[tuple[int, int]]:
 
 def _symref_ids(expr: Expr) -> set[str]:
     return set(expr.pre_walk_values().if_isinstance(SymRef).getattr("id").to_set())
+
+
+def _linear_terms(expr: Expr, sign: int, pos: list, neg: list, const: list) -> bool:
+    """Flatten a +/- expression into multisets of positive/negative non-constant terms plus a
+    running constant. Returns False if it hits a node it can't treat as a sum (e.g. a product)."""
+    c = _static_int(expr)
+    if c is not None:
+        const[0] += sign * c
+        return True
+    if isinstance(expr, BinaryExpr) and expr.op in ("+", "-"):
+        if not _linear_terms(expr.lhs, sign, pos, neg, const):
+            return False
+        return _linear_terms(expr.rhs, sign if expr.op == "+" else -sign, pos, neg, const)
+    (pos if sign > 0 else neg).append(expr)
+    return True
+
+
+def _static_diff(a: Expr, b: Expr) -> Optional[int]:
+    """Value of `a - b` when the non-constant terms cancel, else None."""
+    pos: list = []
+    neg: list = []
+    const = [0]
+    if not _linear_terms(a, 1, pos, neg, const):
+        return None
+    if not _linear_terms(b, -1, pos, neg, const):
+        return None
+
+    def cancel(p: list, n: list) -> None:
+        for term in list(p):
+            if term in n:
+                p.remove(term)
+                n.remove(term)
+
+    cancel(pos, neg)
+    if pos or neg:
+        return None
+    return const[0]
+
+
+def _domain_k_bounds(domain: Any, axis: SymRef) -> Optional[tuple[Expr, Expr]]:
+    """(start_expr, stop_expr = start + size) of the `axis` dimension, or None if absent."""
+    if not isinstance(domain, (UnstructuredDomain, CartesianDomain)):
+        return None
+    tags = domain.tagged_offsets.tags
+    for i, tag in enumerate(tags):
+        if getattr(tag, "id", getattr(tag, "value", None)) != axis.id:
+            continue
+        start = domain.tagged_offsets.values[i]
+        size = domain.tagged_sizes.values[i]
+        return start, BinaryExpr(op="+", lhs=start, rhs=size)
+    return None
+
+
+def _is_deref_of(expr: Expr, sym: str) -> bool:
+    return (
+        isinstance(expr, FunCall)
+        and isinstance(expr.fun, SymRef)
+        and expr.fun.id == "deref"
+        and len(expr.args) == 1
+        and isinstance(expr.args[0], SymRef)
+        and expr.args[0].id == sym
+    )
+
+
+def _is_deref_koff1_of(expr: Expr, sym: str) -> bool:
+    # deref(shift(<sym>, Koff, 1))  -> the K+1 (acc) read for a backward scan
+    if not (isinstance(expr, FunCall) and isinstance(expr.fun, SymRef) and expr.fun.id == "deref"):
+        return False
+    inner = expr.args[0]
+    return (
+        isinstance(inner, FunCall)
+        and isinstance(inner.fun, SymRef)
+        and inner.fun.id == "shift"
+        and len(inner.args) == 3
+        and isinstance(inner.args[0], SymRef)
+        and inner.args[0].id == sym
+        and isinstance(inner.args[2], OffsetLiteral)
+        and inner.args[2].value == 1
+    )
+
+
+@dataclasses.dataclass
+class _ScanOutputRewriter(eve.NodeTranslator):
+    """Replace the scan-output param's level reads in a consumer body:
+    deref(<sym>) -> res, deref(shift(<sym>, Koff, 1)) -> acc. Sets `ok=False` if the param
+    appears in any other position (a shift we can't fold: Koff[-1], a connectivity, etc.)."""
+
+    sym: str
+    res: str
+    acc: str
+    ok: bool = True
+
+    def visit_FunCall(self, node: FunCall) -> Expr:
+        if _is_deref_of(node, self.sym):
+            return SymRef(id=self.res)
+        if _is_deref_koff1_of(node, self.sym):
+            return SymRef(id=self.acc)
+        return self.generic_visit(node)
+
+    def visit_SymRef(self, node: SymRef) -> SymRef:
+        # Any bare reference to the scan-output param that escaped the deref patterns above means
+        # an access we can't fold (e.g. deref(shift(sym, ...)) with a different offset).
+        if node.id == self.sym:
+            self.ok = False
+        return node
 
 
 def _bool_from_literal(node: itir.Node) -> bool:
@@ -689,6 +796,174 @@ class GTFN_lowering(eve.NodeTranslator, eve.VisitorWithSymbolTableTrait):
             res.append(execution)
         return res
 
+    def _expr_offset_ids(self, expr: Expr) -> set[str]:
+        return set(
+            expr.pre_walk_values().if_isinstance(OffsetLiteral).getattr("value").if_isinstance(str).to_set()
+        )
+
+    def _has_connectivity_offset(self, expr: Expr) -> bool:
+        for o in self._expr_offset_ids(expr):
+            if o in self.offset_provider_type and not isinstance(
+                common.get_offset_type(self.offset_provider_type, o), common.Dimension
+            ):
+                return True
+        return False
+
+    def _fuse_scan_tails(
+        self,
+        executions: list[Union[StencilExecution, ScanExecution]],
+        scan_forward: dict[str, bool],
+        extracted_functions: list,
+    ) -> tuple[list[Union[StencilExecution, ScanExecution]], set[str]]:
+        if os.environ.get("GT4PY_DISABLE_POSTSCAN_FOLD"):
+            return executions, set()
+
+        fun_by_id = {f.id: f for f in extracted_functions if isinstance(f, FunctionDefinition)}
+        # A temp may be dropped only if the scan that writes it is the sole writer and the folded
+        # consumer is its sole reader. Count reads/writes across all executions.
+        dropped: set[str] = set()
+
+        def out_syms(e: Union[StencilExecution, ScanExecution]) -> set[str]:
+            if isinstance(e, ScanExecution):
+                return {e.args[s.output].id for s in e.scans if isinstance(e.args[s.output], SymRef)}
+            return _symref_ids(e.output) if isinstance(e.output, (SymRef, SidComposite)) else set()
+
+        def in_syms(e: Union[StencilExecution, ScanExecution]) -> set[str]:
+            if isinstance(e, ScanExecution):
+                s: set[str] = set()
+                for sc in e.scans:
+                    for i in sc.inputs:
+                        s |= _symref_ids(e.args[i])
+                return s
+            return {sym for inp in e.inputs for sym in _symref_ids(inp)}
+
+        def try_fold(scan_exec: ScanExecution, sten: StencilExecution, idx: int) -> Optional[ScanExecution]:
+            if len(scan_exec.scans) != 1:
+                return None
+            scan = scan_exec.scans[0]
+            if scan.tail is not None:
+                return None
+            if scan_forward.get(scan.function.id) is not False:  # backward scan only
+                return None
+            scan_out = scan_exec.args[scan.output]
+            if not isinstance(scan_out, SymRef):
+                return None
+            T = scan_out.id
+            # The temp must be a producer-only temp here: not a program param, written by no other
+            # execution, and read by no execution other than this consumer.
+            if any(T in out_syms(e) for e in executions if e is not scan_exec):
+                return None
+            if any(T in in_syms(e) for e in executions if e is not sten):
+                return None
+            # Consumer must be a plain field-op referencing an extracted function, cell-local.
+            if not isinstance(sten.stencil, SymRef) or sten.stencil.id not in fun_by_id:
+                return None
+            fun = fun_by_id[sten.stencil.id]
+            if self._has_connectivity_offset(fun.expr):
+                return None
+            # Map the consumer's params to its SID inputs positionally; find the one bound to T.
+            if len(fun.params) != len(sten.inputs):
+                return None
+            t_positions = [
+                j for j, inp in enumerate(sten.inputs) if isinstance(inp, SymRef) and inp.id == T
+            ]
+            if len(t_positions) != 1:
+                return None
+            t_pos = t_positions[0]
+            t_param = fun.params[t_pos].id
+            # Single-output consumer only (milestone 1).
+            if not isinstance(sten.output, SymRef):
+                return None
+
+            res_name, acc_name, surf_name = (
+                f"{t_param}__res",
+                f"{t_param}__acc",
+                f"{t_param}__surface",
+            )
+            rewriter = _ScanOutputRewriter(sym=t_param, res=res_name, acc=acc_name)
+            new_expr = rewriter.visit(fun.expr)
+            if not rewriter.ok:
+                return None
+
+            # Build the merged composite: scan body inputs + the consumer's other (lifted) inputs +
+            # the consumer's output. The dropped scan-output SID does not appear.
+            new_args: list[Expr] = []
+
+            def arg_index(a: Expr) -> int:
+                for k, existing in enumerate(new_args):
+                    if existing == a:
+                        return k
+                new_args.append(a)
+                return len(new_args) - 1
+
+            scan_in_idx = [arg_index(scan_exec.args[i]) for i in scan.inputs]
+            lifted: list[tuple[Sym, int]] = []
+            for j, inp in enumerate(sten.inputs):
+                if j == t_pos:
+                    continue
+                lifted.append((Sym(id=fun.params[j].id), arg_index(inp)))
+            out_idx = arg_index(sten.output)
+
+            tail_id = next(self.uids["_tail"])
+            tail_def = ScanTailDefinition(
+                id=tail_id,
+                res=Sym(id=res_name),
+                acc=Sym(id=acc_name),
+                surface=Sym(id=surf_name),
+                input_params=lifted,
+                outputs=[(out_idx, new_expr)],
+            )
+            extracted_functions.append(tail_def)
+
+            # Tail writes only where the consumer's domain is defined; for a backward scan the
+            # column-top (K = N-1) level computes acc = scan-result(K+1) which is the seed, so the
+            # consumer that reads acc must exclude it -> top_trim from the K-range difference. The
+            # absolute K bounds are runtime (get_domain_range), but their *difference* must be a
+            # static int (the dynamic parts cancel) or we can't pick a fixed trim.
+            scan_b = _domain_k_bounds(scan_exec.backend.domain, scan_exec.axis)
+            cons_b = _domain_k_bounds(sten.backend.domain, scan_exec.axis)
+            if scan_b is None or cons_b is None:
+                return None
+            top_trim = _static_diff(scan_b[1], cons_b[1])  # scan_stop - cons_stop
+            bot_trim = _static_diff(cons_b[0], scan_b[0])  # cons_start - scan_start
+            if top_trim is None or bot_trim is None or top_trim < 0 or bot_trim < 0:
+                return None
+
+            new_scan = Scan(
+                function=scan.function,
+                output=scan.output,  # kept for layout but unused by scan_with_tail
+                inputs=scan_in_idx,
+                init=scan.init,
+                tail=ScanTail(
+                    definition=SymRef(id=tail_id),
+                    inputs=[idx for _, idx in lifted],
+                    top_trim=top_trim,
+                    bot_trim=bot_trim,
+                ),
+            )
+            dropped.add(T)
+            return ScanExecution(
+                backend=Backend(domain=scan_exec.backend.domain),
+                scans=[new_scan],
+                args=new_args,
+                axis=scan_exec.axis,
+            )
+
+        res: list[Union[StencilExecution, ScanExecution]] = []
+        i = 0
+        while i < len(executions):
+            cur = executions[i]
+            nxt = executions[i + 1] if i + 1 < len(executions) else None
+            if isinstance(cur, ScanExecution) and isinstance(nxt, StencilExecution):
+                folded = try_fold(cur, nxt, i)
+                if folded is not None:
+                    res.append(folded)
+                    i += 2
+                    continue
+            res.append(cur)
+            i += 1
+        return res, dropped
+
     def visit_Stmt(self, node: itir.Stmt, **kwargs: Any) -> None:
         raise AssertionError("All Stmts need to be handled explicitly.")
 
@@ -798,11 +1073,17 @@ class GTFN_lowering(eve.NodeTranslator, eve.VisitorWithSymbolTableTrait):
             if isinstance(f, ScanPassDefinition)
         }
         executions = self._merge_scans(executions, scan_forward)
+        executions, dropped_temps = self._fuse_scan_tails(
+            executions, scan_forward, extracted_functions
+        )
         function_definitions = self.visit(node.function_definitions) + extracted_functions
         offset_definitions = {
             **_collect_dimensions_from_domain(node.body),
             **_collect_offset_definitions(node, self.grid_type, self.offset_provider_type),
         }
+        temporaries = self.visit(node.declarations, params=[p.id for p in node.params])
+        # A folded scan no longer materializes its output temp; drop its allocation.
+        temporaries = [t for t in temporaries if t.id not in dropped_temps]
         return Program(
             id=SymbolName(node.id),
             params=self.visit(node.params),
@@ -810,7 +1091,7 @@ class GTFN_lowering(eve.NodeTranslator, eve.VisitorWithSymbolTableTrait):
             grid_type=self.grid_type,
             offset_definitions=list(offset_definitions.values()),
             function_definitions=function_definitions,
-            temporaries=self.visit(node.declarations, params=[p.id for p in node.params]),
+            temporaries=temporaries,
         )
 
     def visit_Temporary(

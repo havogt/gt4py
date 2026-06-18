@@ -203,6 +203,28 @@ class StencilExecution(Stmt):
                 )
 
 
+class ScanTailDefinition(Node, SymbolTableTrait):
+    #: Top-level struct (template on the backend arg-offset) for a folded post-scan consumer.
+    #: `res`/`acc`/`surface` are the scan's per-level register values (result at K, result at
+    #: K+1, seed); `input_params` are bound to iterators built from the other SID args; each
+    #: `outputs` entry writes one SID arg with the (rewritten) consumer expression.
+    id: Coerced[SymbolName]
+    res: Sym
+    acc: Sym
+    surface: Sym
+    #: (param bound to an iterator at the current level, raw arg index it reads)
+    input_params: list[tuple[Sym, int]]
+    outputs: list[tuple[int, Expr]]  # (raw output arg index, expr over res/acc/surface/inputs)
+
+
+class ScanTail(Node):
+    #: Wiring for a folded post-scan consumer: which struct, which SID args it reads, the trims.
+    definition: SymRef
+    inputs: list[int]  # raw arg indices for input_params (passed as the scan_with_tail Ins)
+    top_trim: int = 0
+    bot_trim: int = 0
+
+
 class Scan(Node):
     function: SymRef
     output: int
@@ -212,6 +234,8 @@ class Scan(Node):
     #: merged (union) column so this scan still runs over exactly its original K-range.
     top_trim: int = 0
     bot_trim: int = 0
+    #: When set, the scan output is not written to a SID; instead this tail consumes it per level.
+    tail: Optional[ScanTail] = None
 
 
 class ScanExecution(Stmt):
@@ -264,7 +288,7 @@ class Program(Node, ValidatedSymbolTableTrait):
     id: SymbolName
     params: list[Sym]
     function_definitions: list[
-        Union[FunctionDefinition, ScanPassDefinition, ImperativeFunctionDefinition]
+        Union[FunctionDefinition, ScanPassDefinition, ImperativeFunctionDefinition, ScanTailDefinition]
     ]
     executions: list[Stmt]
     offset_definitions: list[TagDefinition]
