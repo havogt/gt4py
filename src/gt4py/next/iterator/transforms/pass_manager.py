@@ -21,6 +21,7 @@ from gt4py.next.iterator.transforms import (
     inline_dynamic_shifts,
     inline_fundefs,
     inline_lifts,
+    prune_casts,
     prune_empty_concat_where,
     remove_broadcast,
     symbol_ref_utils,
@@ -227,6 +228,10 @@ def apply_common_transforms(
 
     if extract_temporaries:
         ir = infer(ir, inplace=True, offset_provider_type=offset_provider_type)
+        # EXPERIMENT(h5): prune identity casts (vp==wp in double precision) before temp
+        # extraction. gtfn lacked this pass (dace runs it in gtir_to_sdfg), so trivial
+        # cast `as_fieldop`s became standalone copy kernels + temporaries.
+        ir = prune_casts.PruneCasts.apply(ir)
         ir = global_tmps.create_global_tmps(
             ir,
             offset_provider=offset_provider,
