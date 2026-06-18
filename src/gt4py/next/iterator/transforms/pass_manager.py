@@ -159,6 +159,11 @@ def apply_common_transforms(
 
     uids = utils.IDGeneratorPool()
 
+    # EXPERIMENT(h5): prune identity casts (vp==wp in double precision) on the typed
+    # input, before fusion/temp extraction — gtfn lacked this pass (dace runs it early
+    # in gtir_to_sdfg), so trivial cast `as_fieldop`s became standalone copy kernels.
+    ir = prune_casts.PruneCasts.apply(ir)
+
     ir = MergeLet().visit(ir)
     ir = inline_fundefs.InlineFundefs().visit(ir)
 
@@ -228,10 +233,6 @@ def apply_common_transforms(
 
     if extract_temporaries:
         ir = infer(ir, inplace=True, offset_provider_type=offset_provider_type)
-        # EXPERIMENT(h5): prune identity casts (vp==wp in double precision) before temp
-        # extraction. gtfn lacked this pass (dace runs it in gtir_to_sdfg), so trivial
-        # cast `as_fieldop`s became standalone copy kernels + temporaries.
-        ir = prune_casts.PruneCasts.apply(ir)
         ir = global_tmps.create_global_tmps(
             ir,
             offset_provider=offset_provider,
