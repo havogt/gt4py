@@ -266,12 +266,6 @@ def apply_common_transforms(
         ir, opcount_preserving=True, force_inline_lambda_args=force_inline_lambda_args
     )
 
-    import os as _os
-
-    if _os.environ.get("GT4PY_DUMP_ITIR"):
-        with open(_os.environ["GT4PY_DUMP_ITIR"], "w") as _f:
-            _f.write(str(ir))
-
     assert isinstance(ir, itir.Program)
     return ir
 
