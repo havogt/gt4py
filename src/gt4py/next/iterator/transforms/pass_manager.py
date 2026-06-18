@@ -162,6 +162,8 @@ def apply_common_transforms(
     # EXPERIMENT(h5): prune identity casts (vp==wp in double precision) on the typed
     # input, before fusion/temp extraction — gtfn lacked this pass (dace runs it early
     # in gtir_to_sdfg), so trivial cast `as_fieldop`s became standalone copy kernels.
+    # PruneCasts requires type annotations → infer first, mirroring dace.
+    ir = infer(ir, offset_provider_type=offset_provider_type)
     ir = prune_casts.PruneCasts.apply(ir)
 
     ir = MergeLet().visit(ir)
