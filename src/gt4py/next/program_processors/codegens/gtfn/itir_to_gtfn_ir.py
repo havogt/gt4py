@@ -901,22 +901,33 @@ class GTFN_lowering(eve.NodeTranslator, eve.VisitorWithSymbolTableTrait):
             if not rewriter.ok:
                 return reject(f"{t_param} accessed in an unfoldable way (not deref/Koff[1])")
 
-            scan_b = _domain_k_bounds(scan_exec.backend.domain, scan_exec.axis)
+            kern_b = _domain_k_bounds(scan_exec.backend.domain, scan_exec.axis)
             cons_b = _domain_k_bounds(sten.backend.domain, scan_exec.axis)
-            if scan_b is None or cons_b is None:
-                return None
-            top_trim = _static_diff(scan_b[1], cons_b[1])  # scan_stop - cons_stop
-            bot_trim = _static_diff(cons_b[0], scan_b[0])  # cons_start - scan_start
-            if top_trim is None or bot_trim is None or top_trim < 0 or bot_trim < 0:
-                return reject(f"K-trim not a static non-negative int (top={top_trim}, bot={bot_trim})")
-            # In a merged kernel the substages already carry per-substage trims relative to the
-            # kernel's union column; the consumer's trim must be expressed on top of the bwd
-            # substage's own range, so add the substage trims.
-            top_trim += scan.top_trim
-            bot_trim += scan.bot_trim
+            if kern_b is None or cons_b is None:
+                return reject("non-static-difference K domains")
+            # The launch column must cover both the existing kernel and the consumer; require one to
+            # contain the other (their start/stop differ by static amounts).
+            d_top = _static_diff(cons_b[1], kern_b[1])  # cons_stop - kern_stop
+            d_bot = _static_diff(kern_b[0], cons_b[0])  # kern_start - cons_start
+            if d_top is None or d_bot is None:
+                return reject(f"K-trim not a static int (d_top={d_top}, d_bot={d_bot})")
+            # New kernel domain = the wider of the two on each end. Each existing substage's trims
+            # are rebased onto the new column so its absolute K-range is preserved; the consumer's
+            # tail spans the new column where the consumer is defined.
+            grow_top = max(d_top, 0)  # consumer extends above the kernel
+            grow_bot = max(d_bot, 0)
+            # The new launch column is the wider of the two; require nesting (the narrower is fully
+            # inside the wider on both ends).
+            cons_wider = d_top >= 0 and d_bot >= 0
+            kern_wider = d_top <= 0 and d_bot <= 0
+            if not (cons_wider or kern_wider):
+                return reject("consumer K-range not nested with kernel K-range")
+            new_domain = sten.backend.domain if cons_wider else scan_exec.backend.domain
 
-            # Rebuild the kernel's composite, keeping all substages' args and adding the consumer's
-            # lifted inputs + its output; the dropped scan-output SID is omitted.
+            def rebase(tt: int, bt: int) -> tuple[int, int]:
+                # keep the same absolute range after growing the column by grow_top/grow_bot
+                return tt + grow_bot, bt + grow_top
+
             new_args: list[Expr] = []
 
             def arg_index(a: Expr) -> int:
@@ -931,14 +942,15 @@ class GTFN_lowering(eve.NodeTranslator, eve.VisitorWithSymbolTableTrait):
                 if k == target:
                     new_scans.append(sc)  # placeholder, replaced below
                     continue
+                tt, bt = rebase(sc.top_trim, sc.bot_trim)
                 new_scans.append(
                     Scan(
                         function=sc.function,
                         output=arg_index(scan_exec.args[sc.output]),
                         inputs=[arg_index(scan_exec.args[i]) for i in sc.inputs],
                         init=sc.init,
-                        top_trim=sc.top_trim,
-                        bot_trim=sc.bot_trim,
+                        top_trim=tt,
+                        bot_trim=bt,
                     )
                 )
 
@@ -962,23 +974,34 @@ class GTFN_lowering(eve.NodeTranslator, eve.VisitorWithSymbolTableTrait):
                 )
             )
 
+            # body window = the bwd scan's original absolute K-range (rebased onto the new column);
+            # tail window = the consumer's K-range (its domain == new column when consumer is wider).
+            body_tt, body_bt = rebase(scan.top_trim, scan.bot_trim)
+            new_b = _domain_k_bounds(new_domain, scan_exec.axis)
+            tail_tt = _static_diff(cons_b[0], new_b[0])
+            tail_bt = _static_diff(new_b[1], cons_b[1])
+            if tail_tt is None or tail_bt is None or tail_tt < 0 or tail_bt < 0:
+                return reject(f"tail trim not static non-negative (tt={tail_tt}, bt={tail_bt})")
+
             new_scans[target] = Scan(
                 function=scan.function,
                 output=scan.output,  # unused by scan_with_tail
                 inputs=scan_in_idx,
                 init=scan.init,
-                top_trim=scan.top_trim,
-                bot_trim=scan.bot_trim,
+                top_trim=body_tt,
+                bot_trim=body_bt,
                 tail=ScanTail(
                     definition=SymRef(id=tail_id),
                     inputs=[i for _, i in lifted],
-                    top_trim=top_trim,
-                    bot_trim=bot_trim,
+                    body_top_trim=body_tt,
+                    body_bot_trim=body_bt,
+                    tail_top_trim=tail_tt,
+                    tail_bot_trim=tail_bt,
                 ),
             )
             dropped.add(T)
             return ScanExecution(
-                backend=Backend(domain=scan_exec.backend.domain),
+                backend=Backend(domain=new_domain),
                 scans=new_scans,
                 args=new_args,
                 axis=scan_exec.axis,

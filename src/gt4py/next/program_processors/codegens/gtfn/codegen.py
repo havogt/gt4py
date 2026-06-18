@@ -216,14 +216,15 @@ class GTFNCodegen(codegen.TemplatedGenerator):
         axis = self.visit(node.axis, **kwargs)
         args = "".join(f".arg({self.visit(a, **kwargs)})" for a in node.args)
         def scan_with_tail_raw(s: gtfn_ir.Scan) -> str:
-            # scan_with_tail_raw carries the scan struct, the Tail struct (template on AO), the
-            # tail-write trims and the scan's *body* input indices (the Ins). The tail's own
+            # scan_with_tail_raw carries the scan struct, the Tail struct (template on AO), the body
+            # and tail vertical trims, and the scan's *body* input indices (the Ins). The tail's own
             # inputs/outputs are baked into the Tail struct.
             t = s.tail
             ins = "".join(f", {i}" for i in s.inputs)
             return (
                 f"gtfn::scan_with_tail_raw<{self.visit(s.function, **kwargs)}, "
-                f"{self.visit(t.definition, **kwargs)}, {t.top_trim}, {t.bot_trim}{ins}>{{}}"
+                f"{self.visit(t.definition, **kwargs)}, "
+                f"{t.body_top_trim}, {t.body_bot_trim}, {t.tail_top_trim}, {t.tail_bot_trim}{ins}>{{}}"
             )
 
         if not node.merged_kernel and len(node.scans) == 1 and node.scans[0].tail is not None:

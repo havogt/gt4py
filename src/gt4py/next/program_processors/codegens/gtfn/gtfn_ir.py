@@ -218,11 +218,15 @@ class ScanTailDefinition(Node, SymbolTableTrait):
 
 
 class ScanTail(Node):
-    #: Wiring for a folded post-scan consumer: which struct, which SID args it reads, the trims.
+    #: Wiring for a folded post-scan consumer. `body_*_trim` bound the levels where the scan
+    #: recurrence runs (its original K-range); `tail_*_trim` bound where the consumer writes (its
+    #: K-range, which may be wider — it can handle the column-top level with a scan-free fallback).
     definition: SymRef
     inputs: list[int]  # raw arg indices for input_params (passed as the scan_with_tail Ins)
-    top_trim: int = 0
-    bot_trim: int = 0
+    body_top_trim: int = 0
+    body_bot_trim: int = 0
+    tail_top_trim: int = 0
+    tail_bot_trim: int = 0
 
 
 class Scan(Node):
