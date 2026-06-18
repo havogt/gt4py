@@ -235,6 +235,19 @@ def apply_common_transforms(
 
     if extract_temporaries:
         ir = infer(ir, inplace=True, offset_provider_type=offset_provider_type)
+        import os as _os
+
+        if _os.environ.get("GT4PY_DUMP_PREGTMP"):
+            with open(_os.environ["GT4PY_DUMP_PREGTMP"], "w") as _f:
+                _f.write(str(ir))
+        # EXPERIMENT(h6): fusion creates identity `as_fieldop(λx→·x)(field)` copies as
+        # lambda args; global_tmps then materializes each as a copy kernel. Eliminate
+        # them (PruneCasts.is_identity) + inline the resulting trivial (SymRef) lets.
+        ir = prune_casts.PruneCasts.apply(ir)
+        ir = InlineLambdas.apply(ir, opcount_preserving=True)
+        if _os.environ.get("GT4PY_DUMP_POSTPRUNE"):
+            with open(_os.environ["GT4PY_DUMP_POSTPRUNE"], "w") as _f:
+                _f.write(str(ir))
         ir = global_tmps.create_global_tmps(
             ir,
             offset_provider=offset_provider,
