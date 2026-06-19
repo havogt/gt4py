@@ -252,6 +252,9 @@ def apply_common_transforms(
     #: (e.g. the Green-Gauss gradient reductions). Not yet robust for dynamic-domain programs,
     #: hence opt-in.
     merge_tmps: bool = False,
+    #: Inline (recompute) a reduction-temp accessed at a vertical (Koff) shift instead of
+    #: materializing it as a temp, dropping a kernel and its DRAM round-trip. Opt-in.
+    vertical_shift_fusion: bool = False,
 ) -> itir.Program:
     assert isinstance(ir, itir.Program)
     # TODO(tehrengruber): Allow `common.OffsetProviderType`, but domain inference currently
@@ -316,7 +319,10 @@ def apply_common_transforms(
         # a list. Such expressions must be inlined however because no backend supports such
         # field operators right now.
         inlined = fuse_as_fieldop.FuseAsFieldOp.apply(
-            inlined, uids=uids, offset_provider_type=offset_provider_type
+            inlined,
+            uids=uids,
+            offset_provider_type=offset_provider_type,
+            vertical_shift_fusion=vertical_shift_fusion,
         )
 
         if inlined == ir:

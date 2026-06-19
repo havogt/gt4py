@@ -12,6 +12,7 @@ import dataclasses
 import enum
 import functools
 import operator
+import os
 from typing import Optional
 
 from gt4py import eve
@@ -198,7 +199,32 @@ def fuse_as_fieldop(
     return new_node
 
 
-def _arg_inline_predicate(node: itir.Expr, shifts: set[tuple[itir.OffsetLiteral, ...]]) -> bool:
+def _all_accesses_center_or_vertical(
+    shifts: set[tuple[itir.OffsetLiteral, ...]],
+    offset_provider_type: common.OffsetProviderType,
+) -> bool:
+    """True if every access is at the center or via purely vertical (Cartesian) offsets.
+
+    A vertical shift commutes into an as_fieldop's inputs, so the op can be inlined and
+    recomputed at the shifted level instead of being materialized as a temp. A horizontal
+    connectivity shift would compose with inner reductions and blow up the tree.
+    """
+    for shift_seq in shifts:
+        for off in shift_seq[::2]:  # offset tags at even positions, values at odd
+            tag = off.value
+            if not isinstance(tag, str) or not isinstance(
+                offset_provider_type.get(tag), common.Dimension
+            ):
+                return False
+    return True
+
+
+def _arg_inline_predicate(
+    node: itir.Expr,
+    shifts: set[tuple[itir.OffsetLiteral, ...]],
+    offset_provider_type: common.OffsetProviderType,
+    vertical_shift_fusion: bool,
+) -> bool:
     if _is_tuple_expr_of_literals(node):
         return True
 
@@ -220,6 +246,12 @@ def _arg_inline_predicate(node: itir.Expr, shifts: set[tuple[itir.OffsetLiteral,
             return True
         # only accessed at the center location
         if shifts in [set(), {()}]:
+            return True
+        # Accessed at center + purely vertical (Koff) shifts: inline and recompute at the
+        # shifted level (the vertical shift commutes into the inputs), dropping the temp.
+        if (
+            vertical_shift_fusion or os.environ.get("GT4PY_INLINE_VERTICAL_SHIFT_FIELDOP")
+        ) and _all_accesses_center_or_vertical(shifts, offset_provider_type):
             return True
         # TODO(tehrengruber): Disabled as the InlineCenterDerefLiftVars does not support this yet
         #  and it would increase the size of the tree otherwise.
@@ -294,6 +326,9 @@ class FuseAsFieldOp(
     uids: utils.IDGeneratorPool
     offset_provider_type: common.OffsetProviderType
     enable_cse: bool  # option to disable is mainly for testing purposes
+    #: Inline (recompute) a reduction-temp accessed at a vertical (Koff) shift rather than
+    #: materializing it. See `_all_accesses_center_or_vertical`.
+    vertical_shift_fusion: bool = False
 
     @classmethod
     def apply(
@@ -306,6 +341,7 @@ class FuseAsFieldOp(
         within_set_at_expr: Optional[bool] = None,
         enabled_transformations: Optional[Transformation] = None,
         enable_cse: bool = True,
+        vertical_shift_fusion: bool = False,
     ):
         enabled_transformations = enabled_transformations or cls.enabled_transformations
 
@@ -323,6 +359,7 @@ class FuseAsFieldOp(
             enabled_transformations=enabled_transformations,
             offset_provider_type=offset_provider_type,
             enable_cse=enable_cse,
+            vertical_shift_fusion=vertical_shift_fusion,
         ).visit(node, within_set_at_expr=within_set_at_expr)
         # The `FuseAsFieldOp` pass does not fully preserve the type information yet. In particular
         # for the generated lifts this is tricky and error-prone. For simplicity, we just reinfer
@@ -403,7 +440,9 @@ class FuseAsFieldOp(
             shifts = trace_shifts.trace_stencil(stencil, num_args=len(args))
 
             eligible_els = [
-                _arg_inline_predicate(arg, arg_shifts)
+                _arg_inline_predicate(
+                    arg, arg_shifts, self.offset_provider_type, self.vertical_shift_fusion
+                )
                 for arg, arg_shifts in zip(args, shifts, strict=True)
             ]
             if any(eligible_els):

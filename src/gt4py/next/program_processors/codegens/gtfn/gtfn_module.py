@@ -62,6 +62,10 @@ class GTFNTranslationStep(
     #: On by default: the merge is robust (direct construction + safety-net fallback, never
     #: emits unlowerable IR) and is a no-op for programs with no independent same-domain temps.
     enable_tmp_merge: bool = True
+    #: Inline (recompute) a reduction-temp accessed at a vertical (Koff) shift instead of
+    #: materializing it as a temp, dropping a kernel and its DRAM round-trip (see
+    #: apply_common_transforms). Opt-in: only beneficial where the temp is a large traffic share.
+    enable_vertical_shift_fusion: bool = False
 
     def _default_code_spec(self) -> code_specs.HeaderAndSourceCodeSpec:
         match self.device_type:
@@ -164,6 +168,7 @@ class GTFNTranslationStep(
             symbolic_domain_sizes=self.symbolic_domain_sizes,
             use_max_domain_range_on_unstructured_shift=self.use_max_domain_range_on_unstructured_shift,
             merge_tmps=self.enable_tmp_merge,
+            vertical_shift_fusion=self.enable_vertical_shift_fusion,
         )
 
         new_program = apply_common_transforms(
