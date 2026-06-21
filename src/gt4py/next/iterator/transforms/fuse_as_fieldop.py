@@ -219,6 +219,13 @@ def _all_accesses_center_or_vertical(
     return True
 
 
+def _all_accesses_single_hop(
+    shifts: set[tuple[itir.OffsetLiteral, ...]],
+) -> bool:
+    """True if every access is at the center or a single offset hop (one tag+value pair)."""
+    return all(len(shift_seq) <= 2 for shift_seq in shifts)
+
+
 def _arg_inline_predicate(
     node: itir.Expr,
     shifts: set[tuple[itir.OffsetLiteral, ...]],
@@ -252,6 +259,14 @@ def _arg_inline_predicate(
         if (
             vertical_shift_fusion or os.environ.get("GT4PY_INLINE_VERTICAL_SHIFT_FIELDOP")
         ) and _all_accesses_center_or_vertical(shifts, offset_provider_type):
+            return True
+        # EXPERIMENT: also inline reduction-temps accessed at a single connectivity hop
+        # (e.g. a C2E/V2E reduction read at E2C/E2V), recomputing the inner reduction at the
+        # neighbor location. Bets on cache reuse making the redundant gather cheaper than the
+        # temp DRAM round-trip. Bounded to single-hop accesses to keep the tree from exploding.
+        if os.environ.get("GT4PY_INLINE_CONNECTIVITY_SHIFT_FIELDOP") and _all_accesses_single_hop(
+            shifts
+        ):
             return True
         # TODO(tehrengruber): Disabled as the InlineCenterDerefLiftVars does not support this yet
         #  and it would increase the size of the tree otherwise.
