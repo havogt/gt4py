@@ -86,11 +86,9 @@ class FieldopData:
                 (dim, dace.symbolic.SymExpr(0) if self.origin is None else self.origin[i])
                 for i, dim in enumerate(self.gt_type.dims)
             ]
-            dtype = self.gt_type.dtype
-            # `FieldType.dtype` is widened to include `TypeVarType`, but generic operators are
-            # monomorphized before lowering, so only concrete dtypes reach here.
-            assert isinstance(dtype, (ts.ScalarType, ts.ListType))
-            return gtir_dataflow.IteratorExpr(self.dc_node, dtype, field_origin, it_indices)
+            return gtir_dataflow.IteratorExpr(
+                self.dc_node, self.gt_type.dtype, field_origin, it_indices
+            )
 
         raise NotImplementedError(f"Node type {type(self.gt_type)} not supported.")
 

@@ -85,8 +85,9 @@ def is_generic(symbol_type: ts.TypeSpec) -> bool:
     Figure out if a type contains parts that are only known when concrete arguments are given.
 
     Recurses into composite types, reporting ``True`` if any nested part is a `DeferredType` or
-    `TypeVarType`. Unlike :func:`is_concrete` (a shallow top-level check), this is deep, so a
-    tuple with a nested `DeferredType` is both concrete and generic.
+    a `PartialTypeSpec` (a dtype-generic frontend type). Unlike :func:`is_concrete` (a shallow
+    top-level check), this is deep, so a tuple with a nested `DeferredType` is both concrete and
+    generic.
 
     Note: this returns ``True`` for a bare ``astype`` constructor type, whose ``definition``
     carries a ``DeferredType`` by design; callers that only care about *data* arguments must
@@ -103,7 +104,7 @@ def is_generic(symbol_type: ts.TypeSpec) -> bool:
         >>> is_generic(ts.TupleType(types=[bool_type, ts.DeferredType(constraint=None)]))
         True
     """
-    if isinstance(symbol_type, (ts.DeferredType, ts.TypeVarType)):
+    if isinstance(symbol_type, (ts.DeferredType, ts.PartialTypeSpec)):
         return True
     return any(is_generic(p) for p in _type_params(symbol_type))
 
@@ -235,9 +236,9 @@ def tree_map_type(
     )
 
 
-def extract_dtype(symbol_type: ts.TypeSpec) -> ts.ScalarType | ts.ListType | ts.TypeVarType:
+def extract_dtype(symbol_type: ts.TypeSpec) -> ts.ScalarType | ts.ListType:
     """
-    Extract the data type from ``symbol_type`` if it is `FieldType`, `ScalarType` or `TypeVarType`.
+    Extract the data type from ``symbol_type`` if it is a `FieldType` or `ScalarType`.
 
     Raise an error if no dtype can be found or the result would be ambiguous.
 
@@ -255,8 +256,6 @@ def extract_dtype(symbol_type: ts.TypeSpec) -> ts.ScalarType | ts.ListType | ts.
             return dtype
         case ts.ScalarType() as dtype:
             return dtype
-        case ts.TypeVarType() as dtype:
-            return dtype
     raise ValueError(f"Can not unambiguosly extract data type from '{symbol_type}'.")
 
 
@@ -271,17 +270,10 @@ _INTEGRAL_KINDS: Final[frozenset[ts.ScalarKind]] = _scalar_kinds(core_defs.INTEG
 
 
 def _is_field_or_scalar_of_kind(symbol_type: ts.TypeSpec, kinds: Collection[ts.ScalarKind]) -> bool:
-    """Check if ``symbol_type`` is a scalar or a field whose dtype kind is in ``kinds``.
-
-    A type variable has the property iff all of its constraints have it.
-    """
-    if isinstance(symbol_type, ts.TypeVarType):
-        return all(_is_field_or_scalar_of_kind(c, kinds) for c in symbol_type.constraints)
+    """Check if ``symbol_type`` is a scalar or a field whose dtype kind is in ``kinds``."""
     if not isinstance(symbol_type, (ts.ScalarType, ts.FieldType)):
         return False
     dtype = extract_dtype(symbol_type)
-    if isinstance(dtype, ts.TypeVarType):
-        return all(_is_field_or_scalar_of_kind(c, kinds) for c in dtype.constraints)
     return isinstance(dtype, ts.ScalarType) and dtype.kind in kinds
 
 
@@ -352,7 +344,7 @@ def is_arithmetic_scalar(symbol_type: ts.TypeSpec) -> bool:
         ... )
         False
     """
-    if not isinstance(symbol_type, (ts.ScalarType, ts.TypeVarType)):
+    if not isinstance(symbol_type, ts.ScalarType):
         return False
     return is_arithmetic(symbol_type)
 
@@ -386,15 +378,6 @@ def is_arithmetic(symbol_type: ts.TypeSpec) -> bool:
         >>> is_arithmetic(ts.FieldType(dims=[], dtype=ts.ScalarType(kind=ts.ScalarKind.INT32)))
         True
     """
-    # `is_arithmetic` cannot reuse `_is_field_or_scalar_of_kind`'s "all constraints
-    #  share the kind" rule: a type variable is arithmetic if every constraint is
-    #  arithmetic, even when the constraints mix floating point and integral kinds.
-    if isinstance(symbol_type, ts.TypeVarType):
-        return all(is_arithmetic(c) for c in symbol_type.constraints)
-    if isinstance(symbol_type, (ts.ScalarType, ts.FieldType)) and isinstance(
-        dtype := extract_dtype(symbol_type), ts.TypeVarType
-    ):
-        return is_arithmetic(dtype)
     return is_floating_point(symbol_type) or is_integral(symbol_type)
 
 
@@ -470,7 +453,7 @@ def extract_dims(symbol_type: ts.TypeSpec) -> list[common.Dimension]:
         >>> extract_dims(ts.FieldType(dims=[I, J], dtype=ts.ScalarType(kind=ts.ScalarKind.INT64)))
         [Dimension(value='I', kind=<DimensionKind.HORIZONTAL: 'horizontal'>), Dimension(value='J', kind=<DimensionKind.HORIZONTAL: 'horizontal'>)]
     """
-    if isinstance(symbol_type, (ts.ScalarType, ts.TypeVarType)):
+    if isinstance(symbol_type, ts.ScalarType):
         return []
     if isinstance(symbol_type, ts.FieldType):
         return symbol_type.dims
@@ -630,139 +613,14 @@ def is_concretizable(symbol_type: ts.TypeSpec, to_type: ts.TypeSpec) -> bool:
     return False
 
 
-def _bind_var(var: ts.TypeVarType, dtype: ts.TypeSpec) -> dict[str, ts.ScalarType]:
-    if not isinstance(dtype, ts.ScalarType):
-        # not a concrete scalar to bind to -- e.g. a `TypeVarType` (operator-from-operator
-        # call), a `DeferredType` (scan), or a `ListType` (local field). Leave it unbound;
-        # the caller is responsible for checking that no type variable remained unbound.
-        return {}
-    if dtype not in var.constraints:
-        raise ValueError(f"'{dtype}' does not satisfy the constraints of type variable '{var}'.")
-    return {var.name: dtype}
-
-
-def _merge_bindings(parts: Iterable[dict[str, ts.ScalarType]]) -> dict[str, ts.ScalarType]:
-    binding: dict[str, ts.ScalarType] = {}
-    for part in parts:
-        for name, dtype in part.items():
-            if (previous := binding.get(name)) is not None and previous != dtype:
-                raise ValueError(
-                    f"Type variable '{name}' is bound inconsistently:"
-                    f" '{previous}' and '{dtype}' (all arguments using '{name}'"
-                    " must have the same dtype)."
-                )
-            binding[name] = dtype
-    return binding
-
-
-def _bind(param: ts.TypeSpec, arg: ts.TypeSpec) -> dict[str, ts.ScalarType]:
-    match param:
-        case ts.TypeVarType() as var:
-            return _bind_var(var, arg)
-        case ts.FieldType(dtype=ts.TypeVarType() as var):
-            # scalar arguments are promoted to zero-dimensional fields
-            return _bind_var(var, arg.dtype if isinstance(arg, ts.FieldType) else arg)
-        case ts.ListType(element_type=element_type) if isinstance(arg, ts.ListType):
-            return _bind(element_type, arg.element_type)
-        case ts.TupleType() | ts.NamedCollectionType() if isinstance(
-            arg, (ts.TupleType, ts.NamedCollectionType)
-        ):
-            # tolerant by design: a structural mismatch (e.g. tuple vs scalar) binds nothing
-            # here and is reported by the regular signature checks instead.
-            return _merge_bindings(_bind(p, a) for p, a in zip(param.types, arg.types))
-    return {}
-
-
-def bind_type_vars(
-    params: Sequence[ts.TypeSpec], args: Sequence[ts.TypeSpec]
-) -> dict[str, ts.ScalarType]:
-    """
-    Compute a binding of all type variables in ``params`` by structurally matching ``args``.
-
-    Concrete (non-generic) parts of the parameters are ignored; a type variable position binds
-    only if the corresponding argument provides a concrete scalar dtype. The caller is
-    responsible for checking that no type variable remained unbound.
-
-    Raises:
-        ValueError: If a type variable would be bound inconsistently or to a dtype that is
-            not one of its constraints.
-
-    Examples:
-        >>> var = ts.TypeVarType(name="T", constraints=(ts.ScalarType(kind=ts.ScalarKind.FLOAT64),))
-        >>> I = common.Dimension(value="I")
-        >>> binding = bind_type_vars(
-        ...     [ts.FieldType(dims=[I], dtype=var)],
-        ...     [ts.FieldType(dims=[I], dtype=ts.ScalarType(kind=ts.ScalarKind.FLOAT64))],
-        ... )
-        >>> print(binding["T"])
-        float64
-    """
-    return _merge_bindings(_bind(param, arg) for param, arg in zip(params, args))
-
-
-def tree_map_type_params(
-    fun: Callable[[ts.TypeSpec], ts.TypeSpec], symbol_type: ts.TypeSpec
-) -> ts.TypeSpec:
-    """Rebuild ``symbol_type`` applying ``fun`` to each immediate type-parameter sub-type.
-
-    Leaf types are returned unchanged.
-    """
-    match symbol_type:
-        case ts.FieldType(dims=dims, dtype=dtype):
-            new_dtype = fun(dtype)
-            assert isinstance(new_dtype, (ts.ScalarType, ts.ListType, ts.TypeVarType))
-            return ts.FieldType(dims=dims, dtype=new_dtype)
-        case ts.ListType(element_type=element_type, offset_type=offset_type):
-            new_element_type = fun(element_type)
-            assert isinstance(new_element_type, ts.DataType)
-            return ts.ListType(element_type=new_element_type, offset_type=offset_type)
-        case ts.TupleType(types=types):
-            return ts.TupleType(types=[fun(t) for t in types])
-        case ts.NamedCollectionType(types=types):
-            return ts.NamedCollectionType(
-                types=[fun(t) for t in types],
-                keys=symbol_type.keys,
-                original_python_type=symbol_type.original_python_type,
-            )
-        case ts.FunctionType():
-            return ts.FunctionType(
-                pos_only_args=[fun(t) for t in symbol_type.pos_only_args],
-                pos_or_kw_args={name: fun(t) for name, t in symbol_type.pos_or_kw_args.items()},
-                kw_only_args={name: fun(t) for name, t in symbol_type.kw_only_args.items()},
-                returns=fun(symbol_type.returns),
-            )
-    return symbol_type
-
-
-def substitute_type_vars(
-    type_: ts.TypeSpec, binding: xtyping.Mapping[str, ts.ScalarType]
-) -> ts.TypeSpec:
-    """
-    Replace all type variables in ``type_`` that are bound in ``binding``.
-
-    Unbound type variables and all other generic parts (e.g. `DeferredType`) are kept as-is.
-
-    Examples:
-        >>> var = ts.TypeVarType(name="T", constraints=(ts.ScalarType(kind=ts.ScalarKind.FLOAT64),))
-        >>> I = common.Dimension(value="I")
-        >>> print(
-        ...     substitute_type_vars(
-        ...         ts.FieldType(dims=[I], dtype=var),
-        ...         {"T": ts.ScalarType(kind=ts.ScalarKind.FLOAT64)},
-        ...     )
-        ... )
-        Field[[I], float64]
-    """
-    if not binding or not is_generic(type_):
-        return type_
-    if isinstance(type_, ts.TypeVarType):
-        return binding.get(type_.name, type_)
-    return tree_map_type_params(lambda t: substitute_type_vars(t, binding), type_)
+# Binding / substitution / specialization of dtype-generic types lives in
+# `gt4py.next.type_system.partial_type_info` (Approach 3): they operate on `ts.PartialTypeSpec`,
+# never on a `FieldType` with an embedded type variable.
 
 
 def promote(
-    *types: ts.FieldType | ts.ScalarType | ts.TypeVarType, always_field: bool = False
-) -> ts.FieldType | ts.ScalarType | ts.TypeVarType:
+    *types: ts.FieldType | ts.ScalarType, always_field: bool = False
+) -> ts.FieldType | ts.ScalarType:
     """
     Promote a set of field or scalar types to a common type.
 
@@ -784,29 +642,17 @@ def promote(
     >>> promoted.dims == [I, J, K] and promoted.dtype == dtype
     True
     """
-    if not always_field and all(
-        isinstance(type_, (ts.ScalarType, ts.TypeVarType)) for type_ in types
-    ):
+    if not always_field and all(isinstance(type_, ts.ScalarType) for type_ in types):
         if not all(type_ == types[0] for type_ in types):
-            if any(isinstance(type_, ts.TypeVarType) for type_ in types):
-                distinct_types = "', '".join(str(t) for t in dict.fromkeys(types))
-                raise ValueError(
-                    f"Could not promote '{distinct_types}': a generic dtype (type variable)"
-                    " can only be combined with values of the same type variable,"
-                    " not with other dtypes."
-                )
             raise ValueError("Could not promote scalars of different dtype (not implemented).")
-        if not all(type_.shape is None for type_ in types if isinstance(type_, ts.ScalarType)):
+        if not all(type_.shape is None for type_ in types):  # type: ignore[union-attr]
             raise NotImplementedError("Shape promotion not implemented.")
         return types[0]
-    elif all(isinstance(type_, (ts.ScalarType, ts.FieldType, ts.TypeVarType)) for type_ in types):
+    elif all(isinstance(type_, (ts.ScalarType, ts.FieldType)) for type_ in types):
         dims = common.promote_dims(*(extract_dims(type_) for type_ in types))
         extracted_dtypes = [extract_dtype(type_) for type_ in types]
-        assert all(isinstance(dtype, (ts.ScalarType, ts.TypeVarType)) for dtype in extracted_dtypes)
-        dtype = cast(  # type variables promote like scalars (only with themselves)
-            ts.ScalarType | ts.TypeVarType,
-            promote(*extracted_dtypes),  # type: ignore[arg-type] # checked above
-        )
+        assert all(isinstance(dtype, ts.ScalarType) for dtype in extracted_dtypes)
+        dtype = cast(ts.ScalarType, promote(*extracted_dtypes))  # type: ignore[arg-type] # checked is `ScalarType`
 
         return ts.FieldType(dims=dims, dtype=dtype)
     raise TypeError("Expected a 'FieldType' or 'ScalarType'.")
