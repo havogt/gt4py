@@ -151,7 +151,7 @@ class ListType(DataType):
 
 class FieldType(DataType, CallableType):
     dims: list[common.Dimension]
-    dtype: ScalarType | ListType | TypeVarType
+    dtype: ScalarType | ListType
 
     def __str__(self) -> str:
         dims = "..." if self.dims is Ellipsis else f"[{', '.join(dim.value for dim in self.dims)}]"
@@ -260,3 +260,34 @@ class ConstructorType(CallableType):
 
 class DomainType(DataType):
     dims: list[common.Dimension]
+
+
+#: A field value of a `PartialTypeSpec`: either a concrete type-system value (the same kinds of
+#: values that occur as constructor arguments of the wrapped `TypeSpec`) or a `TypeVarType`
+#: standing in for a not-yet-bound dtype. Modeled as ``object`` because the constructor fields
+#: of the wrapped classes are heterogeneous (e.g. ``dims: list[Dimension]``, ``dtype: ScalarType``).
+PartialField = object
+
+
+class PartialTypeSpec(TypeSpec):
+    """A type-system value with some constructor fields left as type variables.
+
+    Frontend-only representation of a generic type. It records *which* concrete `TypeSpec`
+    class it will become (`target`) and the constructor field values (`fields`), some of which
+    may be `TypeVarType` placeholders instead of concrete values. `specialize` substitutes the
+    bound type variables and instantiates the real concrete `target`, so nothing downstream of
+    the frontend ever sees a `PartialTypeSpec`.
+
+    As a frozen eve `DataModel` it inherits structural ``__eq__`` and ``content_hash`` (the same
+    machinery that keys the compilation cache for `FunctionType`), so it is a stable cache key
+    despite holding a mapping.
+    """
+
+    target: type[TypeSpec]
+    #: ``(field_name, value)`` pairs, in constructor order. A value is either concrete or a
+    #: `TypeVarType`. A tuple (not a dict) keeps ordering deterministic for hashing/equality.
+    fields: tuple[tuple[str, PartialField], ...]
+
+    def __str__(self) -> str:
+        body = ", ".join(f"{name}={value}" for name, value in self.fields)
+        return f"Partial[{self.target.__name__}]({body})"
