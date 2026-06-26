@@ -97,6 +97,7 @@ class CMakeFactory(
             source.library_deps,
             [header_name, bindings_name],
             languages=cmake_languages,
+            branchless_skip_reduce=source.program_source.branchless_skip_reduce,
         )
 
         return CMakeProject(

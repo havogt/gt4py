@@ -7,15 +7,84 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 import dataclasses
+import os
 from collections.abc import Iterable, Iterator
 from typing import TypeGuard
 
 from gt4py.eve import NodeTranslator, PreserveLocationVisitor
-from gt4py.next import common, utils
+from gt4py.next import common, config, utils
 from gt4py.next.iterator import ir as itir
 from gt4py.next.iterator.ir_utils import common_pattern_matcher as cpm, ir_makers as im
 from gt4py.next.iterator.ir_utils.common_pattern_matcher import is_applied_lift
 from gt4py.next.type_system import type_specifications as ts
+
+
+def _reduction_dtype(init: itir.Expr) -> ts.ScalarType | None:
+    """The scalar dtype of a sum reduction's identity, or None if not statically known."""
+    if isinstance(init.type, ts.ScalarType):
+        return init.type
+    return None
+
+
+def _is_zero_literal(expr: itir.Expr) -> bool:
+    if not isinstance(expr, itir.Literal):
+        return False
+    try:
+        return float(expr.value) == 0.0
+    except (TypeError, ValueError):
+        return False
+
+
+def _references(expr: itir.Expr, name: str) -> bool:
+    return any(ref.id == name for ref in expr.pre_walk_values().if_isinstance(itir.SymRef))
+
+
+def _additive_delta(
+    fun: itir.Expr, init: itir.Expr, acc: str, elems: list[itir.Expr]
+) -> itir.Expr | None:
+    """For an additive reduction ``acc + delta(elems)``, return ``delta`` with the
+    per-neighbor ``elems`` inlined, so it can be masked to 0 and accumulated
+    unconditionally. Returns ``None`` if the reduction is not a recognized additive
+    form with a statically-known, zero identity (the only case where masking to 0 is
+    sound), so the caller falls back to the original branch.
+    """
+    if _reduction_dtype(init) is None or not _is_zero_literal(init):
+        return None
+
+    # Bare `plus`: reduce(plus, 0)(neighbors)  ->  acc + elem
+    if isinstance(fun, itir.SymRef) and fun.id == "plus":
+        if len(elems) != 1:
+            return None
+        return elems[0]
+
+    # Additive lambda (e.g. fused weight-multiply):
+    #   reduce(lambda a, x...: plus(a, body(x...)), 0)  ->  acc + body(elems)
+    if isinstance(fun, itir.Lambda):
+        body = fun.expr
+        if not (cpm.is_call_to(body, "plus") and len(body.args) == 2):
+            return None
+        acc_param = fun.params[0].id
+        lhs, rhs = body.args
+        if isinstance(lhs, itir.SymRef) and lhs.id == acc_param:
+            delta = rhs
+        elif isinstance(rhs, itir.SymRef) and rhs.id == acc_param:
+            delta = lhs
+        else:
+            return None
+        if _references(delta, acc_param):  # delta must not depend on the accumulator
+            return None
+        param_to_arg = {p.id: e for p, e in zip(fun.params[1:], elems)}
+        return _InlineParams(param_to_arg).visit(delta)
+
+    return None
+
+
+class _InlineParams(NodeTranslator):
+    def __init__(self, mapping: dict[str, itir.Expr]) -> None:
+        self.mapping = mapping
+
+    def visit_SymRef(self, node: itir.SymRef) -> itir.Expr:
+        return self.mapping.get(node.id, node)
 
 
 def _is_neighbors(arg: itir.Expr) -> TypeGuard[itir.FunCall]:
@@ -80,6 +149,11 @@ class UnrollReduce(PreserveLocationVisitor, NodeTranslator):
     # we use one UID generator per instance such that the generated ids are
     # stable across multiple runs (required for caching to properly work)
     uids: utils.IDGeneratorPool = dataclasses.field(repr=False)
+    #: Lower skip-value reductions to branchless load-then-mask (param-driven; OR'd with the
+    #: global GT4PY_FN_BRANCHLESS_SKIP_REDUCE env flag for back-compat).
+    branchless_skip_reduce: bool = False
+    #: Stack of node counts of the enclosing `as_fieldop` stencil bodies (for the size gate).
+    _stencil_size_stack: list[int] = dataclasses.field(default_factory=list, repr=False)
 
     @classmethod
     def apply(
@@ -87,8 +161,29 @@ class UnrollReduce(PreserveLocationVisitor, NodeTranslator):
         node: itir.Node,
         offset_provider_type: common.OffsetProviderType,
         uids: utils.IDGeneratorPool,
+        branchless_skip_reduce: bool = False,
     ) -> itir.Node:
-        return cls(uids=uids).visit(node, offset_provider_type=offset_provider_type)
+        return cls(uids=uids, branchless_skip_reduce=branchless_skip_reduce).visit(
+            node, offset_provider_type=offset_provider_type
+        )
+
+    def _branchless_size_ok(self) -> bool:
+        """Selectivity gate: when ``GT4PY_FN_BRANCHLESS_SKIP_REDUCE_MAX_NODES`` is set (>0),
+        apply the branchless rewrite only when the enclosing stencil is at or below that node
+        count. This keeps a small standalone gather kernel branchless while leaving a large
+        co-resident fused kernel branched (the branchless load-then-mask regresses big kernels).
+        """
+        max_nodes = config.FN_BRANCHLESS_SKIP_REDUCE_MAX_NODES
+        _dbg = os.environ.get("GT4PY_BRANCHLESS_GATE_DEBUG")
+        if _dbg:
+            size = self._stencil_size_stack[-1] if self._stencil_size_stack else -1
+            with open(_dbg, "a") as _f:
+                _f.write(f"[branchless-gate] enclosing stencil size={size} max_nodes={max_nodes}\n")
+        if max_nodes <= 0:
+            return True  # no gate: original (global) behavior
+        if not self._stencil_size_stack:
+            return True  # not inside a tracked stencil (be permissive)
+        return self._stencil_size_stack[-1] <= max_nodes
 
     def _visit_reduce(
         self, node: itir.FunCall, offset_provider_type: common.OffsetProviderType
@@ -110,7 +205,25 @@ class UnrollReduce(PreserveLocationVisitor, NodeTranslator):
             check_arg = next(_get_neighbors_args(node.args))
             offset_tag, it = check_arg.args
             can_deref = im.can_deref(im.shift(offset_tag, offset)(it))
-            step_fun = im.if_(can_deref, step_fun, acc)
+            delta = (
+                _additive_delta(fun, init, acc, elems)
+                if (self.branchless_skip_reduce or config.FN_BRANCHLESS_SKIP_REDUCE)
+                and self._branchless_size_ok()
+                else None
+            )
+            if delta is not None:
+                # Branchless skip-value handling (dace-style): mask the per-neighbor
+                # delta to the additive identity (0) by a value-select, and accumulate
+                # it UNCONDITIONALLY. The per-neighbor `deref` is no longer guarded by a
+                # control-flow branch, so the gathered field's K-row-base hoists once
+                # across all neighbors (the gridtools `deref` clamps a skip index to a
+                # safe in-bounds load; the mask zeroes its value). Only sound for
+                # additive reductions, where 0 is the additive identity.
+                dtype = _reduction_dtype(init)
+                mask = im.if_(can_deref, im.literal("1", dtype), im.literal("0", dtype))
+                step_fun = im.plus(acc, im.multiplies_(delta, mask))
+            else:
+                step_fun = im.if_(can_deref, step_fun, acc)
         step_fun = im.lambda_(acc, offset)(step_fun)
         expr = init
         for i in range(max_neighbors):
@@ -120,7 +233,22 @@ class UnrollReduce(PreserveLocationVisitor, NodeTranslator):
         return expr
 
     def visit_FunCall(self, node: itir.FunCall, **kwargs) -> itir.Expr:
-        node = self.generic_visit(node, **kwargs)
+        # Track the node count of the enclosing `as_fieldop` stencil for the branchless
+        # selectivity gate (only relevant when GT4PY_FN_BRANCHLESS_SKIP_REDUCE_MAX_NODES > 0).
+        pushed = False
+        if (
+            config.FN_BRANCHLESS_SKIP_REDUCE_MAX_NODES > 0
+            and cpm.is_call_to(node.fun, "as_fieldop")
+            and node.fun.args
+        ):
+            stencil = node.fun.args[0]
+            self._stencil_size_stack.append(sum(1 for _ in stencil.pre_walk_values()))
+            pushed = True
+        try:
+            node = self.generic_visit(node, **kwargs)
+        finally:
+            if pushed:
+                self._stencil_size_stack.pop()
         if cpm.is_applied_reduce(node):
             return self._visit_reduce(node, **kwargs)
         return node

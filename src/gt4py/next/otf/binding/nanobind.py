@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+import os
+import zlib
 from collections.abc import Collection
 from typing import Any, Optional, Sequence, TypeVar, Union
 
@@ -186,7 +188,26 @@ class BindingCodeGenerator(TemplatedGenerator):
             f"gridtools::nanobind::stride_spec<{', '.join(str(s) for s in stride_spec)}>{{}}"
         )
 
-        as_sid = f"gridtools::nanobind::as_sid({pybuffer}, {stride_spec_string})"
+        # Share a strides_kind across same-layout SIDs so sid::composite compresses their stride +
+        # ptr_diff tracking (one position advance for all same-kind fields) instead of the default
+        # unknown_kind (each unique -> tracked separately -> redundant addressing). Restricted to
+        # floating-point fields: the int connectivity tables share dims with sparse float fields
+        # (e.g. E2C table vs coeff_gradekin, both Edge x E2C) but have different element types/strides,
+        # so giving them a shared dims-kind would be incorrect (and they never compress usefully anyway).
+        is_float = sid.scalar_type.kind in (ts.ScalarKind.FLOAT32, ts.ScalarKind.FLOAT64)
+        has_local = any("2" in d.name for d in sid.dimensions)  # connectivity local dim (E2C, C2E, ...)
+        if os.environ.get("GT4PY_FN_SID_LAYOUT_KIND") and is_float and not has_local:
+            # The rendered dims are POSITIONAL (rename_numbered_dimensions -> integral_constant<int,0/1>),
+            # so Edge_t and Cell_t are both `0` and would collide. Build the kind from the entity NAME
+            # (stable per-name hash) so Edge,K and Cell,K (different strides) get different kinds.
+            kind_tags = ", ".join(
+                f"gridtools::integral_constant<int, {zlib.crc32(d.name.encode()) & 0x7FFFFFFF}>"
+                for d in sid.dimensions
+            )
+            strides_kind = f"gridtools::meta::list<{kind_tags}>"
+            as_sid = f"gridtools::nanobind::as_sid({pybuffer}, {stride_spec_string}, {strides_kind}{{}})"
+        else:
+            as_sid = f"gridtools::nanobind::as_sid({pybuffer}, {stride_spec_string})"
         shifted = f"gridtools::sid::shift_sid_origin({as_sid}, {origin})"
         renamed = f"gridtools::sid::rename_numbered_dimensions<{', '.join(dims)}>({shifted})"
         return renamed

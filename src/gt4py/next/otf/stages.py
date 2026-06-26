@@ -73,6 +73,11 @@ class ProgramSource(Generic[CodeSpecT]):
     source_code: str
     library_deps: tuple[interface.LibraryDependency, ...]
     code_spec: CodeSpecT
+    #: Emit the GT4PY_FN_BRANCHLESS_SKIP_REDUCE compile macro for this program (enables the
+    #: clamped-deref + neighbor-row helpers in the gridtools fn header). Per-program so it does
+    #: not leak across programs in one process; the macro decision is otherwise also taken from
+    #: the global GT4PY_FN_BRANCHLESS_SKIP_REDUCE env flag (back-compat).
+    branchless_skip_reduce: bool = False
 
 
 @dataclasses.dataclass(frozen=True)

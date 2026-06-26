@@ -6,6 +6,7 @@
 # Please, refer to the LICENSE file in the root directory.
 # SPDX-License-Identifier: BSD-3-Clause
 
+import os
 from typing import Any, Collection, Final, Union
 
 from gt4py.eve import codegen
@@ -211,6 +212,151 @@ class GTFNCodegen(codegen.TemplatedGenerator):
             f"}};"
         )
 
+    def visit_MapColumnTailDefinition(
+        self, node: gtfn_ir.MapColumnTailDefinition, **kwargs: Any
+    ) -> str:
+        cur = self.visit(node.cur, **kwargs)
+        prev = self.visit(node.prev, **kwargs)
+        input_binds = "".join(
+            f"auto const& {self.visit(p, **kwargs)} = make_iterator("
+            f"::gridtools::integral_constant<int, {idx} + AO>{{}}, ptr, strides);"
+            for p, idx in node.input_params
+        )
+        writes = "".join(
+            f"*::gridtools::host_device::at_key<::gridtools::integral_constant<int, {out} + AO>>(ptr) = "
+            f"{self.visit(expr, **kwargs)};"
+            for out, expr in node.outputs
+        )
+        return (
+            f"template <int AO> struct {node.id} {{\n"
+            f"  template <class Cur, class Prev, class Mk, class Ptr, class Strides>\n"
+            f"  GT_FUNCTION void operator()(Cur const& {cur}, Prev const& {prev},\n"
+            f"      Mk&& make_iterator, Ptr const& ptr, Strides const& strides) const {{\n"
+            f"    {input_binds}\n"
+            f"    {writes}\n"
+            f"  }}\n"
+            f"}};"
+        )
+
+    def visit_MapColumnExecution(self, node: gtfn_ir.MapColumnExecution, **kwargs: Any) -> str:
+        backend = self.visit(node.backend, **kwargs)
+        axis = self.visit(node.axis, **kwargs)
+        args = "".join(f".arg({self.visit(a, **kwargs)})" for a in node.args)
+        producer = self.visit(node.producer, **kwargs)
+        consumer = self.visit(node.consumer, **kwargs)
+        pins = "".join(f", {i}" for i in node.producer_inputs)
+        raw = (
+            f"gtfn::map_column_stage_raw<{producer}, {node.producer_output}, {consumer}{pins}>{{}}"
+        )
+        return (
+            f"{backend}.vertical_executor({axis})(){args}"
+            f".assign_map_column({raw}).execute();"
+        )
+
+    def visit_KoffWindowTailDefinition(
+        self, node: gtfn_ir.KoffWindowTailDefinition, **kwargs: Any
+    ) -> str:
+        # The consumer receives make_iterator + ptr + strides, then all cur registers, then all
+        # prev registers (matching koff_window_column_stage::invoke's argument order).
+        cur_params = "".join(
+            f", Cur{i} const& {self.visit(cur, **kwargs)}" for i, (cur, _prev) in enumerate(node.windows)
+        )
+        prev_params = "".join(
+            f", Prev{i} const& {self.visit(prev, **kwargs)}" for i, (_cur, prev) in enumerate(node.windows)
+        )
+        win_params = cur_params + prev_params
+        win_templates = "".join(f", class Cur{i}" for i in range(len(node.windows))) + "".join(
+            f", class Prev{i}" for i in range(len(node.windows))
+        )
+        input_binds = "".join(
+            f"auto const& {self.visit(p, **kwargs)} = make_iterator("
+            f"::gridtools::integral_constant<int, {idx} + AO>{{}}, ptr, strides);"
+            for p, idx in node.input_params
+        )
+        writes = "".join(
+            f"*::gridtools::host_device::at_key<::gridtools::integral_constant<int, {out} + AO>>(ptr) = "
+            f"{self.visit(expr, **kwargs)};"
+            for out, expr in node.outputs
+        )
+        return (
+            f"template <int AO> struct {node.id} {{\n"
+            f"  template <class Mk, class Ptr, class Strides{win_templates}>\n"
+            f"  GT_FUNCTION void operator()(Mk&& make_iterator, Ptr const& ptr,\n"
+            f"      Strides const& strides{win_params}) const {{\n"
+            f"    {input_binds}\n"
+            f"    {writes}\n"
+            f"  }}\n"
+            f"}};"
+        )
+
+    def visit_KoffWindowExecution(self, node: gtfn_ir.KoffWindowExecution, **kwargs: Any) -> str:
+        backend = self.visit(node.backend, **kwargs)
+        axis = self.visit(node.axis, **kwargs)
+        args = "".join(f".arg({self.visit(a, **kwargs)})" for a in node.args)
+        consumer = self.visit(node.consumer, **kwargs)
+        wins = "".join(f", {i}" for i in node.window_inputs)
+        raw = f"gtfn::koff_window_column_stage_raw<{consumer}{wins}>{{}}"
+        return (
+            f"{backend}.vertical_executor({axis})(){args}"
+            f".assign_koff_window({raw}).execute();"
+        )
+
+    def visit_MapWindowTailDefinition(
+        self, node: gtfn_ir.MapWindowTailDefinition, **kwargs: Any
+    ) -> str:
+        # operator()(prod_cur, prod_prev, win0_cur..winN_cur, win0_prev..winN_prev,
+        #            make_iterator, ptr, strides) — matching map_window_column_stage::invoke.
+        cur = self.visit(node.cur, **kwargs)
+        prev = self.visit(node.prev, **kwargs)
+        win_cur = "".join(
+            f", WCur{i} const& {self.visit(c, **kwargs)}" for i, (c, _p) in enumerate(node.windows)
+        )
+        win_prev = "".join(
+            f", WPrev{i} const& {self.visit(p, **kwargs)}" for i, (_c, p) in enumerate(node.windows)
+        )
+        win_templates = "".join(f", class WCur{i}" for i in range(len(node.windows))) + "".join(
+            f", class WPrev{i}" for i in range(len(node.windows))
+        )
+        input_binds = "".join(
+            f"auto const& {self.visit(p, **kwargs)} = make_iterator("
+            f"::gridtools::integral_constant<int, {idx} + AO>{{}}, ptr, strides);"
+            for p, idx in node.input_params
+        )
+        writes = "".join(
+            f"*::gridtools::host_device::at_key<::gridtools::integral_constant<int, {out} + AO>>(ptr) = "
+            f"{self.visit(expr, **kwargs)};"
+            for out, expr in node.outputs
+        )
+        return (
+            f"template <int AO> struct {node.id} {{\n"
+            f"  template <class Cur, class Prev, class Mk, class Ptr, class Strides{win_templates}>\n"
+            f"  GT_FUNCTION void operator()(Cur const& {cur}, Prev const& {prev}{win_cur}{win_prev},\n"
+            f"      Mk&& make_iterator, Ptr const& ptr, Strides const& strides) const {{\n"
+            f"    {input_binds}\n"
+            f"    {writes}\n"
+            f"  }}\n"
+            f"}};"
+        )
+
+    def visit_MapWindowExecution(self, node: gtfn_ir.MapWindowExecution, **kwargs: Any) -> str:
+        backend = self.visit(node.backend, **kwargs)
+        axis = self.visit(node.axis, **kwargs)
+        args = "".join(f".arg({self.visit(a, **kwargs)})" for a in node.args)
+        producer = self.visit(node.producer, **kwargs)
+        consumer = self.visit(node.consumer, **kwargs)
+        nwin = len(node.window_inputs)
+        win_then_pins = "".join(f", {i}" for i in node.window_inputs) + "".join(
+            f", {i}" for i in node.producer_inputs
+        )
+        raw = (
+            f"gtfn::map_window_column_stage_raw<{producer}, {node.producer_output}, "
+            f"{consumer}, {nwin}{win_then_pins}>{{}}"
+        )
+        return (
+            f"{backend}.vertical_executor({axis})(){args}"
+            f".assign_map_window({raw}).execute();"
+        )
+
     def visit_ScanExecution(self, node: gtfn_ir.ScanExecution, **kwargs: Any) -> str:
         backend = self.visit(node.backend, **kwargs)
         axis = self.visit(node.axis, **kwargs)
@@ -327,11 +473,86 @@ class GTFNCodegen(codegen.TemplatedGenerator):
         "auto {id} = gridtools::sid::shift_sid_origin(gtfn::allocate_global_tmp<{dtype}>(tmp_alloc__, {tmp_sizes}), {shifts});"
     )
 
+    def _shmem_staged_override(self, node: gtfn_ir.Program, **kwargs: Any) -> Union[dict, None]:
+        # P2 shmem-staging: when GT4PY_FN_SHMEM_STAGING is set and the program is exactly the
+        # single-temp two-unstructured-stage "C2E-reduce producer -> E2C-read consumer" pattern,
+        # emit ONE fused kernel that stages the cell temp in __shared__ (gtfn::shmem_staged_
+        # unstructured) instead of allocate_global_tmp + two executes. Default OFF => path unchanged.
+        if not os.environ.get("GT4PY_FN_SHMEM_STAGING"):
+            return None
+        if os.environ.get("SHMEM_DIAG") and node.grid_type == common.GridType.UNSTRUCTURED:
+            import pathlib
+            lines=[f"=== {node.id}: {len(node.temporaries)} temps, {len(node.executions)} execs ==="]
+            for t in node.temporaries:
+                lines.append(f"  TEMP {t.id} dtype={t.dtype}")
+            for i,e in enumerate(node.executions):
+                if isinstance(e, gtfn_ir.StencilExecution):
+                    outs=str(e.output.id) if isinstance(e.output, gtfn_ir_common.SymRef) else type(e.output).__name__
+                    ins=",".join(str(x.id) if isinstance(x, gtfn_ir_common.SymRef) else type(x).__name__ for x in e.inputs)
+                    lines.append(f"  EXEC{i} stencil={e.stencil.id} OUT={outs} IN=[{ins}]")
+                else:
+                    lines.append(f"  EXEC{i} {type(e).__name__}")
+            pathlib.Path(os.environ["SHMEM_DIAG"]).write_text(chr(10).join(lines))
+            # SUBPAIR_FIND: generalized stageable-pair finder (the part replacing the whole-program match)
+            execs=[e for e in node.executions if isinstance(e, gtfn_ir.StencilExecution)]
+            cand=[]
+            for tmp in node.temporaries:
+                tid=str(tmp.id)
+                prods=[e for e in execs if isinstance(e.output, gtfn_ir_common.SymRef) and str(e.output.id)==tid]
+                cons=[e for e in execs if any(isinstance(i, gtfn_ir_common.SymRef) and str(i.id)==tid for i in e.inputs)]
+                if len(prods)==1 and len(cons)==1 and prods[0] is not cons[0]:
+                    pin=[str(i.id) if isinstance(i,gtfn_ir_common.SymRef) else type(i).__name__ for i in prods[0].inputs]
+                    cand.append(f"  STAGEABLE {tid}: producer={prods[0].stencil.id}(in={pin}) consumer={cons[0].stencil.id} (consumer total inputs={len(cons[0].inputs)})")
+            pathlib.Path(os.environ["SHMEM_DIAG"]).write_text(chr(10).join(lines+["--- sub-pair finder candidates ---"]+cand))
+        if node.grid_type != common.GridType.UNSTRUCTURED:
+            return None
+        if len(node.temporaries) != 1 or len(node.executions) != 1 + 1:
+            return None
+        prod, cons = node.executions
+        if not (
+            isinstance(prod, gtfn_ir.StencilExecution)
+            and isinstance(cons, gtfn_ir.StencilExecution)
+        ):
+            return None
+        tmp = node.temporaries[0]
+        tmp_id = str(tmp.id)
+        # producer must write the temp from non-temp inputs; consumer must read ONLY the temp.
+        if not (isinstance(prod.output, gtfn_ir_common.SymRef) and str(prod.output.id) == tmp_id):
+            return None
+        if not all(isinstance(i, gtfn_ir_common.SymRef) for i in prod.inputs):
+            return None
+        if any(str(i.id) == tmp_id for i in prod.inputs):
+            return None
+        if not (
+            len(cons.inputs) == 1
+            and isinstance(cons.inputs[0], gtfn_ir_common.SymRef)
+            and str(cons.inputs[0].id) == tmp_id
+        ):
+            return None
+        if not isinstance(cons.output, gtfn_ir_common.SymRef):
+            return None
+
+        cell_domain = self.visit(tmp.domain, **kwargs)
+        edge_domain = self.visit(cons.backend.domain, **kwargs)
+        out = self.visit(cons.output, **kwargs)
+        prod_ins = ", ".join(self.visit(i, **kwargs) for i in prod.inputs)
+        call = (
+            f"gtfn::shmem_staged_unstructured<{prod.stencil.id}, {cons.stencil.id}, {tmp.dtype}>("
+            f"backend_nlb, {cell_domain}, {edge_domain}, {out}"
+            f"{', ' + prod_ins if prod_ins else ''});"
+        )
+        return {
+            "temporaries": [],
+            "executions": [call],
+            "extra_includes": ["#include <gridtools/fn/shmem_staged_unstructured.hpp>"],
+        }
+
     def visit_Program(self, node: gtfn_ir.Program, **kwargs: Any) -> Union[str, Collection[str]]:
         self.is_cartesian = node.grid_type == common.GridType.CARTESIAN
         self.user_defined_function_ids = list(
             str(fundef.id) for fundef in node.function_definitions
         )
+        override = self._shmem_staged_override(node, **kwargs) or {}
         return self.generic_visit(
             node,
             grid_type_str=self._grid_type_str[node.grid_type],
@@ -340,6 +561,8 @@ class GTFNCodegen(codegen.TemplatedGenerator):
                 thread_block_sizes=kwargs.get("thread_block_sizes"),
                 loop_block_sizes=kwargs.get("loop_block_sizes"),
             ),
+            extra_includes=override.get("extra_includes", []),
+            **{k: v for k, v in override.items() if k != "extra_includes"},
             **kwargs,
         )
 
@@ -351,7 +574,8 @@ class GTFNCodegen(codegen.TemplatedGenerator):
     #include <gridtools/fn/${grid_type_str}.hpp>
     #include <gridtools/fn/sid_neighbor_table.hpp>
     #include <gridtools/stencil/global_parameter.hpp>
-    
+    ${'\\n'.join(extra_includes)}
+
     // TODO(tehrengruber): This should disappear as soon as we introduce a proper builtin.
     namespace gridtools::fn {
         """

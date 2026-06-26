@@ -31,8 +31,14 @@ from gt4py.next.program_processors.codegens.gtfn.gtfn_ir import (
     FunctionDefinition,
     IfStmt,
     IntegralConstant,
+    KoffWindowExecution,
+    KoffWindowTailDefinition,
     Lambda,
     Literal,
+    MapColumnExecution,
+    MapColumnTailDefinition,
+    MapWindowExecution,
+    MapWindowTailDefinition,
     OffsetLiteral,
     Program,
     Scan,
@@ -295,6 +301,30 @@ def _domain_k_bounds(domain: Any, axis: SymRef) -> Optional[tuple[Expr, Expr]]:
     return None
 
 
+def _strip_k_dim(domain: Any, axis: SymRef) -> Any:
+    """Copy of `domain` with the `axis` dimension removed (for comparing the non-K extents)."""
+    if not isinstance(domain, (UnstructuredDomain, CartesianDomain)):
+        return domain
+    keep = [
+        i
+        for i, tag in enumerate(domain.tagged_offsets.tags)
+        if getattr(tag, "id", getattr(tag, "value", None)) != axis.id
+    ]
+    off = TaggedValues(
+        tags=[domain.tagged_offsets.tags[i] for i in keep],
+        values=[domain.tagged_offsets.values[i] for i in keep],
+    )
+    siz = TaggedValues(
+        tags=[domain.tagged_sizes.tags[i] for i in keep],
+        values=[domain.tagged_sizes.values[i] for i in keep],
+    )
+    if isinstance(domain, UnstructuredDomain):
+        return UnstructuredDomain(
+            tagged_sizes=siz, tagged_offsets=off, connectivities=domain.connectivities
+        )
+    return CartesianDomain(tagged_sizes=siz, tagged_offsets=off)
+
+
 def _is_deref_of(expr: Expr, sym: str) -> bool:
     return (
         isinstance(expr, FunCall)
@@ -347,6 +377,136 @@ class _ScanOutputRewriter(eve.NodeTranslator):
         if node.id == self.sym:
             self.ok = False
         return node
+
+
+def _is_deref_koff_of(expr: Expr, sym: str, off: int) -> bool:
+    # deref(shift(<sym>, Koff, off))
+    if not (isinstance(expr, FunCall) and isinstance(expr.fun, SymRef) and expr.fun.id == "deref"):
+        return False
+    inner = expr.args[0]
+    return (
+        isinstance(inner, FunCall)
+        and isinstance(inner.fun, SymRef)
+        and inner.fun.id == "shift"
+        and len(inner.args) == 3
+        and isinstance(inner.args[0], SymRef)
+        and inner.args[0].id == sym
+        and isinstance(inner.args[2], OffsetLiteral)
+        and inner.args[2].value == off
+    )
+
+
+@dataclasses.dataclass
+class _RenameSymRef(eve.NodeTranslator):
+    mapping: dict[str, str]
+
+    def visit_SymRef(self, node: SymRef) -> SymRef:
+        return SymRef(id=self.mapping.get(node.id, node.id))
+
+
+@dataclasses.dataclass
+class _MapChainRewriter(eve.NodeTranslator):
+    """Replace a fused map-chain producer-temp's level reads in the consumer body:
+    deref(<sym>) -> cur, deref(shift(<sym>, Koff, -1)) -> prev. Sets `ok=False` if the param
+    appears in any other position (center / Koff[-1] are the only foldable accesses here)."""
+
+    sym: str
+    cur: str
+    prev: str
+    ok: bool = True
+
+    def visit_FunCall(self, node: FunCall) -> Expr:
+        if _is_deref_of(node, self.sym):
+            return SymRef(id=self.cur)
+        if _is_deref_koff_of(node, self.sym, -1):
+            return SymRef(id=self.prev)
+        return self.generic_visit(node)
+
+    def visit_SymRef(self, node: SymRef) -> SymRef:
+        if node.id == self.sym:
+            self.ok = False
+        return node
+
+
+@dataclasses.dataclass
+class _KoffWindowRewriter(eve.NodeTranslator):
+    """Rewrite, for each windowed input param `sym`, deref(sym) -> cur and
+    deref(shift(sym, Koff, -1)) -> prev (increment-2b column-ification of a single stencil). Sets
+    `ok=False` for any windowed param accessed in another way (so it cannot be column-windowed)."""
+
+    #: sym -> (cur_name, prev_name)
+    mapping: dict[str, tuple[str, str]]
+    ok: bool = True
+
+    def visit_FunCall(self, node: FunCall) -> Expr:
+        for sym, (cur, prev) in self.mapping.items():
+            if _is_deref_of(node, sym):
+                return SymRef(id=cur)
+            if _is_deref_koff_of(node, sym, -1):
+                return SymRef(id=prev)
+        return self.generic_visit(node)
+
+    def visit_SymRef(self, node: SymRef) -> SymRef:
+        if node.id in self.mapping:
+            self.ok = False
+        return node
+
+
+def _koff_window_offsets(expr: Expr, sym: str, koff: str) -> Optional[set[int]]:
+    """The set of vertical offsets `sym` is read at in `expr` (0 = center, -1 = Koff[-1]), or None
+    if it is accessed in any other way (a different offset, a connectivity, a bare reference).
+    Only used to decide whether `sym` is a center+Koff[-1] history window."""
+    offsets: set[int] = set()
+    ok = [True]
+
+    def walk(n: Any) -> None:
+        if not ok[0]:
+            return
+        if isinstance(n, FunCall):
+            if _is_deref_of(n, sym):
+                offsets.add(0)
+                return
+            # deref(shift(sym, <koff>, off))
+            if (
+                isinstance(n.fun, SymRef)
+                and n.fun.id == "deref"
+                and isinstance(n.args[0], FunCall)
+                and isinstance(n.args[0].fun, SymRef)
+                and n.args[0].fun.id == "shift"
+            ):
+                inner = n.args[0]
+                if (
+                    isinstance(inner.args[0], SymRef)
+                    and inner.args[0].id == sym
+                    and len(inner.args) == 3
+                    and isinstance(inner.args[1], OffsetLiteral)
+                    and inner.args[1].value == koff
+                    and isinstance(inner.args[2], OffsetLiteral)
+                    and isinstance(inner.args[2].value, int)
+                ):
+                    offsets.add(inner.args[2].value)
+                    return
+            for a in n.args:
+                walk(a)
+            walk(n.fun)
+            return
+        if isinstance(n, SymRef):
+            if n.id == sym:
+                ok[0] = False
+            return
+        if not isinstance(n, Node):
+            return
+        for child in n.iter_children_values():
+            if isinstance(child, (list, tuple)):
+                for c in child:
+                    walk(c)
+            else:
+                walk(child)
+
+    walk(expr)
+    if not ok[0]:
+        return None
+    return offsets
 
 
 def _bool_from_literal(node: itir.Node) -> bool:
@@ -810,6 +970,475 @@ class GTFN_lowering(eve.NodeTranslator, eve.VisitorWithSymbolTableTrait):
                 return True
         return False
 
+    def _fuse_map_chains(
+        self,
+        executions: list,
+        extracted_functions: list,
+        temp_names: set[str],
+    ) -> tuple[list, set[str]]:
+        """PROTOTYPE (GT4PY_FN_MAP_COLUMN_FUSION, default OFF): fuse a same-domain cell-local
+        producer->consumer map-chain joined by a single Koff[-1] edge into ONE column kernel
+        (MapColumnExecution -> map_column_stage). The producer's per-level value stays register-
+        resident and the consumer reads its K-1 value from a one-deep history register, so the
+        chain edge never round-trips DRAM. The gtfn analog of a dace shared transient, generalizing
+        the scan_with_tail fold from scans to plain maps.
+
+        First increment is intentionally narrow: producer is a single-output cell-local field-op,
+        consumer is a single-output cell-local field-op reading the producer at center and/or
+        Koff[-1] only (downward/history edge), same static domain. Anything else is left unfused."""
+        if not os.environ.get("GT4PY_FN_MAP_COLUMN_FUSION"):
+            return executions, set()
+        # GT4PY_FN_KOFF_WINDOW_ONLY suppresses the producer->consumer map-chain fold so the
+        # single-stencil koff-window column-ification (increment-2b) can target the same consumer.
+        if os.environ.get("GT4PY_FN_KOFF_WINDOW_ONLY"):
+            return executions, set()
+
+        fun_by_id = {f.id: f for f in extracted_functions if isinstance(f, FunctionDefinition)}
+        _dbg = os.environ.get("GT4PY_MAP_COLUMN_DEBUG")
+
+        def reject(why: str) -> None:
+            if _dbg:
+                print(f"[map_column] reject: {why}")
+
+        if os.environ.get("GT4PY_MAP_COLUMN_DUMP"):
+            for _i, _e in enumerate(executions):
+                if isinstance(_e, StencilExecution):
+                    _o = (
+                        _e.output.id
+                        if isinstance(_e.output, SymRef)
+                        else f"Composite[{len(_e.output.values)}]"
+                        if isinstance(_e.output, SidComposite)
+                        else type(_e.output).__name__
+                    )
+                    _ins = ",".join(sorted(s for inp in _e.inputs for s in _symref_ids(inp)))
+                    print(f"[map_column DUMP] {_i} Stencil {_e.stencil.id} OUT={_o} IN=[{_ins}]")
+                else:
+                    print(f"[map_column DUMP] {_i} {type(_e).__name__}")
+
+        def out_syms(e: Stmt) -> set[str]:
+            if isinstance(e, StencilExecution):
+                return _symref_ids(e.output) if isinstance(e.output, (SymRef, SidComposite)) else set()
+            if isinstance(e, ScanExecution):
+                return {e.args[s.output].id for s in e.scans if isinstance(e.args[s.output], SymRef)}
+            return set()
+
+        def in_syms(e: Stmt) -> set[str]:
+            if isinstance(e, StencilExecution):
+                return {sym for inp in e.inputs for sym in _symref_ids(inp)}
+            if isinstance(e, ScanExecution):
+                s = set[str]()
+                for sc in e.scans:
+                    for i in sc.inputs:
+                        s |= _symref_ids(e.args[i])
+                return s
+            return set()
+
+        def is_cell_local_fieldop(sten: StencilExecution) -> Optional[FunctionDefinition]:
+            if not isinstance(sten.stencil, SymRef) or sten.stencil.id not in fun_by_id:
+                return None
+            fun = fun_by_id[sten.stencil.id]
+            if self._has_connectivity_offset(fun.expr):
+                return None
+            if len(fun.params) != len(sten.inputs):
+                return None
+            return fun
+
+        def try_fuse(
+            prod: StencilExecution, cons: StencilExecution
+        ) -> Optional[tuple[Stmt, Optional[str]]]:
+            # Producer: single SymRef output T, cell-local field-op.
+            if not isinstance(prod.output, SymRef):
+                return reject("producer is multi-output")
+            T = prod.output.id
+            prod_fun = is_cell_local_fieldop(prod)
+            if prod_fun is None:
+                return reject("producer is not a cell-local field-op")
+            if any(
+                o in self.offset_provider_type
+                and isinstance(common.get_offset_type(self.offset_provider_type, o), common.Dimension)
+                for o in self._collect_offset_or_axis_node(OffsetLiteral, prod_fun.expr)
+            ):
+                return reject("producer has a vertical shift")
+            if not all(isinstance(i, SymRef) for i in prod.inputs):
+                return reject("producer inputs are not plain SymRefs")
+            # Consumer: cell-local field-op reading T. Output is either a single SymRef field or a
+            # SidComposite (multi-output, increment-2a): the consumer computes several outputs, none
+            # of which is T (T is producer-only), and reads T at center+Koff[-1]. The composite is
+            # kept as ONE arg and the tuple-valued body is written to it exactly like a plain
+            # multi-output stencil; T's reads still resolve to the cur/prev registers.
+            cons_fun = is_cell_local_fieldop(cons)
+            if cons_fun is None:
+                return reject("consumer is not a cell-local field-op")
+            if not isinstance(cons.output, (SymRef, SidComposite)):
+                return reject("consumer output is neither SymRef nor SidComposite")
+            if isinstance(cons.output, SidComposite) and T in _symref_ids(cons.output):
+                return reject(f"{T} is among the multi-output consumer's outputs")
+            t_positions = [
+                j for j, inp in enumerate(cons.inputs) if isinstance(inp, SymRef) and inp.id == T
+            ]
+            if len(t_positions) != 1:
+                return reject(f"{T} appears {len(t_positions)} times among consumer inputs")
+            t_pos = t_positions[0]
+            t_param = cons_fun.params[t_pos].id
+            # Vertical axis name: the (unique) Koff offset in the consumer whose offset-type is a
+            # Dimension (the vertical/K dim). column_axis may be None for scan-free programs.
+            vaxis = None
+            for o in self._collect_offset_or_axis_node(OffsetLiteral, cons_fun.expr):
+                if o in self.offset_provider_type and isinstance(
+                    common.get_offset_type(self.offset_provider_type, o), common.Dimension
+                ):
+                    vaxis = common.get_offset_type(self.offset_provider_type, o).value
+                    break
+            if vaxis is None and self.column_axis is not None:
+                vaxis = self.column_axis.value
+            if vaxis is None:
+                return reject("could not determine vertical axis")
+            axisref = SymRef(id=vaxis)
+            # Domain match. The producer/consumer domains query bounds via their OWN output SID
+            # (tmp vs out), so after renaming the producer's output SID to the consumer's they are
+            # structurally comparable. Two cases:
+            #  (a) producer is a program OUTPUT field (not a temp): its domain equals the consumer's
+            #      exactly -> require structural equality (increment-0).
+            #  (b) producer writes a real TEMPORARY fed by a Koff[-1] consumer read: the temporaries
+            #      pass extends the producer's K-range by 1 level at the TOP (a halo level for the
+            #      K-1 read), so producer-K-start == consumer-K-start - 1, producer-K-size ==
+            #      consumer-K-size + 1, horizontal extent identical. In the COLUMN-kernel form that
+            #      halo level is subsumed by the one-deep history register, so we launch over the
+            #      CONSUMER's K-range and may drop the producer write entirely (increment-1).
+            # Normalize the producer's output-SID name out of its domain so it compares against the
+            # consumer's domain. For a single-SymRef consumer output rename T -> that name (the only
+            # textual difference). For a multi-output (SidComposite) consumer there is no single name
+            # to rename to: in compile_time_domain mode the domains are literal tuples and already
+            # equal, so renaming T to a neutral sentinel suffices (it just removes the producer-only
+            # symbol, which cannot appear in the consumer domain anyway).
+            rename_to = cons.output.id if isinstance(cons.output, SymRef) else f"__mc_dom_{T}"
+            prod_dom_norm = _RenameSymRef(mapping={T: rename_to}).visit(prod.backend.domain)
+            is_temp = T in temp_names
+            drop_producer_output = False
+            if prod_dom_norm == cons.backend.domain:
+                # case (a): exact same domain. A producer-only temp can still drop its SID write —
+                # its values flow solely through the cur/prev registers (the K=0 Koff[-1] read is
+                # guard-protected by the consumer and `prev` is seeded with `cur`).
+                drop_producer_output = is_temp
+            elif is_temp:
+                # case (b): producer extended by exactly 1 level at the top (Koff[-1] halo).
+                pk = _domain_k_bounds(prod_dom_norm, axisref)
+                ck = _domain_k_bounds(cons.backend.domain, axisref)
+                if pk is None or ck is None:
+                    return reject("could not read K-bounds for temp-producer domain check")
+                top_ext = _static_diff(ck[0], pk[0])  # cons_start - prod_start
+                bot_ext = _static_diff(pk[1], ck[1])  # prod_stop  - cons_stop
+                if top_ext != 1 or bot_ext != 0:
+                    return reject(
+                        f"temp producer not extended by exactly 1 top level "
+                        f"(top_ext={top_ext}, bot_ext={bot_ext})"
+                    )
+                # also require horizontal extents identical (everything but K matches after rename)
+                if _strip_k_dim(prod_dom_norm, axisref) != _strip_k_dim(
+                    cons.backend.domain, axisref
+                ):
+                    return reject("producer/consumer non-K domain extents differ")
+                drop_producer_output = True
+            else:
+                return reject("producer/consumer domains differ after output-SID normalization")
+            # T must be producer-only: written by no other execution, read by no execution but cons.
+            if any(T in out_syms(e) for e in executions if e is not prod):
+                return reject(f"{T} written elsewhere")
+            if any(T in in_syms(e) for e in executions if e is not cons):
+                return reject(f"{T} read by an execution other than the consumer")
+            # Dropping the producer SID write is only sound for a true producer-only temporary.
+            if drop_producer_output and not is_temp:
+                drop_producer_output = False
+
+            cur_name, prev_name = f"{t_param}__cur", f"{t_param}__prev"
+            rewriter = _MapChainRewriter(sym=t_param, cur=cur_name, prev=prev_name)
+            new_expr = rewriter.visit(cons_fun.expr)
+            if not rewriter.ok:
+                return reject(f"{t_param} accessed in an unfoldable way (not center/Koff[-1])")
+
+            # Increment-2b "extra windows": besides the fused producer temp T, the consumer may read
+            # OTHER already-materialized inputs at center + Koff[-1] (e.g. pert's _fun_3 reading
+            # perturbed_exner_mc + temporal_extrapolation, which _fun_0 materializes for OTHER
+            # consumers so they cannot be fused/dropped). Window each such input: load it once per
+            # level and serve its K-1 value from a register, instead of a second DRAM load. Only when
+            # the launch K-range starts at the field origin is the seeded K==0 `prev` safe (the
+            # consumer's where(k>0,...) guards discard it) — same gate as _koffwindow_columnify.
+            koff = None
+            for o in self.offset_provider_type:
+                ot = common.get_offset_type(self.offset_provider_type, o)
+                if isinstance(ot, common.Dimension) and ot.value == vaxis:
+                    koff = o
+                    break
+            win_positions: list[int] = []
+            if (
+                koff is not None
+                and os.environ.get("GT4PY_FN_MAP_COLUMN_WINDOWS") is not None
+                and not os.environ.get("GT4PY_FN_MAP_COLUMN_WINDOWS_OFF")
+            ):
+                launch_dom = cons.backend.domain if drop_producer_output else prod.backend.domain
+                kb = _domain_k_bounds(launch_dom, axisref)
+                k_start = _static_int(kb[0]) if kb is not None else None
+                if k_start == 0:
+                    for j, (param, inp) in enumerate(zip(cons_fun.params, cons.inputs)):
+                        if j == t_pos or not isinstance(inp, SymRef):
+                            continue
+                        offs = _koff_window_offsets(cons_fun.expr, param.id, koff)
+                        if offs is None:
+                            continue
+                        if -1 in offs and offs <= {0, -1}:
+                            win_positions.append(j)
+
+            window_mapping: dict[str, tuple[str, str]] = {}
+            windows: list[tuple[Sym, Sym]] = []
+            if win_positions:
+                for j in win_positions:
+                    pid = cons_fun.params[j].id
+                    wc, wp = f"{pid}__wcur", f"{pid}__wprev"
+                    window_mapping[pid] = (wc, wp)
+                    windows.append((Sym(id=wc), Sym(id=wp)))
+                wrew = _KoffWindowRewriter(mapping=window_mapping)
+                new_expr = wrew.visit(new_expr)
+                if not wrew.ok:
+                    return reject("a windowed consumer input escaped the cur/prev rewrite")
+
+            # Build the new combined arg list. When the producer writes a producer-only temp we
+            # DROP its SID write (increment-1): the producer output is NOT added as an arg and the
+            # temp allocation is removed; the chain value lives only in the `cur`/`prev` registers.
+            # Otherwise (producer is a real output field) keep its output arg and still materialize
+            # it (increment-0). Followed by deduped producer inputs, the consumer's output, and the
+            # consumer's non-T inputs.
+            new_args: list[Expr] = []
+
+            def arg_index(a: Expr) -> int:
+                for k, existing in enumerate(new_args):
+                    if existing == a:
+                        return k
+                new_args.append(a)
+                return len(new_args) - 1
+
+            if drop_producer_output:
+                producer_output = -1  # sentinel: map_column_stage skips the producer SID write
+            else:
+                producer_output = arg_index(prod.output)
+            producer_inputs = [arg_index(i) for i in prod.inputs]
+            out_idx = arg_index(cons.output)
+            window_inputs = [arg_index(cons.inputs[j]) for j in win_positions]
+            lifted: list[tuple[Sym, int]] = []
+            for j, inp in enumerate(cons.inputs):
+                if j == t_pos or j in win_positions:
+                    continue
+                lifted.append((Sym(id=cons_fun.params[j].id), arg_index(inp)))
+
+            # Launch over the consumer's domain: in the column form the producer's extra top halo
+            # level (when the producer is a temp extended for the Koff[-1] read) is subsumed by the
+            # one-deep history register, so the producer never needs that level.
+            launch_domain = cons.backend.domain if drop_producer_output else prod.backend.domain
+            if windows:
+                tail_id = next(self.uids["_mwtail"])
+                extracted_functions.append(
+                    MapWindowTailDefinition(
+                        id=tail_id,
+                        cur=Sym(id=cur_name),
+                        prev=Sym(id=prev_name),
+                        windows=windows,
+                        input_params=lifted,
+                        outputs=[(out_idx, new_expr)],
+                    )
+                )
+                exe: Stmt = MapWindowExecution(
+                    backend=Backend(domain=launch_domain),
+                    producer=prod.stencil,
+                    producer_output=producer_output,
+                    producer_inputs=producer_inputs,
+                    consumer=SymRef(id=tail_id),
+                    window_inputs=window_inputs,
+                    args=new_args,
+                    axis=SymRef(id=vaxis),
+                )
+            else:
+                tail_id = next(self.uids["_mctail"])
+                extracted_functions.append(
+                    MapColumnTailDefinition(
+                        id=tail_id,
+                        cur=Sym(id=cur_name),
+                        prev=Sym(id=prev_name),
+                        input_params=lifted,
+                        outputs=[(out_idx, new_expr)],
+                    )
+                )
+                exe = MapColumnExecution(
+                    backend=Backend(domain=launch_domain),
+                    producer=prod.stencil,
+                    producer_output=producer_output,
+                    producer_inputs=producer_inputs,
+                    consumer=SymRef(id=tail_id),
+                    args=new_args,
+                    axis=SymRef(id=vaxis),
+                )
+            return exe, (T if drop_producer_output else None)
+
+        res: list = []
+        dropped: set[str] = set()
+        i = 0
+        while i < len(executions):
+            cur = executions[i]
+            nxt = executions[i + 1] if i + 1 < len(executions) else None
+            if isinstance(cur, StencilExecution) and isinstance(nxt, StencilExecution):
+                fused = try_fuse(cur, nxt)
+                if fused is not None:
+                    exe, dropped_temp = fused
+                    res.append(exe)
+                    if dropped_temp is not None:
+                        dropped.add(dropped_temp)
+                    i += 2
+                    continue
+            res.append(cur)
+            i += 1
+        return res, dropped
+
+    def _koffwindow_columnify(
+        self,
+        executions: list,
+        extracted_functions: list,
+    ) -> list:
+        """PROTOTYPE (GT4PY_FN_MAP_COLUMN_FUSION + GT4PY_FN_KOFF_WINDOW, increment-2b): column-ify a
+        SINGLE multi-output cell-local stencil whose ALREADY-materialized inputs are read at center
+        + Koff[-1] (history) only. No producer is fused in — the windowed fields stay in DRAM (their
+        producer is untouched); the win is that the consumer loads each windowed field ONCE per level
+        and reads its K-1 value from a one-deep history register instead of a second DRAM load. This
+        is the gtfn way to get dace's materialize-once-read-at-Koff WITHOUT recompute (vsf) and
+        WITHOUT a global temp, for the keep-and-write case where the producer feeds other consumers
+        too (e.g. pert's _fun_3 reading temporal_extrapolation + perturbed_exner_mc at center+Koff[-1]).
+
+        The transform is a per-execution rewrite (not a pair fold): it never reorders, so the
+        non-adjacency / data-dependency of the producer is irrelevant — the producer kernel stays
+        exactly where it is and still materializes the fields for the other consumers."""
+        if not (
+            os.environ.get("GT4PY_FN_MAP_COLUMN_FUSION") and os.environ.get("GT4PY_FN_KOFF_WINDOW")
+        ):
+            return executions
+
+        fun_by_id = {f.id: f for f in extracted_functions if isinstance(f, FunctionDefinition)}
+        _dbg = os.environ.get("GT4PY_MAP_COLUMN_DEBUG")
+
+        def reject(why: str) -> None:
+            if _dbg:
+                print(f"[koff_window] reject: {why}")
+
+        # vertical (Koff) offset tag.
+        koff = None
+        for o in self.offset_provider_type:
+            ot = common.get_offset_type(self.offset_provider_type, o)
+            if isinstance(ot, common.Dimension):
+                koff = o
+                break
+
+        min_windows = int(os.environ.get("GT4PY_FN_KOFF_WINDOW_MIN", "1"))
+
+        def columnify(sten: StencilExecution) -> Optional[KoffWindowExecution]:
+            if not isinstance(sten.stencil, SymRef) or sten.stencil.id not in fun_by_id:
+                return reject("stencil is not an extracted field-op")
+            fun = fun_by_id[sten.stencil.id]
+            if len(fun.params) != len(sten.inputs):
+                return reject("param/input arity mismatch")
+            if koff is None:
+                return reject("no vertical offset in the program")
+            vaxis = common.get_offset_type(self.offset_provider_type, koff).value
+            axisref = SymRef(id=vaxis)
+            # Soundness gate: the column kernel strips K from the launch grid and walks K in-thread
+            # from the launch-K-start. The K==0 `prev` is seeded with `cur` (the launch-top value),
+            # which is only correct when the launch K-range starts at the field origin (offset 0) so
+            # the column top IS the field top (the consumer's where(k>0,...) guard then discards the
+            # seed). If the K-range starts mid-column an unguarded Koff[-1] read at the top would get
+            # the wrong (seeded) value, so refuse to columnify.
+            kb = _domain_k_bounds(sten.backend.domain, axisref)
+            if kb is None:
+                return reject(f"{sten.stencil.id}: no K-range in domain")
+            k_start = _static_int(kb[0])
+            if k_start is None or k_start != 0:
+                return reject(f"{sten.stencil.id}: K-range does not start at the field origin")
+            # Find inputs read at center + Koff[-1] only (a 1-deep history window). Each must be a
+            # plain SID arg (SymRef input). A windowed input may also be read at center only; we
+            # window any input that has at least one Koff[-1] read and NO other access shape.
+            win_positions: list[int] = []
+            for j, (param, inp) in enumerate(zip(fun.params, sten.inputs)):
+                if not isinstance(inp, SymRef):
+                    continue
+                offs = _koff_window_offsets(fun.expr, param.id, koff)
+                if offs is None:
+                    continue  # accessed in a non-windowable way -> leave as a normal SID read
+                if -1 in offs and offs <= {0, -1}:
+                    win_positions.append(j)
+            if len(win_positions) < min_windows:
+                return reject(
+                    f"{sten.stencil.id}: {len(win_positions)} center+Koff[-1] window input(s) "
+                    f"(min {min_windows})"
+                )
+
+            # Build the combined arg list: outputs (composite or single) first, then deduped inputs.
+            new_args: list[Expr] = []
+
+            def arg_index(a: Expr) -> int:
+                for k, existing in enumerate(new_args):
+                    if existing == a:
+                        return k
+                new_args.append(a)
+                return len(new_args) - 1
+
+            out_idx = arg_index(sten.output)
+            # rewrite the windowed params to cur/prev registers.
+            mapping: dict[str, tuple[str, str]] = {}
+            windows: list[tuple[Sym, Sym]] = []
+            window_inputs: list[int] = []
+            for j in win_positions:
+                pid = fun.params[j].id
+                cur_name, prev_name = f"{pid}__cur", f"{pid}__prev"
+                mapping[pid] = (cur_name, prev_name)
+                windows.append((Sym(id=cur_name), Sym(id=prev_name)))
+                window_inputs.append(arg_index(sten.inputs[j]))
+            rewriter = _KoffWindowRewriter(mapping=mapping)
+            new_expr = rewriter.visit(fun.expr)
+            if not rewriter.ok:
+                return reject(f"{sten.stencil.id}: a windowed param escaped the cur/prev rewrite")
+            # remaining (non-windowed) inputs become make_iterator-bound params at the current level.
+            lifted: list[tuple[Sym, int]] = []
+            for j, inp in enumerate(sten.inputs):
+                if j in win_positions:
+                    continue
+                lifted.append((Sym(id=fun.params[j].id), arg_index(inp)))
+
+            tail_id = next(self.uids["_kwtail"])
+            extracted_functions.append(
+                KoffWindowTailDefinition(
+                    id=tail_id,
+                    windows=windows,
+                    input_params=lifted,
+                    outputs=[(out_idx, new_expr)],
+                )
+            )
+            if _dbg:
+                print(
+                    f"[koff_window] columnify {sten.stencil.id}: "
+                    f"{len(windows)} window(s) {[w[0].id for w in windows]}"
+                )
+            return KoffWindowExecution(
+                backend=sten.backend,
+                consumer=SymRef(id=tail_id),
+                window_inputs=window_inputs,
+                args=new_args,
+                axis=SymRef(id=vaxis),
+            )
+
+        res: list = []
+        for e in executions:
+            if isinstance(e, StencilExecution) and isinstance(e.output, (SymRef, SidComposite)):
+                col = columnify(e)
+                if col is not None:
+                    res.append(col)
+                    continue
+            res.append(e)
+        return res
+
     def _fuse_scan_tails(
         self,
         executions: list[Union[StencilExecution, ScanExecution]],
@@ -1152,6 +1781,12 @@ class GTFN_lowering(eve.NodeTranslator, eve.VisitorWithSymbolTableTrait):
         executions, dropped_temps = self._fuse_scan_tails(
             executions, scan_forward, extracted_functions
         )
+        temp_names = {str(t.id) for t in node.declarations}
+        executions, dropped_map_temps = self._fuse_map_chains(
+            executions, extracted_functions, temp_names
+        )
+        dropped_temps |= dropped_map_temps
+        executions = self._koffwindow_columnify(executions, extracted_functions)
         function_definitions = self.visit(node.function_definitions) + extracted_functions
         offset_definitions = {
             **_collect_dimensions_from_domain(node.body),

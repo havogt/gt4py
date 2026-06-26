@@ -6,12 +6,36 @@
 # Please, refer to the LICENSE file in the root directory.
 # SPDX-License-Identifier: BSD-3-Clause
 
+import os
 from typing import Sequence
 
 import gt4py.eve as eve
 from gt4py.eve.codegen import JinjaTemplate as as_jinja
+from gt4py.next import config
 from gt4py.next.otf.binding import interface
 from gt4py.next.otf.compilation import common
+
+
+def _branchless_skip_reduce_cmake(project_name: str, enabled: bool = False) -> str:
+    """CMake lines enabling the branchless skip-value reduction lowering.
+
+    Defines the GT4PY_FN_BRANCHLESS_SKIP_REDUCE compile macro, which selects the clamped
+    `deref` + `neighbor_row`/`horizontal_shift_to` helpers in the (default) gridtools fn
+    header. Enabled per-program via the gtfn translation-step param OR globally via the
+    GT4PY_FN_BRANCHLESS_SKIP_REDUCE env flag (back-compat). The private-include path is
+    overridable via GT4PY_FN_BRANCHLESS_SKIP_REDUCE_INCLUDE (only needed for a shadow header,
+    e.g. a GH200 cross-build; the venv header carries the helpers by default).
+    """
+    if not (enabled or config.FN_BRANCHLESS_SKIP_REDUCE):
+        return ""
+    private_include = os.environ.get("GT4PY_FN_BRANCHLESS_SKIP_REDUCE_INCLUDE")
+    lines = [f"target_compile_definitions({project_name} PRIVATE GT4PY_FN_BRANCHLESS_SKIP_REDUCE)"]
+    if private_include:
+        lines.insert(
+            0,
+            f"target_include_directories({project_name} BEFORE PRIVATE {private_include})",
+        )
+    return "\n".join(lines)
 
 
 class FindDependency(eve.Node):
@@ -35,6 +59,7 @@ class CMakeListsFile(eve.Node):
     source_names: Sequence[str]
     bin_output_suffix: str
     languages: Sequence[Language]
+    extra: str = ""
 
 
 class CMakeListsGenerator(eve.codegen.TemplatedGenerator):
@@ -73,6 +98,8 @@ class CMakeListsGenerator(eve.codegen.TemplatedGenerator):
 
         # Link dependencies
         {{"\\n".join(link_deps)}}
+
+        {{extra}}
         """
     )
 
@@ -134,6 +161,7 @@ def generate_cmakelists_source(
     dependencies: tuple[interface.LibraryDependency, ...],
     source_names: Sequence[str],
     languages: Sequence[Language] = (Language(name="CXX"),),
+    branchless_skip_reduce: bool = False,
 ) -> str:
     """
     Generate CMakeLists file contents.
@@ -147,5 +175,6 @@ def generate_cmakelists_source(
         source_names=source_names,
         bin_output_suffix=common.python_module_suffix(),
         languages=languages,
+        extra=_branchless_skip_reduce_cmake(project_name, enabled=branchless_skip_reduce),
     )
     return CMakeListsGenerator.apply(cmakelists_file)

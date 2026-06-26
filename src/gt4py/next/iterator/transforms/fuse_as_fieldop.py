@@ -221,9 +221,20 @@ def _all_accesses_center_or_vertical(
 
 def _all_accesses_single_hop(
     shifts: set[tuple[itir.OffsetLiteral, ...]],
+    allowed_tags: Optional[set[str]] = None,
 ) -> bool:
-    """True if every access is at the center or a single offset hop (one tag+value pair)."""
-    return all(len(shift_seq) <= 2 for shift_seq in shifts)
+    """True if every access is the center or a single offset hop (one tag+value pair).
+
+    If ``allowed_tags`` is given, every (non-center) hop's offset tag must be in the set.
+    """
+    for shift_seq in shifts:
+        if len(shift_seq) > 2:
+            return False
+        if allowed_tags is not None and len(shift_seq) == 2:
+            tag = shift_seq[0].value
+            if not isinstance(tag, str) or tag not in allowed_tags:
+                return False
+    return True
 
 
 def _arg_inline_predicate(
@@ -231,6 +242,7 @@ def _arg_inline_predicate(
     shifts: set[tuple[itir.OffsetLiteral, ...]],
     offset_provider_type: common.OffsetProviderType,
     vertical_shift_fusion: bool,
+    connectivity_shift_fusion: bool = False,
 ) -> bool:
     if _is_tuple_expr_of_literals(node):
         return True
@@ -256,18 +268,26 @@ def _arg_inline_predicate(
             return True
         # Accessed at center + purely vertical (Koff) shifts: inline and recompute at the
         # shifted level (the vertical shift commutes into the inputs), dropping the temp.
-        if (
-            vertical_shift_fusion or os.environ.get("GT4PY_INLINE_VERTICAL_SHIFT_FIELDOP")
-        ) and _all_accesses_center_or_vertical(shifts, offset_provider_type):
+        if vertical_shift_fusion and _all_accesses_center_or_vertical(
+            shifts, offset_provider_type
+        ):
             return True
         # EXPERIMENT: also inline reduction-temps accessed at a single connectivity hop
         # (e.g. a C2E/V2E reduction read at E2C/E2V), recomputing the inner reduction at the
         # neighbor location. Bets on cache reuse making the redundant gather cheaper than the
         # temp DRAM round-trip. Bounded to single-hop accesses to keep the tree from exploding.
-        if os.environ.get("GT4PY_INLINE_CONNECTIVITY_SHIFT_FIELDOP") and _all_accesses_single_hop(
-            shifts
-        ):
-            return True
+        # The param (or env value) selects which single-hop accesses to inline: the
+        # `connectivity_shift_fusion` flag (or env "1"/"all") inlines every single-hop access; the
+        # env may instead be a comma-separated allowlist of access tags (e.g. "E2C").
+        conn_env = os.environ.get("GT4PY_INLINE_CONNECTIVITY_SHIFT_FIELDOP")
+        if connectivity_shift_fusion or conn_env:
+            allowed = (
+                None
+                if connectivity_shift_fusion or conn_env in ("1", "all")
+                else {t.strip() for t in conn_env.split(",") if t.strip()}
+            )
+            if _all_accesses_single_hop(shifts, allowed):
+                return True
         # TODO(tehrengruber): Disabled as the InlineCenterDerefLiftVars does not support this yet
         #  and it would increase the size of the tree otherwise.
         # if len(shifts) == 1 and not any(
@@ -344,6 +364,9 @@ class FuseAsFieldOp(
     #: Inline (recompute) a reduction-temp accessed at a vertical (Koff) shift rather than
     #: materializing it. See `_all_accesses_center_or_vertical`.
     vertical_shift_fusion: bool = False
+    #: Inline (recompute) a reduction-temp accessed at a single connectivity hop rather than
+    #: materializing it. See `_all_accesses_single_hop`.
+    connectivity_shift_fusion: bool = False
 
     @classmethod
     def apply(
@@ -357,6 +380,7 @@ class FuseAsFieldOp(
         enabled_transformations: Optional[Transformation] = None,
         enable_cse: bool = True,
         vertical_shift_fusion: bool = False,
+        connectivity_shift_fusion: bool = False,
     ):
         enabled_transformations = enabled_transformations or cls.enabled_transformations
 
@@ -375,6 +399,7 @@ class FuseAsFieldOp(
             offset_provider_type=offset_provider_type,
             enable_cse=enable_cse,
             vertical_shift_fusion=vertical_shift_fusion,
+            connectivity_shift_fusion=connectivity_shift_fusion,
         ).visit(node, within_set_at_expr=within_set_at_expr)
         # The `FuseAsFieldOp` pass does not fully preserve the type information yet. In particular
         # for the generated lifts this is tricky and error-prone. For simplicity, we just reinfer
@@ -456,10 +481,71 @@ class FuseAsFieldOp(
 
             eligible_els = [
                 _arg_inline_predicate(
-                    arg, arg_shifts, self.offset_provider_type, self.vertical_shift_fusion
+                    arg,
+                    arg_shifts,
+                    self.offset_provider_type,
+                    self.vertical_shift_fusion,
+                    self.connectivity_shift_fusion,
                 )
                 for arg, arg_shifts in zip(args, shifts, strict=True)
             ]
+            # Size-gated fusion: cap the fused-stencil node count so large sub-stencils split into
+            # their own kernels (lower per-kernel register pressure / better occupancy + coalescing,
+            # at the cost of a temp DRAM round-trip). Opt-in via GT4PY_FN_MAX_FUSE_NODES. Only gates
+            # args that are SAFELY materializable as a temp: applied as_fieldop, used (non-empty
+            # shifts), and non-list dtype (list-type / unused args MUST stay inlined -> never gated).
+            # PER-ARG gate: un-fuse an individually-large materializable sub-stencil (e.g. the
+            # C2E2CO diffusion Laplacian, the half->full interp) into its own kernel. Per-arg (not
+            # cumulative) so only the few big sub-stencils split — avoids a global temp explosion.
+            _max_fuse = os.environ.get("GT4PY_FN_MAX_FUSE_NODES")
+            if _max_fuse and any(eligible_els):
+                _max_fuse = int(_max_fuse)
+                for _i, (_arg, _ashifts, _elig) in enumerate(
+                    zip(args, shifts, eligible_els, strict=True)
+                ):
+                    if not (_elig and cpm.is_applied_as_fieldop(_arg) and _ashifts):
+                        continue
+                    type_inference.reinfer(_arg)
+                    _dt = (
+                        type_info.apply_to_primitive_constituents(type_info.extract_dtype, _arg.type)
+                        if _arg.type is not None
+                        else None
+                    )
+                    if isinstance(_dt, ts.ListType):
+                        continue
+                    if sum(1 for _ in _arg.pre_walk_values()) > _max_fuse:
+                        eligible_els[_i] = False
+            # Surgical split: keep an arg that reduces over a LARGE-neighbor connectivity (e.g. the
+            # C2E2CO 9-pt diffusion Laplacian) as its own kernel rather than inlining its uncoalesced
+            # gather into a big fused consumer. A standalone small kernel hides the gather latency at
+            # higher occupancy; the consumer then reads a coalesced temp. Opt-in via the min neighbor
+            # count GT4PY_FN_SPLIT_LARGE_REDUCE. Per-arg + only the offending reduction -> no cascade.
+            _split = os.environ.get("GT4PY_FN_SPLIT_LARGE_REDUCE")
+            _split_conn = os.environ.get("GT4PY_FN_SPLIT_CONN")  # comma-list of connectivity names
+            if (_split or _split_conn) and any(eligible_els):
+                _thr = int(_split) if _split else None
+                _names = set(_split_conn.split(",")) if _split_conn else set()
+                for _i, (_arg, _elig) in enumerate(zip(args, eligible_els, strict=True)):
+                    if not (_elig and cpm.is_applied_as_fieldop(_arg)):
+                        continue
+                    type_inference.reinfer(_arg)
+                    _dt = (
+                        type_info.apply_to_primitive_constituents(type_info.extract_dtype, _arg.type)
+                        if _arg.type is not None
+                        else None
+                    )
+                    if isinstance(_dt, ts.ListType):  # pre-reduction neighbor list: not materializable
+                        continue
+                    for _n in _arg.pre_walk_values():
+                        if isinstance(_n, itir.OffsetLiteral) and isinstance(_n.value, str):
+                            if _n.value in _names:
+                                eligible_els[_i] = False
+                                break
+                            if _thr is not None:
+                                _conn = self.offset_provider_type.get(_n.value)
+                                if _conn is not None and getattr(_conn, "max_neighbors", 0) >= _thr:
+                                    eligible_els[_i] = False
+                                    break
             if any(eligible_els):
                 return self.visit(
                     fuse_as_fieldop(

@@ -5,6 +5,7 @@
 #
 # Please, refer to the LICENSE file in the root directory.
 # SPDX-License-Identifier: BSD-3-Clause
+import os
 import warnings
 from typing import Optional, Protocol
 
@@ -255,11 +256,47 @@ def apply_common_transforms(
     #: Inline (recompute) a reduction-temp accessed at a vertical (Koff) shift instead of
     #: materializing it as a temp, dropping a kernel and its DRAM round-trip. Opt-in.
     vertical_shift_fusion: bool = False,
+    #: Inline (recompute) a reduction-temp accessed at a single connectivity hop instead of
+    #: materializing it as a temp, recomputing the inner reduction at the neighbor location.
+    #: Opt-in. Also driven by the GT4PY_INLINE_CONNECTIVITY_SHIFT_FIELDOP env flag (back-compat).
+    connectivity_shift_fusion: bool = False,
+    #: Move pointwise dataflow into concat_where branches (domain-extend sub-domain branch
+    #: producers) so a concat_where-split cell chain fuses, cutting re-read traffic. Opt-in.
+    fuse_concat_where: bool = False,
+    #: Split a full-column K-index-masked concat_where into disjoint K-band kernels (dace
+    #: analog) — relieves register-starved kernels by peeling work to high-occupancy bands. Opt-in.
+    split_kbands: bool = False,
+    #: Lower skip-value sum-reductions to branchless load-then-mask (dace-style) instead of a
+    #: per-neighbor `can_deref` branch, so the gathered field's K-row-base hoists once. Composes
+    #: with the gtfn-codegen neighbor-row hoist. Opt-in. Also driven by the global
+    #: GT4PY_FN_BRANCHLESS_SKIP_REDUCE env flag (back-compat).
+    branchless_skip_reduce: bool = False,
+    #: Internal: hard-disable the concat_where fusion (overrides the env toggle). Set on the
+    #: validate-or-revert retry so a surviving-lift program re-runs the pipeline unfused.
+    _disable_concat_where_fusion: bool = False,
+    #: Internal: the recompute-fusions (concat_where / vertical-shift / connectivity-shift) that
+    #: have been disabled by a previous validate-or-revert retry, so re-running can't re-enable them.
+    _reverted_fusions: frozenset[str] = frozenset(),
 ) -> itir.Program:
     assert isinstance(ir, itir.Program)
     # TODO(tehrengruber): Allow `common.OffsetProviderType`, but domain inference currently
     #  relies on static information or `symbolic_domain_sizes`.
     assert common.is_offset_provider(offset_provider)
+
+    _orig_ir = ir
+
+    # Resolve the recompute-fusion flags once (param OR env), then subtract any fusion a previous
+    # validate-or-revert retry has disabled. The resolved booleans are authoritative downstream so
+    # the retry can't re-enable a reverted fusion via its env back-compat flag.
+    _eff_fcw = (
+        bool(fuse_concat_where or os.environ.get("GT4PY_FN_FUSE_CONCAT_WHERE"))
+        and not _disable_concat_where_fusion
+        and "concat_where" not in _reverted_fusions
+    )
+    _eff_vsf = (
+        bool(vertical_shift_fusion or os.environ.get("GT4PY_INLINE_VERTICAL_SHIFT_FIELDOP"))
+        and "vertical_shift" not in _reverted_fusions
+    )
 
     offset_provider_type = common.offset_provider_to_type(offset_provider)
 
@@ -297,7 +334,41 @@ def apply_common_transforms(
     ir = prune_empty_concat_where.prune_empty_concat_where(ir)
     ir = remove_broadcast.RemoveBroadcast.apply(ir)
 
+    if __import__("os").environ.get("GT4PY_DUMP_ITIR"):
+        __import__("pathlib").Path(__import__("os").environ["GT4PY_DUMP_ITIR"]).write_text(str(ir))
     ir = concat_where.transform_to_as_fieldop(ir)
+
+    _fcw_active = False
+    if _eff_fcw:
+        from gt4py.next.iterator.transforms import move_dataflow_into_concat_where
+
+        _pre_fcw = ir
+        _fcw = move_dataflow_into_concat_where.MoveDataflowIntoConcatWhere.apply(ir)
+        # Safely-general: the domain-extend+inline is only valid where the restructured IR remains
+        # domain-inferable. Re-infer to (a) validate and (b) re-annotate the inlined nodes' annex
+        # domains, which the downstream FuseAsFieldOp pass requires on every make_tuple arg. Keep the
+        # re-inferred IR; revert to the pre-transform IR if inference fails (so enabling the pass on a
+        # program it can't handle, e.g. rho_theta, is a no-op not a crash).
+        try:
+            _inferred = infer_domain.infer_program(
+                _fcw, offset_provider=offset_provider, symbolic_domain_sizes=symbolic_domain_sizes
+            )
+            # Below-start OOB gather: the fusion can push a producer one vertical level below the
+            # program's valid start (to serve a guarded Koff[-1] consumer), an OOB gather that the
+            # unfused lowering avoids. Two-tier handling: (1) if the over-extension is the clampable
+            # shape (each below-start producer flows only into an if_-guarded Koff[neg] shift), keep
+            # the fused IR — the post-`global_tmps` start clamp drops the dead below-start level
+            # value-preservingly (concrete temp + producer, no later re-widening). (2) Otherwise the
+            # over-extension is not safe to clamp, so revert to the unfused (correct) pre-transform IR.
+            if move_dataflow_into_concat_where.fusion_overextends_below_vertical_start(
+                _inferred
+            ) and not move_dataflow_into_concat_where.overextension_is_clampable(_inferred):
+                ir = _pre_fcw
+            else:
+                ir = _inferred
+                _fcw_active = _fcw is not _pre_fcw
+        except Exception:
+            ir = _pre_fcw
 
     for _ in range(10):
         inlined = ir
@@ -322,7 +393,8 @@ def apply_common_transforms(
             inlined,
             uids=uids,
             offset_provider_type=offset_provider_type,
-            vertical_shift_fusion=vertical_shift_fusion,
+            vertical_shift_fusion=_eff_vsf,
+            connectivity_shift_fusion=connectivity_shift_fusion,
         )
 
         if inlined == ir:
@@ -353,6 +425,26 @@ def apply_common_transforms(
             symbolic_domain_sizes=symbolic_domain_sizes,
             uids=uids,
         )
+        # Below-start OOB clamp (concat_where fusion): if the fusion left a materialized temporary
+        # whose vertical domain extends below the program's valid vertical start (a producer kernel
+        # that gathers an input field one level out of bounds to serve a boundary-guarded Koff[-1]
+        # consumer), raise that temp's start back up to vertical_start. The clamp is value-
+        # preserving (the dropped level is only read through a short-circuiting concat_where ternary)
+        # and keeps the fusion (the kernel-count reduction). It runs here, on the concrete temp +
+        # producer, because no later pass re-infers domains (which would re-widen it). The fcw block
+        # above has already reverted any over-extension that is *not* of this clampable shape, so an
+        # over-extension that reaches here is clamp-safe; the per-temp `_safe` check is a belt-and-
+        # braces guard (a no-op clamp if it ever fails).
+        if _fcw_active and move_dataflow_into_concat_where.fusion_overextends_below_vertical_start(
+            ir
+        ):
+            _over = move_dataflow_into_concat_where.below_start_temporaries(ir)
+            _safe = bool(_over) and all(
+                move_dataflow_into_concat_where._temp_reads_only_at_negative_shift(ir, name)
+                for name in _over
+            )
+            if _safe:
+                ir = move_dataflow_into_concat_where._ClampMaterializedTempsBelowStart.apply(ir)
         # EXPERIMENT(h7): merge same-domain independent temporaries into one kernel (the 4
         # Green-Gauss gradient reductions → 1, sharing C2E2CO gathers). The merge constructs a
         # single tuple-returning `as_fieldop` directly and only commits gtfn-lowerable results,
@@ -365,6 +457,34 @@ def apply_common_transforms(
             except Exception:
                 pass  # merge is best-effort; on any failure keep the un-merged program
 
+        # PROTOTYPE(kband): split a full-column K-index-masked concat_where SetAt into
+        # disjoint K-band SetAts (dace analog). Opt-in via env, OFF by default.
+        if split_kbands or __import__("os").environ.get("GT4PY_FN_SPLIT_KBANDS"):
+            from gt4py.next.iterator.transforms import split_concat_where_kbands
+
+            _pre_kb = ir
+            try:
+                _kb = split_concat_where_kbands.SplitConcatWhereKBands.apply(ir)
+                if __import__("os").environ.get("GT4PY_KBANDS_DUMP"):
+                    __import__("pathlib").Path(
+                        __import__("os").environ["GT4PY_KBANDS_DUMP"]
+                    ).write_text(str(_kb))
+                infer_domain.infer_program(
+                    _kb,
+                    offset_provider=offset_provider,
+                    symbolic_domain_sizes=symbolic_domain_sizes,
+                    keep_existing_domains=True,
+                )
+                ir = _kb
+            except Exception as _e:
+                if __import__("os").environ.get("GT4PY_KBANDS_DUMP"):
+                    import traceback
+
+                    __import__("sys").stderr.write(
+                        "KBANDS REVERTED: " + repr(_e) + "\n" + traceback.format_exc() + "\n"
+                    )
+                ir = _pre_kb
+
     ir = NormalizeShifts().visit(ir)
 
     ir = FuseMaps(uids=uids).visit(ir)
@@ -372,7 +492,12 @@ def apply_common_transforms(
 
     if unroll_reduce:
         for _ in range(10):
-            unrolled = UnrollReduce.apply(ir, offset_provider_type=offset_provider_type, uids=uids)
+            unrolled = UnrollReduce.apply(
+                ir,
+                offset_provider_type=offset_provider_type,
+                uids=uids,
+                branchless_skip_reduce=branchless_skip_reduce,
+            )
             unrolled = CollapseListGet().visit(unrolled)
             unrolled = NormalizeShifts().visit(unrolled)
             # this is required as nested neighbor reductions can contain lifts, e.g.,
@@ -385,9 +510,50 @@ def apply_common_transforms(
         else:
             raise RuntimeError("Reduction unrolling failed.")
 
+    if os.environ.get("GT4PY_DUMP_POSTUNROLL"):
+        import pathlib
+
+        pathlib.Path(os.environ["GT4PY_DUMP_POSTUNROLL"]).write_text(str(ir))
+
     ir = InlineLambdas.apply(
         ir, opcount_preserving=True, force_inline_lambda_args=force_inline_lambda_args
     )
+
+    # Validate-or-revert (recompute fusions): a recompute fusion can leave a residual `lift` that
+    # the gtfn backend cannot lower (it has no `lift` builtin) when a concat_where boundary is a
+    # runtime symbol (dynamic vertical domain) — the symbol blocks the constant-folding that would
+    # otherwise collapse the branch and inline the lift. corrector-vmom is the witness: with a
+    # literal `end_index_of_damping_layer`/`nlev` (compile_time_domain) the CFL-clip branch folds
+    # away and the lift inlines, but the dynamic-domain variant leaves the vertical-shift fusion's
+    # `↑(w - cw)@Koff[1]` lift behind. `infer_domain` succeeds on such IR, so the earlier inference
+    # gate misses it. Detect the surviving lift and re-run the whole pipeline with one more
+    # recompute fusion disabled (concat_where first, then vertical-shift), until the lift is gone.
+    # The literal-domain path (no surviving lift) is untouched, so it keeps the win; the
+    # dynamic-domain path falls back to the correct, lowerable IR.
+    _has_lift = any(n.id == "lift" for n in ir.pre_walk_values().if_isinstance(itir.SymRef))
+    if _has_lift and (_eff_fcw or _eff_vsf):
+        if _eff_fcw:
+            next_reverted = _reverted_fusions | {"concat_where"}
+        else:
+            next_reverted = _reverted_fusions | {"vertical_shift"}
+        return apply_common_transforms(
+            _orig_ir,
+            offset_provider=offset_provider,
+            extract_temporaries=extract_temporaries,
+            unroll_reduce=unroll_reduce,
+            common_subexpression_elimination=common_subexpression_elimination,
+            force_inline_lambda_args=force_inline_lambda_args,
+            symbolic_domain_sizes=symbolic_domain_sizes,
+            use_max_domain_range_on_unstructured_shift=use_max_domain_range_on_unstructured_shift,
+            merge_tmps=merge_tmps,
+            vertical_shift_fusion=vertical_shift_fusion,
+            connectivity_shift_fusion=connectivity_shift_fusion,
+            fuse_concat_where=fuse_concat_where,
+            split_kbands=split_kbands,
+            branchless_skip_reduce=branchless_skip_reduce,
+            _disable_concat_where_fusion=_disable_concat_where_fusion,
+            _reverted_fusions=frozenset(next_reverted),
+        )
 
     assert isinstance(ir, itir.Program)
     return ir

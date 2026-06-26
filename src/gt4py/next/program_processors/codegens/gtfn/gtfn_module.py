@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import dataclasses
 import functools
+import os
 from typing import Any, Final, Optional
 
 import factory
@@ -17,7 +18,7 @@ import numpy as np
 
 from gt4py._core import definitions as core_defs
 from gt4py.eve import codegen
-from gt4py.next import common
+from gt4py.next import common, config
 from gt4py.next.ffront import fbuiltins
 from gt4py.next.iterator import ir as itir
 from gt4py.next.iterator.transforms import pass_manager
@@ -66,6 +67,38 @@ class GTFNTranslationStep(
     #: materializing it as a temp, dropping a kernel and its DRAM round-trip (see
     #: apply_common_transforms). Opt-in: only beneficial where the temp is a large traffic share.
     enable_vertical_shift_fusion: bool = False
+    #: Inline (recompute) a reduction-temp accessed at a single connectivity hop instead of
+    #: materializing it (see apply_common_transforms). Opt-in: program-dependent (a win where the
+    #: redundant gather is cheaper than the temp DRAM round-trip, a loss otherwise).
+    enable_connectivity_inline: bool = False
+    #: Fuse a concat_where-split pointwise cell chain (move_dataflow_into_concat_where). Opt-in.
+    enable_concat_where_fusion: bool = False
+    #: Split K-index-masked concat_where into disjoint K-band kernels (relieves register-starved
+    #: kernels by peeling work to high-occupancy bands; helps rho_theta, not ILP-bound vmom). Opt-in.
+    enable_kband_split: bool = False
+    #: Lower skip-value neighbor sum-reductions (V2E/V2C with -1 entries) to branchless
+    #: load-then-mask AND hoist the neighbor row once (gtfn::neighbor_row / horizontal_shift_to),
+    #: collapsing the per-neighbor integer/addressing SASS. Composes the branchless lowering
+    #: (unroll_reduce) with the gtfn-codegen hoist pass; needs the clamped-deref + row helpers in
+    #: the gridtools fn header (compile macro GT4PY_FN_BRANCHLESS_SKIP_REDUCE). Opt-in: it can
+    #: regress a large co-resident kernel, so enable per program after an ncu check. Equivalent to
+    #: GT4PY_FN_BRANCHLESS_SKIP_REDUCE=1 + GT4PY_FN_HOIST_NEIGHBOR_ROW=1.
+    enable_branchless_skip_reduce: bool = False
+    #: Hoist the neighbor row of a NON-SKIP connectivity sum-reduction (no branchless
+    #: lowering): resolve the row once via gtfn::neighbor_row and offset per neighbor,
+    #: collapsing the per-neighbor row-base re-derivation on standalone gather kernels
+    #: (e.g. hmom's C2E _fun_0). Needs the row helpers in the gridtools fn header, which
+    #: are exposed under the GT4PY_FN_BRANCHLESS_SKIP_REDUCE compile macro (auto-injected
+    #: when this is set). Opt-in; equivalent to GT4PY_FN_HOIST_NEIGHBOR_ROW_NONSKIP=1.
+    enable_hoist_neighbor_row_nonskip: bool = False
+    #: Fuse 2+ sibling unrolled reduction folds in one stencil body that gather over the
+    #: SAME (field, connectivity) into ONE fold with a tuple accumulator, so the shared
+    #: per-neighbor deref is emitted once instead of re-gathered per sibling (drops the
+    #: redundant LDG + per-neighbor address math gtfn re-derives). No extra kernel/temp →
+    #: identical DRAM, a pure in-kernel compute cut. Stock header (gtfn::make_tuple/
+    #: tuple_get/deref/shift), no gridtools fn header dependency. Opt-in; equivalent to
+    #: GT4PY_FN_FUSE_SIBLING_REDUCE=1. Default OFF, codegen byte-identical when unset.
+    enable_sibling_reduce_fusion: bool = False
 
     def _default_code_spec(self) -> code_specs.HeaderAndSourceCodeSpec:
         match self.device_type:
@@ -169,6 +202,10 @@ class GTFNTranslationStep(
             use_max_domain_range_on_unstructured_shift=self.use_max_domain_range_on_unstructured_shift,
             merge_tmps=self.enable_tmp_merge,
             vertical_shift_fusion=self.enable_vertical_shift_fusion,
+            connectivity_shift_fusion=self.enable_connectivity_inline,
+            fuse_concat_where=self.enable_concat_where_fusion,
+            split_kbands=self.enable_kband_split,
+            branchless_skip_reduce=self.enable_branchless_skip_reduce,
         )
 
         new_program = apply_common_transforms(
@@ -197,11 +234,22 @@ class GTFNTranslationStep(
             assert isinstance(program, itir.Program)
             new_program = program
 
+        if os.environ.get("GT4PY_DUMP_PRELOWER"):
+            _txt = str(new_program)
+            if os.environ.get("GT4PY_DUMP_PRELOWER_ALL") or "lift" in _txt:
+                import pathlib
+
+                pathlib.Path(os.environ["GT4PY_DUMP_PRELOWER"]).write_text(_txt)
         gtfn_ir = GTFN_lowering.apply(
             new_program,
             offset_provider_type=common.offset_provider_to_type(offset_provider),
             column_axis=column_axis,
         )
+
+        if os.environ.get("GT4PY_DUMP_GTFNIR"):
+            import pathlib
+
+            pathlib.Path(os.environ["GT4PY_DUMP_GTFNIR"]).write_text(str(gtfn_ir))
 
         block_size_kwargs = {
             "thread_block_sizes": self.thread_block_sizes,
@@ -211,6 +259,21 @@ class GTFNTranslationStep(
             gtfn_im_ir = GTFN_IM_lowering().visit(node=gtfn_ir)
             generated_code = GTFNIMCodegen.apply(gtfn_im_ir, **block_size_kwargs)
         else:
+            branchless = config.FN_BRANCHLESS_SKIP_REDUCE or self.enable_branchless_skip_reduce
+            hoist = config.FN_HOIST_NEIGHBOR_ROW or self.enable_branchless_skip_reduce
+            hoist_nonskip = config.FN_HOIST_NEIGHBOR_ROW_NONSKIP or self.enable_hoist_neighbor_row_nonskip
+            if (branchless and hoist) or hoist_nonskip:
+                from gt4py.next.program_processors.codegens.gtfn.hoist_neighbor_row import (
+                    HoistNeighborRow,
+                )
+
+                gtfn_ir = HoistNeighborRow.apply(gtfn_ir, hoist_nonskip=hoist_nonskip)
+            if config.FN_FUSE_SIBLING_REDUCE or self.enable_sibling_reduce_fusion:
+                from gt4py.next.program_processors.codegens.gtfn.fuse_sibling_reduce import (
+                    FuseSiblingReduce,
+                )
+
+                gtfn_ir = FuseSiblingReduce.apply(gtfn_ir)
             generated_code = GTFNCodegen.apply(gtfn_ir, **block_size_kwargs)
 
         return codegen.format_source("cpp", generated_code, style="LLVM")
@@ -266,6 +329,14 @@ class GTFNTranslationStep(
             library_deps=(interface.LibraryDependency(self._library_name(), "master"),),
             source_code=source_code,
             code_spec=self._code_spec(),
+            branchless_skip_reduce=(
+                config.FN_BRANCHLESS_SKIP_REDUCE
+                or self.enable_branchless_skip_reduce
+                # The non-skip row hoist emits gtfn::neighbor_row/horizontal_shift_to, which
+                # the header exposes only under the GT4PY_FN_BRANCHLESS_SKIP_REDUCE macro.
+                or config.FN_HOIST_NEIGHBOR_ROW_NONSKIP
+                or self.enable_hoist_neighbor_row_nonskip
+            ),
         )
         return module
 

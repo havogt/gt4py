@@ -56,11 +56,13 @@ class CompiledbFactory(
         header_name = f"{name}.{source.program_source.code_spec.header_extension}"
         bindings_name = f"{name}_bindings.{source.program_source.code_spec.file_extension}"
 
+        branchless_skip_reduce = source.program_source.branchless_skip_reduce
         cc_prototype_program_source = _cc_prototype_program_source(
             deps=source.library_deps,
             build_type=self.cmake_build_type,
             cmake_flags=self.cmake_extra_flags or [],
             code_spec=source.program_source.code_spec,
+            branchless_skip_reduce=branchless_skip_reduce,
         )
 
         compiledb_template = _cc_get_compiledb(
@@ -234,12 +236,21 @@ class CompiledbProject(stages.BuildSystemProject[CPPLikeCodeSpecT, code_specs.Py
 
 
 def _cc_prototype_program_name(
-    deps: tuple[interface.LibraryDependency, ...], build_type: str, flags: list[str]
+    deps: tuple[interface.LibraryDependency, ...],
+    build_type: str,
+    flags: list[str],
+    branchless_skip_reduce: bool = False,
 ) -> str:
     base_name = "compile_commands_cache"
     deps_str = "_".join(f"{dep.name}_{dep.version}" for dep in deps)
     flags_str = "_".join(re.sub(r"\W+", "", f) for f in flags)
-    return "_".join([base_name, deps_str, build_type, flags_str]).replace(".", "_")
+    # A separate compiledb template for branchless builds: their prototype CMakeLists carries the
+    # GT4PY_FN_BRANCHLESS_SKIP_REDUCE compile macro, so the cached compile_commands must not be
+    # shared with non-branchless programs.
+    parts = [base_name, deps_str, build_type, flags_str]
+    if branchless_skip_reduce:
+        parts.append("branchless")
+    return "_".join(parts).replace(".", "_")
 
 
 def _cc_prototype_program_source(
@@ -247,13 +258,17 @@ def _cc_prototype_program_source(
     build_type: config.CMakeBuildType,
     cmake_flags: list[str],
     code_spec: code_specs.CPPLikeCodeSpec,
+    branchless_skip_reduce: bool = False,
 ) -> stages.ProgramSource:
-    name = _cc_prototype_program_name(deps, build_type.value, cmake_flags)
+    name = _cc_prototype_program_name(
+        deps, build_type.value, cmake_flags, branchless_skip_reduce=branchless_skip_reduce
+    )
     return stages.ProgramSource(
         entry_point=interface.Function(name=name, parameters=()),
         source_code="",
         library_deps=deps,
         code_spec=code_spec,
+        branchless_skip_reduce=branchless_skip_reduce,
     )
 
 

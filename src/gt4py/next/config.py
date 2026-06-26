@@ -110,6 +110,64 @@ UNSTRUCTURED_HORIZONTAL_HAS_UNIT_STRIDE: bool = env_flag_to_bool(
 ADD_GPU_TRACE_MARKERS: bool = env_flag_to_bool("GT4PY_ADD_GPU_TRACE_MARKERS", default=False)
 
 
+#: Experimental: lower skip-value sum-reductions to branchless load-then-mask
+#: (dace-style) instead of a per-neighbor `can_deref` branch. The gathered field's
+#: K-row-base is then hoisted once across all neighbors. Requires the matching
+#: clamped `deref` in the gridtools fn header (compile macro GT4PY_FN_BRANCHLESS_SKIP_REDUCE).
+# FIXME[#2447](egparedes): compile-time setting, should be included in the build cache key.
+FN_BRANCHLESS_SKIP_REDUCE: bool = env_flag_to_bool(
+    "GT4PY_FN_BRANCHLESS_SKIP_REDUCE", default=False
+)
+
+
+#: Experimental: on top of the branchless skip-reduce lowering, hoist the neighbor
+#: row of each gathered field out of the unrolled reduction fold (resolve the row base
+#: once via `gtfn::neighbor_row`, then offset per neighbor via `gtfn::horizontal_shift_to`),
+#: instead of re-deriving the row base per neighbor. Requires FN_BRANCHLESS_SKIP_REDUCE
+#: AND the matching `neighbor_row`/`horizontal_shift_to` helpers in the gridtools fn header.
+# FIXME[#2447](egparedes): compile-time setting, should be included in the build cache key.
+FN_HOIST_NEIGHBOR_ROW: bool = env_flag_to_bool("GT4PY_FN_HOIST_NEIGHBOR_ROW", default=False)
+
+
+#: Experimental: hoist the neighbor row of a NON-SKIP (non-branchless) connectivity
+#: sum-reduction. The plain unrolled fold `reduce(plus, 0)(neighbors)` re-derives the
+#: row base (m_index * index_stride) once per neighbor via `shift(field, Conn, _i)`.
+#: This resolves the row once via `gtfn::neighbor_row` and offsets per neighbor with
+#: `gtfn::horizontal_shift_to`, collapsing the per-neighbor integer/addressing SASS on
+#: standalone gather kernels (e.g. hmom's C2E `_fun_0`). Requires the row helpers in the
+#: gridtools fn header (compile macro GT4PY_FN_BRANCHLESS_SKIP_REDUCE, which the venv
+#: header exposes them under). Independent of the branchless skip-value lowering.
+# FIXME[#2447](egparedes): compile-time setting, should be included in the build cache key.
+FN_HOIST_NEIGHBOR_ROW_NONSKIP: bool = env_flag_to_bool(
+    "GT4PY_FN_HOIST_NEIGHBOR_ROW_NONSKIP", default=False
+)
+
+
+#: Experimental: fuse 2+ sibling unrolled reduction folds in one stencil body that gather
+#: over the SAME (field, connectivity) into ONE fold with a tuple accumulator, so the shared
+#: per-neighbor `deref(shift(field, Conn, _i))` is emitted once instead of re-gathered per
+#: sibling. Removes the redundant LDG + per-neighbor address math the gtfn fold otherwise
+#: re-derives (nvcc/ptxas cannot CSE them — distinct iteration vars). No extra kernel/temp →
+#: identical DRAM traffic, pure in-kernel compute cut. Default OFF, codegen byte-identical
+#: when unset.
+# FIXME[#2447](egparedes): compile-time setting, should be included in the build cache key.
+FN_FUSE_SIBLING_REDUCE: bool = env_flag_to_bool(
+    "GT4PY_FN_FUSE_SIBLING_REDUCE", default=False
+)
+
+
+#: Experimental: restrict the branchless skip-value reduction REWRITE so it fires only on
+#: small standalone gather kernels (executors below this stencil-body node-count threshold),
+#: NOT on a large co-resident fused kernel where the added load-then-mask compute regresses
+#: it. 0 (default) = no size gate (apply globally, the original behavior). A positive value
+#: enables selectivity: an executor whose stencil expression has more than this many IR nodes
+#: keeps the original branched skip-reduce; smaller ones get the branchless+hoist rewrite.
+# FIXME[#2447](egparedes): compile-time setting, should be included in the build cache key.
+FN_BRANCHLESS_SKIP_REDUCE_MAX_NODES: int = int(
+    os.environ.get("GT4PY_FN_BRANCHLESS_SKIP_REDUCE_MAX_NODES", "0")
+)
+
+
 #: Number of threads to use to use for compilation (0 = synchronous compilation).
 #: Default:
 #: - use os.cpu_count(), TODO(havogt): in Python >= 3.13 use `process_cpu_count()`

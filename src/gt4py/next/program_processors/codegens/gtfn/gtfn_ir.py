@@ -229,6 +229,92 @@ class ScanTail(Node):
     tail_bot_trim: int = 0
 
 
+class MapColumnTailDefinition(Node, SymbolTableTrait):
+    #: Top-level struct (template on the backend arg-offset) for the consumer of a fused map-chain.
+    #: `cur`/`prev` are the producer's per-level register values (T at K, T at K-1); `input_params`
+    #: are bound to iterators built from the consumer's other SID args; each `outputs` entry writes
+    #: one SID arg with the (rewritten) consumer expression.
+    id: Coerced[SymbolName]
+    cur: Sym
+    prev: Sym
+    #: (param bound to an iterator at the current level, raw arg index it reads)
+    input_params: list[tuple[Sym, int]]
+    outputs: list[tuple[int, Expr]]  # (raw output arg index, expr over cur/prev/inputs)
+
+
+class MapColumnExecution(Stmt):
+    #: One fused column kernel for a same-domain cell-local producer->consumer map-chain with a
+    #: single Koff[-1] edge. The producer stencil writes T (held in a register `cur`); the consumer
+    #: reads T at center (`cur`) and Koff[-1] (`prev`, a one-deep history register) and writes its
+    #: own outputs — no DRAM round-trip for the chain edge. Lowers to a map_column_stage.
+    backend: Backend
+    producer: SymRef  # FunctionDefinition id
+    producer_output: int  # raw arg index T is written to
+    producer_inputs: list[int]  # raw arg indices of the producer's inputs
+    consumer: SymRef  # MapColumnTailDefinition id
+    args: list[Expr]
+    axis: SymRef
+
+
+class KoffWindowTailDefinition(Node, SymbolTableTrait):
+    #: Top-level struct (template on the backend arg-offset) for a column-ified single stencil
+    #: (increment-2b). `windows` are the (cur, prev) register pairs holding an ALREADY-materialized
+    #: input field at level K and K-1; the body reads them from registers instead of two DRAM loads
+    #: (center + Koff[-1]). `input_params` bind the remaining SID args at the current level; each
+    #: `outputs` entry writes one SID arg with the rewritten body expression.
+    id: Coerced[SymbolName]
+    #: (cur Sym, prev Sym) per windowed input, in window order
+    windows: list[tuple[Sym, Sym]]
+    #: (param bound to an iterator at the current level, raw arg index it reads)
+    input_params: list[tuple[Sym, int]]
+    outputs: list[tuple[int, Expr]]  # (raw output arg index, expr over windows/inputs)
+
+
+class KoffWindowExecution(Stmt):
+    #: One column kernel for a single multi-output cell-local stencil whose inputs WinIns are read
+    #: at center + Koff[-1] only (history). The K-loop runs in-thread; each windowed field is loaded
+    #: once per level (`cur`) and its K-1 value carried in a one-deep history register (`prev`), so
+    #: the Koff[-1] re-read never round-trips DRAM. The fields stay materialized (their producer is
+    #: untouched). Lowers to a koff_window_column_stage.
+    backend: Backend
+    consumer: SymRef  # KoffWindowTailDefinition id
+    window_inputs: list[int]  # raw arg indices of the windowed (center+Koff[-1]) input fields
+    args: list[Expr]
+    axis: SymRef
+
+
+class MapWindowTailDefinition(Node, SymbolTableTrait):
+    #: Consumer of a fused map-chain that ALSO windows N already-materialized inputs (increment-2b
+    #: "keep-and-write + extra windows"). `cur`/`prev` are the producer's per-level register values
+    #: (T at K, T at K-1); `windows` are (cur, prev) register pairs for each windowed input (its
+    #: value at K and K-1, served from registers instead of a second DRAM load). `input_params` bind
+    #: the remaining SID args at the current level; each `outputs` entry writes one SID arg.
+    id: Coerced[SymbolName]
+    cur: Sym
+    prev: Sym
+    #: (cur Sym, prev Sym) per windowed input, in window order
+    windows: list[tuple[Sym, Sym]]
+    input_params: list[tuple[Sym, int]]
+    outputs: list[tuple[int, Expr]]
+
+
+class MapWindowExecution(Stmt):
+    #: One fused column kernel for a cell-local producer->consumer map-chain whose consumer ALSO
+    #: reads N already-materialized inputs at center + Koff[-1]. The producer value is held in a
+    #: register (`cur`, K-1 in `prev`); each windowed field is loaded once per level and its K-1
+    #: value carried in a register too — so neither the chain edge nor the windowed Koff[-1] re-reads
+    #: round-trip DRAM. The producer output is (maybe) stored to SID (producer_output<0 drops it).
+    #: Lowers to a map_window_column_stage.
+    backend: Backend
+    producer: SymRef  # FunctionDefinition id
+    producer_output: int  # raw arg index T is written to (<0 = drop)
+    producer_inputs: list[int]  # raw arg indices of the producer's inputs
+    consumer: SymRef  # MapWindowTailDefinition id
+    window_inputs: list[int]  # raw arg indices of the windowed (center+Koff[-1]) consumer inputs
+    args: list[Expr]
+    axis: SymRef
+
+
 class Scan(Node):
     function: SymRef
     output: int
@@ -276,6 +362,9 @@ GTFN_BUILTINS = [
     "named_range",
     "reduce",
     "index",
+    # combined branchless skip-reduce + neighbor-row hoist (hoist_neighbor_row.py)
+    "neighbor_row",
+    "horizontal_shift_to",
 ]
 ARITHMETIC_BUILTINS = builtins.ARITHMETIC_BUILTINS
 TYPEBUILTINS = builtins.TYPE_BUILTINS
@@ -292,7 +381,15 @@ class Program(Node, ValidatedSymbolTableTrait):
     id: SymbolName
     params: list[Sym]
     function_definitions: list[
-        Union[FunctionDefinition, ScanPassDefinition, ImperativeFunctionDefinition, ScanTailDefinition]
+        Union[
+            FunctionDefinition,
+            ScanPassDefinition,
+            ImperativeFunctionDefinition,
+            ScanTailDefinition,
+            MapColumnTailDefinition,
+            KoffWindowTailDefinition,
+            MapWindowTailDefinition,
+        ]
     ]
     executions: list[Stmt]
     offset_definitions: list[TagDefinition]
