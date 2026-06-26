@@ -8,6 +8,7 @@
 
 import dataclasses
 import pathlib
+import textwrap
 from typing import Any
 
 import factory
@@ -105,22 +106,24 @@ def extract_connectivity_args(
 
 
 @dataclasses.dataclass(frozen=True)
-class GTFNCompilationArtifact(compiler.CPPCompilationArtifact):
-    def load(self) -> stages.ExecutableProgram:
-        return convert_args(super().load(), device=self.device_type)
-
-
-@dataclasses.dataclass(frozen=True)
 class GTFNCompiler(compiler.CPPCompiler):
-    def _make_artifact(
-        self, src_dir: pathlib.Path, module: pathlib.Path, entry_point_name: str
-    ) -> GTFNCompilationArtifact:
-        return GTFNCompilationArtifact(
-            src_dir=src_dir,
-            module=module,
-            entry_point_name=entry_point_name,
-            device_type=self.device_type,
-        )
+    def _render_loader(self, module: pathlib.Path, entry_point_name: str) -> str:
+        return textwrap.dedent(f"""\
+            from gt4py._core import definitions as core_defs
+            from gt4py.next.otf.compilation import importer
+            from gt4py.next.program_processors.runners.gtfn import convert_args
+
+
+            def load(src_dir):
+                m = importer.import_from_path(
+                    src_dir / {str(module)!r},
+                    sys_modules_prefix="gt4py.__compiled_programs__.",
+                )
+                return convert_args(
+                    getattr(m, {entry_point_name!r}),
+                    device=core_defs.DeviceType.{self.device_type.name},
+                )
+            """)
 
 
 class GTFNCompilerFactory(factory.Factory):

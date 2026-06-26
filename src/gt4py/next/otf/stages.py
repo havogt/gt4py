@@ -9,17 +9,10 @@
 from __future__ import annotations
 
 import dataclasses
+import importlib.util
+import pathlib
 from collections.abc import Callable
-from typing import (
-    TYPE_CHECKING,
-    Final,
-    Generic,
-    Optional,
-    Protocol,
-    TypeAlias,
-    TypeVar,
-    runtime_checkable,
-)
+from typing import TYPE_CHECKING, Final, Generic, Optional, Protocol, TypeAlias, TypeVar
 
 from gt4py.next import common, fingerprinting
 from gt4py.next.iterator import ir as itir
@@ -138,23 +131,31 @@ class BuildSystemProject(Protocol[CodeSpecT_co, TargetCodeSpecT_co]):
 ExecutableProgram: TypeAlias = Callable
 
 
-@runtime_checkable
-class CompilationArtifact(Protocol):
-    """The output of an ``OTFCompileWorkflow``.
+_LOADER_MODULE_FILENAME: Final[str] = "_gt4py_load.py"
 
-    Each backend defines its own concrete artifact dataclass; all share this
-    Protocol. Implementations are frozen dataclasses, picklable, and carry no
-    live process-bound state — that is reconstructed by ``load``, which
-    returns a directly-callable ``ExecutableProgram`` taking gt4py-shaped
-    arguments.
 
-    The one current exception is ``RoundtripArtifact`` when it is configured
-    with a ``dispatch_backend``: that field holds a ``Backend`` reference
-    whose role belongs at the runner / load-time seam, not in the artifact
-    itself.
+@dataclasses.dataclass(frozen=True)
+class CompilationArtifact:
+    """An on-disk compiled program addressable by its build folder.
+
+    Each backend writes a ``_gt4py_load.py`` into the build folder at compile time;
+    that file exposes a ``load(src_dir: pathlib.Path) -> ExecutableProgram`` function
+    encoding the backend-specific loading logic (importing the .so, deserializing the
+    SDFG, exec'ing source, …). ``CompilationArtifact.load`` execs that file and
+    delegates.
     """
 
-    def load(self) -> ExecutableProgram: ...
+    src_dir: pathlib.Path
+
+    def load(self) -> ExecutableProgram:
+        loader_path = self.src_dir / _LOADER_MODULE_FILENAME
+        spec = importlib.util.spec_from_file_location(
+            f"gt4py.__compiled_programs__.{self.src_dir.name}._loader", loader_path
+        )
+        assert spec is not None and spec.loader is not None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod.load(self.src_dir)
 
 
 def _unique_libs(*args: interface.LibraryDependency) -> tuple[interface.LibraryDependency, ...]:

@@ -10,10 +10,9 @@ from __future__ import annotations
 
 import dataclasses
 import functools
-import importlib.util
-import tempfile
+import hashlib
+import sys
 import textwrap
-import types
 from collections.abc import Iterable
 from typing import Any, Optional
 
@@ -28,7 +27,11 @@ from gt4py.next import (
 from gt4py.next.ffront import foast_to_gtir, foast_to_past, past_to_itir
 from gt4py.next.iterator import ir as itir, transforms as itir_transforms
 from gt4py.next.otf import definitions, stages, workflow
+from gt4py.next.otf.compilation import cache as gtx_cache
 from gt4py.next.type_system import type_info, type_specifications as ts
+
+
+_PROGRAM_FILENAME = "program.py"
 
 
 def _create_tmp(axes: str, origin: str, shape: str, dtype: ts.TypeSpec) -> str:
@@ -109,12 +112,6 @@ def ${id}(${','.join(params)}):
         return f"{node.id} = {_create_tmp(axes, origin, shape, node.dtype)}"
 
 
-# Caches the generated source by IR hash so re-codegen is skipped within a process.
-_SOURCE_CACHE: dict[int, tuple[str, str]] = {}
-# Caches the loaded module by source string so re-exec is skipped within a process.
-_MODULE_CACHE: dict[str, types.ModuleType] = {}
-
-
 def _generate_source(
     ir: itir.Program,
     debug: bool,
@@ -123,28 +120,8 @@ def _generate_source(
     transforms: itir_transforms.GTIRTransform,
 ) -> tuple[str, str]:
     """Generate the Python source for an ITIR program. Returns ``(source_code, entry_point_name)``."""
-    # TODO(tehrengruber): just a temporary solution until we have a proper generic
-    #  caching mechanism
-    cache_key = hash(
-        (
-            ir,
-            transforms,
-            debug,
-            use_embedded,
-            tuple(common.offset_provider_to_type(offset_provider).items()),
-        )
-    )
-    if cache_key in _SOURCE_CACHE:
-        if debug:
-            print(f"Using cached source for key {cache_key}")
-        return _SOURCE_CACHE[cache_key]
-
     ir = transforms(ir, offset_provider=offset_provider)
-
     program = EmbeddedDSL.apply(ir)
-
-    # format output in debug mode for better debuggability
-    # (e.g. line numbers, overview in the debugger).
     if debug:
         program = codegen.format_python_source(program)
 
@@ -181,86 +158,86 @@ def _generate_source(
     source_code = f"{header}{offset_literals_src}\n{axis_literals_src}\n{program}"
 
     assert isinstance(ir, itir.Program)
-    entry_point_name = ir.id
-
-    _SOURCE_CACHE[cache_key] = (source_code, entry_point_name)
-    return source_code, entry_point_name
+    return source_code, str(ir.id)
 
 
-def _load_module(source_code: str, debug: bool) -> types.ModuleType:
-    if source_code in _MODULE_CACHE:
-        return _MODULE_CACHE[source_code]
-
-    if debug:
-        # Write to a real .py so debuggers/tracebacks have file/line info.
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".py", encoding="utf-8", delete=False
-        ) as source_file:
-            source_file.write(source_code)
-            source_file_name = source_file.name
-        print(source_file_name)
-        spec = importlib.util.spec_from_file_location("module.name", source_file_name)
-        mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
-        spec.loader.exec_module(mod)  # type: ignore[union-attr]
-    else:
-        mod = types.ModuleType("roundtrip_module")
-        exec(compile(source_code, "<roundtrip>", "exec"), mod.__dict__)
-
-    _MODULE_CACHE[source_code] = mod
-    return mod
+def _find_module_qualname(obj: Any) -> tuple[str, str] | None:
+    """Find ``(module, attr)`` such that ``getattr(sys.modules[module], attr) is obj``."""
+    for mod_name, mod in list(sys.modules.items()):
+        if mod is None or not hasattr(mod, "__dict__"):
+            continue
+        for attr_name, value in vars(mod).items():
+            if value is obj:
+                return mod_name, attr_name
+    return None
 
 
-@dataclasses.dataclass(frozen=True)
-class RoundtripArtifact:
-    """Source-string artifact for the roundtrip backend.
+def _dispatch_backend_import_stmt(backend: next_backend.Backend | None) -> str:
+    if backend is None:
+        return "_dispatch_backend = None"
+    qualname = _find_module_qualname(backend)
+    if qualname is None:
+        raise NotImplementedError(
+            "Roundtrip with a non-module-global ``dispatch_backend`` is not supported "
+            "by the loader-file artifact (it cannot be reconstructed by name)."
+        )
+    module, attr = qualname
+    return f"from {module} import {attr} as _dispatch_backend"
 
-    The generated Python source is the artifact: picklable, re-execed on
-    ``load``. When ``debug`` is true, ``load`` writes a temporary ``.py``
-    so debuggers/tracebacks resolve to source lines.
-    """
 
-    source_code: str
-    entry_point_name: str
-    column_axis: common.Dimension | None
-    dispatch_backend: next_backend.Backend | None
-    debug: bool
+def _column_axis_repr(column_axis: common.Dimension | None) -> str:
+    if column_axis is None:
+        return "None"
+    return (
+        f"gtx_common.Dimension({column_axis.value!r}, "
+        f"kind=gtx_common.DimensionKind({column_axis.kind.value!r}))"
+    )
 
-    def load(self) -> stages.ExecutableProgram:
-        mod = _load_module(self.source_code, self.debug)
-        fencil = getattr(mod, self.entry_point_name)
-        captured_column_axis = self.column_axis
-        dispatch_backend = self.dispatch_backend
 
-        def decorated_fencil(
-            *args: Any,
-            offset_provider: dict[str, common.Connectivity | common.Dimension],
-            out: Any = None,
-            column_axis: Optional[
-                common.Dimension
-            ] = None,  # TODO(tehrengruber): unused, kept for signature compat
-            **kwargs: Any,
-        ) -> None:
-            if out is not None:
-                args = (*args, out)
-            fencil(
-                *args,
-                offset_provider=offset_provider,
-                backend=dispatch_backend,
-                column_axis=captured_column_axis,
-                **kwargs,
+def _render_loader(
+    entry_point_name: str, column_axis_repr: str, dispatch_backend_import: str
+) -> str:
+    return textwrap.dedent(f"""\
+        import importlib.util
+        from gt4py.next import common as gtx_common
+
+        {dispatch_backend_import}
+
+
+        def load(src_dir):
+            spec = importlib.util.spec_from_file_location(
+                f"gt4py.__compiled_programs__.{{src_dir.name}}._roundtrip",
+                src_dir / {_PROGRAM_FILENAME!r},
             )
+            assert spec is not None and spec.loader is not None
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            fencil = getattr(mod, {entry_point_name!r})
+            captured_column_axis = {column_axis_repr}
 
-        return decorated_fencil
+            def decorated_fencil(*args, offset_provider, out=None, column_axis=None, **kwargs):
+                if out is not None:
+                    args = (*args, out)
+                fencil(
+                    *args,
+                    offset_provider=offset_provider,
+                    backend=_dispatch_backend,
+                    column_axis=captured_column_axis,
+                    **kwargs,
+                )
+
+            return decorated_fencil
+        """)
 
 
 @dataclasses.dataclass(frozen=True)
-class Roundtrip(workflow.Workflow[definitions.CompilableProgramDef, RoundtripArtifact]):
+class Roundtrip(workflow.Workflow[definitions.CompilableProgramDef, stages.CompilationArtifact]):
     debug: Optional[bool] = None
     use_embedded: bool = True
     dispatch_backend: Optional[next_backend.Backend] = None
     transforms: itir_transforms.GTIRTransform = itir_transforms.apply_common_transforms  # type: ignore[assignment] # TODO(havogt): cleanup interface of `apply_common_transforms`
 
-    def __call__(self, inp: definitions.CompilableProgramDef) -> RoundtripArtifact:
+    def __call__(self, inp: definitions.CompilableProgramDef) -> stages.CompilationArtifact:
         debug = config.DEBUG if self.debug is None else self.debug
 
         source_code, entry_point_name = _generate_source(
@@ -271,13 +248,28 @@ class Roundtrip(workflow.Workflow[definitions.CompilableProgramDef, RoundtripArt
             transforms=self.transforms,
         )
 
-        return RoundtripArtifact(
-            source_code=source_code,
-            entry_point_name=entry_point_name,
-            column_axis=inp.args.column_axis,
-            dispatch_backend=self.dispatch_backend,
-            debug=debug,
+        column_axis_repr = _column_axis_repr(inp.args.column_axis)
+        dispatch_backend_import = _dispatch_backend_import_stmt(self.dispatch_backend)
+        digest = hashlib.sha256(
+            "\0".join(
+                (source_code, entry_point_name, column_axis_repr, dispatch_backend_import)
+            ).encode()
+        ).hexdigest()
+        src_dir = (
+            gtx_cache.get_cache_base_path(config.BUILD_CACHE_LIFETIME)
+            / f"roundtrip_{entry_point_name}_{digest}"
         )
+        src_dir.mkdir(parents=True, exist_ok=True)
+        (src_dir / _PROGRAM_FILENAME).write_text(source_code)
+        (src_dir / stages._LOADER_MODULE_FILENAME).write_text(
+            _render_loader(
+                entry_point_name=entry_point_name,
+                column_axis_repr=column_axis_repr,
+                dispatch_backend_import=dispatch_backend_import,
+            )
+        )
+
+        return stages.CompilationArtifact(src_dir=src_dir)
 
 
 # TODO(tehrengruber): introduce factory

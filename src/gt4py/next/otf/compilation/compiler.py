@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import dataclasses
 import pathlib
+import textwrap
 from typing import Protocol, TypeVar
 
 from gt4py._core import definitions as core_defs, locking
 from gt4py.next import config
 from gt4py.next.otf import code_specs, definitions, stages, workflow
-from gt4py.next.otf.compilation import build_data, cache, importer
+from gt4py.next.otf.compilation import build_data, cache
 
 
 def is_compiled(data: build_data.BuildData) -> bool:
@@ -40,47 +41,20 @@ class BuildSystemProjectGenerator(Protocol[CodeSpecT, TargetCodeSpecT]):
 
 
 @dataclasses.dataclass(frozen=True)
-class CPPCompilationArtifact:
-    """On-disk result of a CPP-style compilation: a Python extension module.
-
-    The default ``load`` is an ``importlib`` import + entry-point lookup;
-    backends override to apply their own calling convention.
-    """
-
-    src_dir: pathlib.Path
-    module: pathlib.Path
-    entry_point_name: str
-    device_type: core_defs.DeviceType
-
-    def load(self) -> stages.ExecutableProgram:
-        """Import the .so and return the raw entry point.
-
-        Must run in the process that will call the returned program: the
-        module is registered in that process's ``sys.modules`` under the
-        ``gt4py.__compiled_programs__.`` prefix.
-        """
-        m = importer.import_from_path(
-            self.src_dir / self.module,
-            sys_modules_prefix="gt4py.__compiled_programs__.",
-        )
-        return getattr(m, self.entry_point_name)
-
-
-@dataclasses.dataclass(frozen=True)
 class CPPCompiler(
     workflow.ChainableWorkflowMixin[
         stages.CompilableProject[CPPLikeCodeSpecT, code_specs.PythonCodeSpec],
-        CPPCompilationArtifact,
+        stages.CompilationArtifact,
     ],
     workflow.ReplaceEnabledWorkflowMixin[
         stages.CompilableProject[CPPLikeCodeSpecT, code_specs.PythonCodeSpec],
-        CPPCompilationArtifact,
+        stages.CompilationArtifact,
     ],
     definitions.CompilationStep[CPPLikeCodeSpecT, code_specs.PythonCodeSpec],
 ):
-    """Drive a CPP-style build system into a ``CPPCompilationArtifact``.
+    """Drive a CPP-style build system and write a ``_gt4py_load.py`` next to the .so.
 
-    Backends override ``_make_artifact`` to use their own artifact subclass.
+    Backends override ``_render_loader`` to emit their own loader-file body.
     """
 
     cache_lifetime: config.BuildCacheLifetime
@@ -91,7 +65,7 @@ class CPPCompiler(
     def __call__(
         self,
         inp: stages.CompilableProject[CPPLikeCodeSpecT, code_specs.PythonCodeSpec],
-    ) -> CPPCompilationArtifact:
+    ) -> stages.CompilationArtifact:
         src_dir = cache.get_cache_folder(inp, self.cache_lifetime)
 
         # If we are compiling the same program at the same time (e.g. multiple MPI ranks),
@@ -109,17 +83,24 @@ class CPPCompiler(
                     f"On-the-fly compilation unsuccessful for '{inp.program_source.entry_point.name}'."
                 )
 
-        return self._make_artifact(src_dir, new_data.module, new_data.entry_point_name)
+            (src_dir / stages._LOADER_MODULE_FILENAME).write_text(
+                self._render_loader(new_data.module, new_data.entry_point_name)
+            )
 
-    def _make_artifact(
-        self, src_dir: pathlib.Path, module: pathlib.Path, entry_point_name: str
-    ) -> CPPCompilationArtifact:
-        return CPPCompilationArtifact(
-            src_dir=src_dir,
-            module=module,
-            entry_point_name=entry_point_name,
-            device_type=self.device_type,
-        )
+        return stages.CompilationArtifact(src_dir=src_dir)
+
+    def _render_loader(self, module: pathlib.Path, entry_point_name: str) -> str:
+        return textwrap.dedent(f"""\
+            from gt4py.next.otf.compilation import importer
+
+
+            def load(src_dir):
+                m = importer.import_from_path(
+                    src_dir / {str(module)!r},
+                    sys_modules_prefix="gt4py.__compiled_programs__.",
+                )
+                return getattr(m, {entry_point_name!r})
+            """)
 
 
 class CompilationError(RuntimeError): ...
