@@ -6,15 +6,9 @@
 # Please, refer to the LICENSE file in the root directory.
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Tests for the compilation stage of the dace backend workflow.
-
-Covers the GPU TX-marker instrumentation and the picklability of
-``DaCeCompilationArtifact``.
-"""
+"""Tests for the GPU TX-marker instrumentation in the dace backend workflow."""
 
 import contextlib
-import pathlib
-import pickle
 import unittest.mock as mock
 
 import pytest
@@ -82,6 +76,7 @@ def _run_compiler(
     """
     inp = mock.MagicMock()
     inp.program_source.source_code = _make_sdfg_with_gpu_map().to_json()
+    inp.binding_source.source_code = "def bind(*a, **k): ..."
 
     compiler = dace_wf_compilation.DaCeCompiler(
         bind_func_name="bind",
@@ -152,18 +147,3 @@ def test_compiler_skips_tx_markers_for_non_gpu_device(tmp_path):
 
     spy.assert_not_called()
     assert compiled_sdfg.instrument == _NONE
-
-
-def test_dace_compilation_artifact_pickle_round_trip(tmp_path: pathlib.Path):
-    artifact = dace_wf_compilation.DaCeCompilationArtifact(
-        build_folder=tmp_path,
-        library_path=tmp_path / "build" / "libprogram.so",
-        sdfg_json="{}",
-        binding_source_code="def update_sdfg_args(*a, **k): ...",
-        bind_func_name="update_sdfg_args",
-        device_type=core_defs.DeviceType.CPU,
-    )
-
-    restored = pickle.loads(pickle.dumps(artifact))
-
-    assert restored == artifact

@@ -12,6 +12,7 @@ import dataclasses
 import json
 import os
 import pathlib
+import textwrap
 import warnings
 from collections.abc import Callable, MutableSequence, Sequence
 from typing import Any
@@ -24,10 +25,11 @@ from gt4py._core import definitions as core_defs, locking
 from gt4py.next import common, config
 from gt4py.next.otf import code_specs, definitions, stages, workflow
 from gt4py.next.otf.compilation import cache as gtx_cache
-from gt4py.next.program_processors.runners.dace.workflow import (
-    common as gtx_wfdcommon,
-    decoration as gtx_wfddecoration,
-)
+from gt4py.next.program_processors.runners.dace.workflow import common as gtx_wfdcommon
+
+
+_SDFG_FILENAME = "sdfg.json"
+_BINDING_FILENAME = "binding.py"
 
 
 def _add_tx_markers(sdfg: dace.SDFG) -> None:
@@ -135,46 +137,50 @@ class CompiledDaceProgram:
         assert result is None
 
 
-@dataclasses.dataclass(frozen=True)
-class DaCeCompilationArtifact:
-    """Result of a DaCe compilation: build folder + library path + SDFG bindings + the SDFG itself.
+def _render_dace_loader(
+    library_relpath: pathlib.Path, bind_func_name: str, device_type: core_defs.DeviceType
+) -> str:
+    return textwrap.dedent(f"""\
+        import json
+        import dace
+        import dace.codegen.compiler as dace_compiler
+        from gt4py._core import definitions as core_defs
+        from gt4py.next.program_processors.runners.dace.workflow import (
+            compilation as gtx_wfdcompilation,
+            decoration as gtx_wfddecoration,
+        )
 
-    The SDFG is carried inline as JSON because dace's load path
-    (``get_program_handle``) needs an SDFG instance to wrap into the
-    returned ``CompiledSDFG``, and the build folder may not contain a
-    ``program.sdfg(z)`` dump under the upcoming minimal-build-dir mode.
-    """
 
-    build_folder: pathlib.Path
-    library_path: pathlib.Path
-    sdfg_json: str
-    binding_source_code: str
-    bind_func_name: str
-    device_type: core_defs.DeviceType
-
-    def load(self) -> stages.ExecutableProgram:
-        # TODO(phimuell): Drop ``sdfg_json`` from the artifact once dace
-        #   exposes a load path that doesn't require an SDFG instance to wrap
-        #   into the returned ``CompiledSDFG``.
-        sdfg = dace.SDFG.from_json(json.loads(self.sdfg_json))
-        sdfg_program = dace_compiler.get_program_handle(self.library_path, sdfg)
-        program = CompiledDaceProgram(sdfg_program, self.bind_func_name, self.binding_source_code)
-        return gtx_wfddecoration.convert_args(program, device=self.device_type)
+        def load(src_dir):
+            sdfg = dace.SDFG.from_json(
+                json.loads((src_dir / {_SDFG_FILENAME!r}).read_text())
+            )
+            sdfg_program = dace_compiler.get_program_handle(
+                src_dir / {str(library_relpath)!r}, sdfg
+            )
+            binding_source = (src_dir / {_BINDING_FILENAME!r}).read_text()
+            program = gtx_wfdcompilation.CompiledDaceProgram(
+                sdfg_program, {bind_func_name!r}, binding_source
+            )
+            return gtx_wfddecoration.convert_args(
+                program, device=core_defs.DeviceType.{device_type.name}
+            )
+        """)
 
 
 @dataclasses.dataclass(frozen=True)
 class DaCeCompiler(
     workflow.ChainableWorkflowMixin[
         stages.CompilableProject[code_specs.SDFGCodeSpec, code_specs.PythonCodeSpec],
-        DaCeCompilationArtifact,
+        stages.CompilationArtifact,
     ],
     workflow.ReplaceEnabledWorkflowMixin[
         stages.CompilableProject[code_specs.SDFGCodeSpec, code_specs.PythonCodeSpec],
-        DaCeCompilationArtifact,
+        stages.CompilationArtifact,
     ],
     definitions.CompilationStep[code_specs.SDFGCodeSpec, code_specs.PythonCodeSpec],
 ):
-    """Run the DaCe build system and produce an on-disk ``DaCeCompilationArtifact``."""
+    """Run the DaCe build system and write a self-contained loader file next to the .so."""
 
     bind_func_name: str
     cache_lifetime: config.BuildCacheLifetime
@@ -189,13 +195,13 @@ class DaCeCompiler(
     def __call__(
         self,
         inp: stages.CompilableProject[code_specs.SDFGCodeSpec, code_specs.PythonCodeSpec],
-    ) -> DaCeCompilationArtifact:
+    ) -> stages.CompilationArtifact:
         with gtx_wfdcommon.dace_context(
             device_type=self.device_type,
             cmake_build_type=self.cmake_build_type,
         ):
-            sdfg_build_folder = gtx_cache.get_cache_folder(inp, self.cache_lifetime)
-            pathlib.Path(sdfg_build_folder).mkdir(parents=True, exist_ok=True)
+            sdfg_build_folder = pathlib.Path(gtx_cache.get_cache_folder(inp, self.cache_lifetime))
+            sdfg_build_folder.mkdir(parents=True, exist_ok=True)
 
             sdfg = dace.SDFG.from_json(inp.program_source.source_code)
 
@@ -203,24 +209,31 @@ class DaCeCompiler(
             if self.add_gpu_trace_markers and self.device_type == core_defs.CUPY_DEVICE_TYPE:
                 _add_tx_markers(sdfg)
 
-            sdfg.build_folder = sdfg_build_folder
+            sdfg.build_folder = str(sdfg_build_folder)
             with locking.lock(sdfg_build_folder):
                 sdfg.compile(validate=False, return_program_handle=False)
-            # ``build_folder_mode`` is set by ``dace_context``; resolve the library
-            # path here so ``get_binary_name`` sees the same mode dace built under.
-            library_path = dace_compiler.get_binary_name(
-                object_folder=sdfg_build_folder, sdfg_name=sdfg.name
-            )
+                # ``build_folder_mode`` is set by ``dace_context``; resolve the library
+                # path inside so ``get_binary_name`` sees the same mode dace built under.
+                library_path = dace_compiler.get_binary_name(
+                    object_folder=sdfg_build_folder, sdfg_name=sdfg.name
+                )
+                assert inp.binding_source is not None
+                sdfg_text = (
+                    inp.program_source.source_code
+                    if isinstance(inp.program_source.source_code, str)
+                    else json.dumps(inp.program_source.source_code)
+                )
+                (sdfg_build_folder / _SDFG_FILENAME).write_text(sdfg_text)
+                (sdfg_build_folder / _BINDING_FILENAME).write_text(inp.binding_source.source_code)
+                (sdfg_build_folder / stages._LOADER_MODULE_FILENAME).write_text(
+                    _render_dace_loader(
+                        library_relpath=library_path.relative_to(sdfg_build_folder),
+                        bind_func_name=self.bind_func_name,
+                        device_type=self.device_type,
+                    )
+                )
 
-        assert inp.binding_source is not None
-        return DaCeCompilationArtifact(
-            build_folder=pathlib.Path(sdfg_build_folder),
-            library_path=library_path,
-            sdfg_json=json.dumps(inp.program_source.source_code),
-            binding_source_code=inp.binding_source.source_code,
-            bind_func_name=self.bind_func_name,
-            device_type=self.device_type,
-        )
+        return stages.CompilationArtifact(src_dir=sdfg_build_folder)
 
 
 class DaCeCompilationStepFactory(factory.Factory):
