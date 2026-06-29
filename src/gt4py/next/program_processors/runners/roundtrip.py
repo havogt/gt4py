@@ -173,13 +173,26 @@ def _find_module_qualname(obj: Any) -> tuple[str, str] | None:
 
 
 def _dispatch_backend_import_stmt(backend: next_backend.Backend | None) -> str:
+    # The loader file has to reconstruct ``dispatch_backend`` at load time without
+    # the in-memory object being available. We do that by writing an ``import``
+    # statement into the generated source, which only works if the Backend
+    # instance is reachable via ``sys.modules`` (i.e. is a module-global). A
+    # Backend created ad-hoc via ``GTFNBackendFactory(...)`` or
+    # ``make_dace_backend(...)`` and held only in a local/fixture scope is not
+    # findable; this is an accepted limitation because Roundtrip is a
+    # development/debugging backend, not a production target. See the
+    # ``Roundtrip.dispatch_backend`` field for the user-facing contract.
     if backend is None:
         return "_dispatch_backend = None"
     qualname = _find_module_qualname(backend)
     if qualname is None:
         raise NotImplementedError(
-            "Roundtrip with a non-module-global ``dispatch_backend`` is not supported "
-            "by the loader-file artifact (it cannot be reconstructed by name)."
+            "Roundtrip's ``dispatch_backend`` must be reachable as a module-level "
+            "attribute (so it can be re-imported by the generated loader). "
+            "Factory-constructed backends that are only bound to a local variable "
+            "or fixture cannot be serialized into the compilation artifact. Either "
+            "assign the backend to a module global, or use a Roundtrip variant "
+            "with ``dispatch_backend=None``/``embedded.run_roundtrip_executor``."
         )
     module, attr = qualname
     return f"from {module} import {attr} as _dispatch_backend"
@@ -232,6 +245,20 @@ def _render_loader(
 
 @dataclasses.dataclass(frozen=True)
 class Roundtrip(workflow.Workflow[definitions.CompilableProgramDef, stages.CompilationArtifact]):
+    """Generate-and-exec Python ``Workflow``.
+
+    .. note::
+       ``dispatch_backend`` must be reachable as a module-level attribute: the
+       generated loader file re-imports it by ``module.attribute`` qualname. A
+       ``Backend`` constructed ad-hoc (e.g. via ``GTFNBackendFactory(...)`` or
+       ``make_dace_backend(...)``) and held only in a local variable or pytest
+       fixture is *not* supported and will raise ``NotImplementedError`` at
+       compile time. Either assign it to a module global, or use one of the
+       module-level Roundtrip backends in this file. Roundtrip is a development
+       backend, so we accept this constraint rather than carry a more elaborate
+       Backend-serialization mechanism.
+    """
+
     debug: Optional[bool] = None
     use_embedded: bool = True
     dispatch_backend: Optional[next_backend.Backend] = None
