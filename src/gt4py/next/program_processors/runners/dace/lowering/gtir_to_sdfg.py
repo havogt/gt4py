@@ -766,8 +766,8 @@ class GTIRToSDFG(eve.NodeVisitor, SDFGBuilder):
 
         nsdfg_node = outer_ctx.state.add_nested_sdfg(
             inner_ctx.sdfg,
-            inputs=input_memlets.keys(),
-            outputs=lambda_outputs,
+            inputs={key: None for key in sorted(input_memlets.keys())},
+            outputs={key: None for key in sorted(lambda_outputs)},
             symbol_mapping=nsdfg_symbols_mapping,
             debuginfo=gtir_to_sdfg_utils.debug_info(node, default=outer_ctx.sdfg.debuginfo),
         )
@@ -896,6 +896,7 @@ class GTIRToSDFG(eve.NodeVisitor, SDFGBuilder):
                 dc_dtype = gtx_dace_args.as_dace_type(gt_type.dtype)
                 all_dims = gt_type.dims
             else:  # for 'ts.ListType' use 'offset_type' as local dimension
+                assert isinstance(gt_type.dtype, ts.ListType)
                 assert gt_type.dtype.offset_type is not None
                 assert gt_type.dtype.offset_type.kind == gtx_common.DimensionKind.LOCAL
                 assert isinstance(gt_type.dtype.element_type, ts.ScalarType)
