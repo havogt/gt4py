@@ -18,12 +18,13 @@ import os
 import pathlib
 import pickle
 import threading
+import time
 import warnings
 from typing import Any, Callable, Protocol, runtime_checkable
 
 from gt4py._core import definitions as core_defs
 from gt4py.next import config
-from gt4py.next.otf import definitions, stages, workflow
+from gt4py.next.otf import _timing, definitions, stages, workflow
 from gt4py.next.otf.compilation import cache as _cache
 
 
@@ -73,7 +74,8 @@ def _run_in_calling_thread(
 ) -> concurrent.futures.Future[stages.ExecutableProgram]:
     future: concurrent.futures.Future[stages.ExecutableProgram] = concurrent.futures.Future()
     try:
-        future.set_result(job.run())
+        with _timing.span("compile_in_calling_thread", job=job.name):
+            future.set_result(job.run())
     except BaseException as exception:  # re-raised via the future
         future.set_exception(exception)
     return future
@@ -121,7 +123,9 @@ def _detect_cuda_archs() -> str | None:
         return None
 
 
-def _pool_worker_initializer(shared_session_cache_dir: str, cuda_archs: str | None) -> None:
+def _pool_worker_initializer(
+    shared_session_cache_dir: str, cuda_archs: str | None, pool_created_wall: float
+) -> None:
     """Prepare a worker process for building without touching the parent's GPU.
 
     Points the worker's session-lifetime build cache at the main process's temp
@@ -135,6 +139,7 @@ def _pool_worker_initializer(shared_session_cache_dir: str, cuda_archs: str | No
     ``try_run`` binary), each probe creating a CUDA context on the GPU of the
     parent — which may be running kernels concurrently.
     """
+    _timing.log("worker_ready", spawn_dt=f"{time.time() - pool_created_wall:.3f}")
     _cache._session_cache_dir_path = pathlib.Path(shared_session_cache_dir)
     if cuda_archs is not None:
         os.environ["CUDAARCHS"] = cuda_archs
@@ -167,11 +172,18 @@ def _process_pool_compile_job(
     executor_blob: bytes,
     compilable: Any,
     config_overrides: dict[str, Any],
+    submitted_wall: float,
 ) -> stages.CompilationArtifact:
     """Worker entry point: deserialize the executor and run it."""
+    program = getattr(getattr(compilable, "data", None), "id", "?")
+    _timing.log(
+        "worker_job_received", queue_dt=f"{time.time() - submitted_wall:.3f}", program=program
+    )
     _apply_config_overrides(config_overrides)
-    executor = pickle.loads(executor_blob)
-    return executor(compilable)
+    with _timing.span("worker_unpickle_executor", program=program):
+        executor = pickle.loads(executor_blob)
+    with _timing.span("worker_execute", program=program):
+        return executor(compilable)
 
 
 class ProcessRunner:
@@ -197,11 +209,12 @@ class ProcessRunner:
         # requirement: ProcessPoolExecutor pickles every submitted task regardless
         # of start method.
         ctx = multiprocessing.get_context("spawn")
+        _timing.log("pool_created", max_workers=max_workers)
         self._pool = concurrent.futures.ProcessPoolExecutor(
             max_workers=max_workers,
             mp_context=ctx,
             initializer=_pool_worker_initializer,
-            initargs=(shared_session_cache_dir, _detect_cuda_archs()),
+            initargs=(shared_session_cache_dir, _detect_cuda_archs(), time.time()),
         )
 
     def submit(self, job: CompileJob) -> concurrent.futures.Future[stages.ExecutableProgram]:
@@ -210,7 +223,8 @@ class ProcessRunner:
             blocker = "it does not use the standard compilation workflow (customized 'compile')"
         else:
             try:
-                executor_blob = pickle.dumps(job.offload.executor)
+                with _timing.span("executor_pickle", job=job.name):
+                    executor_blob = pickle.dumps(job.offload.executor)
             except Exception as error:  # pickling arbitrary object graphs raises arbitrary errors
                 blocker = f"its executor is not picklable ({error!s})"
         if executor_blob is None:
@@ -227,6 +241,7 @@ class ProcessRunner:
             executor_blob=executor_blob,
             compilable=job.offload.compilable,
             config_overrides=_config_snapshot(),
+            submitted_wall=time.time(),
         )
         loaded: concurrent.futures.Future[stages.ExecutableProgram] = concurrent.futures.Future()
 
@@ -234,7 +249,8 @@ class ProcessRunner:
             artifact_future: concurrent.futures.Future[stages.CompilationArtifact],
         ) -> None:
             try:
-                loaded.set_result(artifact_future.result().load())
+                with _timing.span("artifact_load", job=job.name):
+                    loaded.set_result(artifact_future.result().load())
             except BaseException as exception:  # re-raised via the future
                 loaded.set_exception(exception)
 

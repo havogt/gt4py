@@ -36,7 +36,13 @@ from gt4py.next.ffront import (
     type_translation,
 )
 from gt4py.next.instrumentation import hook_machinery, metrics
-from gt4py.next.otf import arguments, compilation_runner, definitions as otf_definitions, stages
+from gt4py.next.otf import (
+    _timing,
+    arguments,
+    compilation_runner,
+    definitions as otf_definitions,
+    stages,
+)
 from gt4py.next.otf.compilation import cache as compilation_cache
 from gt4py.next.type_system import type_info, type_specifications as ts
 from gt4py.next.utils import tree_map
@@ -182,7 +188,8 @@ def wait_for_compilation() -> None:
             collected in the meantime are not reported (they could never
             raise at call time either).
     """
-    compilation_runner.reset_default_runner()
+    with _timing.span("wait_for_compilation"):
+        compilation_runner.reset_default_runner()
     failures: list[tuple[str, BaseException]] = []
     for future, label in list(_ongoing_compilations.items()):
         if (error := future.exception()) is not None:  # waits for completion
@@ -246,7 +253,8 @@ def _connectivity_file_ref(value: common.Connectivity) -> _ConnectivityFileRef:
         dump_dir.mkdir(parents=True, exist_ok=True)
         fd, path = tempfile.mkstemp(suffix=".npy", prefix="connectivity_", dir=dump_dir)
         os.close(fd)
-        np.save(path, value.asnumpy())
+        with _timing.span("connectivity_dump", bytes=value.ndarray.nbytes):  # type: ignore[attr-defined]  # temp instrumentation
+            np.save(path, value.asnumpy())
         try:
             _connectivity_files[id(value)] = (weakref.ref(value), path)
         except TypeError:  # not weakref-able: correct but re-dumped per job
@@ -288,9 +296,11 @@ def _make_compile_job(
     # Frontend lowering happens here, main-side: decorators rebind the user's
     # function module attribute, so the raw `types.FunctionType` must not cross
     # a process boundary; the lowered `CompilableProgramDef` is pickle-safe.
-    compilable = backend.transforms(
-        otf_definitions.ConcreteProgramDef(data=definition_stage, args=compile_time_args)
-    )
+    program_name = getattr(getattr(definition_stage, "definition", None), "__name__", "?")
+    with _timing.span("frontend_lowering", program=program_name, backend=name):
+        compilable = backend.transforms(
+            otf_definitions.ConcreteProgramDef(data=definition_stage, args=compile_time_args)
+        )
     offload_compilable = compilable
     if compilable.args.offset_provider:
         # The offloaded copy must not carry the connectivity buffers: they may
@@ -771,9 +781,10 @@ class CompiledProgramsPool(Generic[ffront_stages.DSLDefinitionT]):
         )
 
         runner = self.compilation_runner or compilation_runner.get_default_runner()
-        future = runner.submit(
-            _make_compile_job(self.backend, self.definition_stage, compile_time_args)
-        )
+        with _timing.span("submit", program=self.definition_stage.definition.__name__):
+            future = runner.submit(
+                _make_compile_job(self.backend, self.definition_stage, compile_time_args)
+            )
         if future.done():
             # Eager so compile() raises now; otherwise the error stays in the
             # already-resolved future until the next call touches this key.

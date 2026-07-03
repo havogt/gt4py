@@ -178,7 +178,7 @@ def test_pool_worker_initializer_hides_gpus_when_archs_known(tmp_path):
         mock.patch.dict(os.environ),
         mock.patch.object(compilation_runner._cache, "_session_cache_dir_path"),
     ):
-        compilation_runner._pool_worker_initializer(str(tmp_path), "90")
+        compilation_runner._pool_worker_initializer(str(tmp_path), "90", pool_created_wall=0.0)
         assert os.environ["CUDAARCHS"] == "90"
         assert os.environ["CUDA_VISIBLE_DEVICES"] == ""
         assert compilation_runner._cache._session_cache_dir_path == tmp_path
@@ -189,7 +189,7 @@ def test_pool_worker_initializer_leaves_gpus_visible_without_archs(tmp_path):
         mock.patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": "3"}),
         mock.patch.object(compilation_runner._cache, "_session_cache_dir_path"),
     ):
-        compilation_runner._pool_worker_initializer(str(tmp_path), None)
+        compilation_runner._pool_worker_initializer(str(tmp_path), None, pool_created_wall=0.0)
         assert os.environ["CUDA_VISIBLE_DEVICES"] == "3"
         assert "CUDAARCHS" not in os.environ or os.environ["CUDAARCHS"] == ""
 
