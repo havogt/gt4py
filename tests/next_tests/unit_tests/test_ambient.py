@@ -20,14 +20,21 @@ Edge = common.Dimension("Edge")
 V2EDim = common.Dimension("V2E", kind=common.DimensionKind.LOCAL)
 
 
-@dataclasses.dataclass(frozen=True)
+V2E = gtx.FieldOffset("V2E", source=Edge, target=(Vertex, V2EDim))
+
+
 class Mesh:
-    V2E: common.Connectivity
+    """A container declaring what it supplies; the class attribute is the declaration."""
+
+    V2E = V2E
+
+    def __init__(self, connectivity):
+        self.V2E = connectivity
 
 
 def make_mesh(table) -> Mesh:
     return Mesh(
-        V2E=gtx.as_connectivity(
+        gtx.as_connectivity(
             domain={Vertex: 2, V2EDim: 2},
             codomain=Edge,
             data=np.asarray(table, dtype=np.int32),
@@ -40,29 +47,26 @@ def test_nothing_bound_yields_empty_offset_provider():
     assert gtx.ambient.offset_provider() == {}
 
 
-def test_bound_namespace_provides_its_connectivities():
-    mesh = gtx.Namespace("mesh")
+def test_bound_offset_declaration_provides_its_connectivity():
     m = make_mesh([[0, 1], [1, 2]])
-    with gtx.bind(mesh, m):
+    with gtx.bind(V2E, m.V2E):
         assert gtx.ambient.offset_provider() == {"V2E": m.V2E}
     assert gtx.ambient.offset_provider() == {}
 
 
+def test_container_binds_by_declaration_not_by_name():
+    """The container's class attribute names the declaration it supplies."""
+    m = make_mesh([[0, 1], [1, 2]])
+    with gtx.bindings(gtx.ambient.as_bindings(m)):
+        assert gtx.ambient.offset_provider() == {"V2E": m.V2E}
+
+
 def test_bindings_nest_and_unwind():
-    mesh = gtx.Namespace("mesh")
     m1, m2 = make_mesh([[0, 1], [1, 2]]), make_mesh([[1, 2], [0, 1]])
-    with gtx.bind(mesh, m1):
-        with gtx.bind(mesh, m2):
+    with gtx.bind(V2E, m1.V2E):
+        with gtx.bind(V2E, m2.V2E):
             assert gtx.ambient.offset_provider()["V2E"] is m2.V2E
         assert gtx.ambient.offset_provider()["V2E"] is m1.V2E
-
-
-def test_colliding_offset_names_are_rejected():
-    a, b = gtx.Namespace("a"), gtx.Namespace("b")
-    with gtx.bind(a, make_mesh([[0, 1], [1, 2]])):
-        with gtx.bind(b, make_mesh([[1, 2], [0, 1]])):
-            with pytest.raises(ValueError, match="provided by more than one namespace"):
-                gtx.ambient.offset_provider()
 
 
 def test_freeze_gives_a_content_hash():
@@ -103,8 +107,6 @@ def test_readonly_freeze_marks_the_buffer_immutable():
 
 # --- embedded end-to-end (backend-free) --------------------------------------
 
-V2E = gtx.FieldOffset("V2E", source=Edge, target=(Vertex, V2EDim))
-
 
 @gtx.field_operator
 def sum_edges(a: gtx.Field[gtx.Dims[Edge], gtx.int32]) -> gtx.Field[gtx.Dims[Vertex], gtx.int32]:
@@ -135,24 +137,21 @@ def test_embedded_execution_via_every_mechanism(inputs, entry_point, mechanism):
     callee = run if entry_point == "program" else sum_edges
     kwargs = {"out": out} if entry_point == "field_operator" else {}
     args = (a,) if entry_point == "field_operator" else (a, out)
-    mesh = gtx.Namespace("mesh")
-
     if mechanism == "offset_provider":
         callee(*args, **kwargs, offset_provider={"V2E": m.V2E})
     elif mechanism == "context_manager":
-        with gtx.bind(mesh, m):
+        with gtx.bind(V2E, m.V2E):
             callee(*args, **kwargs)
     else:
-        callee(*args, **kwargs, bind={mesh: m})
+        callee(*args, **kwargs, bind=m)
 
     np.testing.assert_array_equal(out.asnumpy(), expected)
 
 
 def test_bind_kwarg_is_scoped_to_the_call(inputs):
     a, m, _ = inputs
-    mesh = gtx.Namespace("mesh")
     out = gtx.zeros(gtx.domain({Vertex: 2}), dtype=np.int32)
-    run(a, out, bind={mesh: m})
+    run(a, out, bind=m)
     assert gtx.ambient.offset_provider() == {}
 
 

@@ -14,13 +14,27 @@ appearing in a signature. Binding happens at execution time (JIT time for
 compiled backends), so the same programs can run against a second mesh in one
 process.
 
-Two things are ambient:
+Everything ambient is bound the same way: **the declaration is the key**.
 
-- **Connectivities**, via a `Namespace`: a program called without an
-  ``offset_provider`` takes one from whatever is bound.
-- **Values**, via a declaration ``dx = Static[float]`` referenced by bare name
-  inside an operator. It never appears in a signature, so it does not have to be
-  threaded through nested operators.
+    prog(a, out, bind={V2E: connectivity, dx: 0.5})
+
+A `FieldOffset` is already a declaration — it names the offset and fixes its
+source and target — so it binds exactly like a `Static[T]` / `Extern[T]` value,
+and a program called without an ``offset_provider`` assembles one from the bound
+offsets. A container may declare what it supplies, in which case the class
+attribute is the declaration and the instance attribute the value::
+
+    class Mesh:
+        V2E = V2E  # this mesh supplies the V2E connectivity
+        dx = physics.dx
+
+Binding by declaration rather than by attribute *name* is what lets a container
+supply the very offset an operator refers to, instead of something that merely
+shares its name.
+
+A value declared this way is referenced by bare name inside an operator and
+never appears in a signature, so it does not have to be threaded through nested
+operators.
 
 A declaration becomes a **synthesised program parameter** when the program is
 defined (`func_to_past`), so from there on it travels the ordinary path: type
@@ -42,7 +56,6 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
-import dataclasses
 from collections.abc import Generator, Mapping
 from typing import Any
 
@@ -50,66 +63,13 @@ import numpy as np
 
 from gt4py.eve import utils as eve_utils
 from gt4py.next import common
+from gt4py.next.ffront import fbuiltins
 
 
 _UNBOUND: Any = object()
 
 #: keyed by declaration object: a `Namespace` or an `AmbientValue`
 _bindings: contextvars.ContextVar[Mapping[Any, Any]] = contextvars.ContextVar("_ambient_bindings")
-
-
-class Namespace:
-    """
-    A named collection of ambient values, resolved by attribute access.
-
-    The declaration is the namespace object itself; ``mesh.e2v`` is a reference
-    that only becomes a value once something is bound to ``mesh``. Attribute
-    names are not declared up front in this prototype.
-    """
-
-    def __init__(self, name: str) -> None:
-        self._name = name
-
-    def __repr__(self) -> str:
-        return f"Namespace('{self._name}')"
-
-    def __getattr__(self, name: str) -> AmbientRef:
-        # only reached when normal lookup fails; dunder/private probes (pickle,
-        # copy, the DSL frontend) must not be turned into references
-        if name.startswith("_"):
-            raise AttributeError(name)
-        return AmbientRef(self, name)
-
-    @property
-    def bound(self) -> Any:
-        """The object currently bound to this namespace."""
-        binding = _bindings.get({}).get(self, None)
-        if binding is None:
-            raise ValueError(
-                f"Nothing is bound to ambient namespace '{self._name}'."
-                " Use 'gtx.bind(<namespace>, <value>)' around the call."
-            )
-        return binding
-
-
-@dataclasses.dataclass(frozen=True)
-class AmbientRef:
-    """
-    A deferred reference to `namespace.name`, resolved when something is bound.
-
-    Attribute access on a `Namespace` yields one of these instead of a value,
-    because at the point an operator is *defined* nothing is bound yet.
-    """
-
-    namespace: Namespace
-    name: str
-
-    def __repr__(self) -> str:
-        return f"{self.namespace._name}.{self.name}"
-
-    @property
-    def value(self) -> Any:
-        return getattr(self.namespace.bound, self.name)
 
 
 class AmbientValue:
@@ -243,6 +203,36 @@ def freeze(elem: Any, *, readonly: bool = False) -> Any:
     return elem
 
 
+def as_bindings(spec: Any) -> dict[Any, Any]:
+    """
+    Normalise what `bind=` accepts into a declaration -> value mapping.
+
+    A mapping is taken as-is. Anything else is treated as a *container*: its
+    class attributes name the declarations it supplies, and the instance
+    attribute of the same name carries the value. The declaration object itself
+    is the key, so a container binds the very `Extern` an operator refers to
+    rather than something that merely shares its name.
+
+        class Grid:
+            dx = physics.dx        # the declaration this grid supplies
+
+        grid = Grid(); grid.dx = 0.5
+        prog(f, out, bind=grid)
+    """
+    if isinstance(spec, Mapping):
+        return dict(spec)
+    resolved: dict[Any, Any] = {}
+    for name, decl in vars(type(spec)).items():
+        if not isinstance(decl, (AmbientValue, fbuiltins.FieldOffset)):
+            continue
+        if name not in vars(spec):
+            raise ValueError(
+                f"'{type(spec).__name__}' declares '{name}' but the instance does not set it."
+            )
+        resolved[decl] = vars(spec)[name]
+    return resolved
+
+
 @contextlib.contextmanager
 def bindings(mapping: Mapping[Any, Any]) -> Generator[None, None, None]:
     """Bind several namespaces at once, for the duration of the context."""
@@ -250,8 +240,8 @@ def bindings(mapping: Mapping[Any, Any]) -> Generator[None, None, None]:
         yield
         return
     for value in mapping.values():
-        for elem in offset_provider_of(value).values():
-            freeze(elem)
+        if isinstance(value, common.Connectivity):
+            freeze(value)
     token = _bindings.set({**_bindings.get({}), **mapping})
     try:
         yield
@@ -260,9 +250,9 @@ def bindings(mapping: Mapping[Any, Any]) -> Generator[None, None, None]:
 
 
 @contextlib.contextmanager
-def bind(namespace: Namespace, value: Any) -> Generator[None, None, None]:
-    """Bind `value` to `namespace` for the duration of the context."""
-    with bindings({namespace: value}):
+def bind(declaration: Any, value: Any) -> Generator[None, None, None]:
+    """Bind `value` to `declaration` for the duration of the context."""
+    with bindings({declaration: value}):
         yield
 
 
@@ -271,39 +261,16 @@ def resolve(explicit: common.OffsetProvider | None) -> common.OffsetProvider:
     return offset_provider() if explicit is None else explicit
 
 
-def offset_provider_of(value: Any) -> dict[str, Any]:
-    """
-    The connectivities and dimensions reachable as public attributes of `value`.
-
-    Attribute *order* is preserved from the bound object's own `__dict__`, not
-    taken from `dir()`: `dir()` sorts alphabetically, and gt4py's offset
-    provider is order-sensitive (see `hash_offset_provider_items_by_id`), so
-    reordering silently hands a compiled program the wrong tables.
-    """
-    names = vars(value).keys() if hasattr(value, "__dict__") else dir(value)
-    return {
-        key: elem
-        for key in names
-        if not key.startswith("_")
-        and isinstance(elem := getattr(value, key), (common.Connectivity, common.Dimension))
-    }
-
-
 def offset_provider() -> common.OffsetProvider:
     """
-    Collect the offset provider from all bound namespaces.
+    Assemble the offset provider from the bound offset declarations.
 
-    Every `common.Connectivity` reachable as an attribute of a bound object
-    contributes under its attribute name. Names must not collide across
-    namespaces — an ambiguous offset would silently pick one mesh's table.
+    A `FieldOffset` is itself the declaration — it already names the offset and
+    fixes its source and target — so binding one is the same act as binding an
+    ambient value, and no attribute of the bound object has to be inspected.
     """
-    collected: dict[str, Any] = {}
-    for namespace, value in _bindings.get({}).items():
-        for key, elem in offset_provider_of(value).items():
-            if key in collected and collected[key] is not elem:
-                raise ValueError(
-                    f"Ambient offset '{key}' is provided by more than one namespace;"
-                    f" '{namespace}' conflicts with an earlier binding."
-                )
-            collected[key] = elem
-    return collected
+    return {
+        str(decl.value): value
+        for decl, value in _bindings.get({}).items()
+        if isinstance(decl, fbuiltins.FieldOffset)
+    }

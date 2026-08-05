@@ -8,8 +8,6 @@
 
 """Ambient binding of the offset provider, across the backend matrix."""
 
-import types
-
 import numpy as np
 import pytest
 
@@ -59,10 +57,9 @@ def test_ambient_binding_matches_explicit_offset_provider(
     inp = cases.allocate(unstructured_case, sum_edges, "edge_f")()
     out = cases.allocate(unstructured_case, sum_edges, cases.RETURN)()
 
-    mesh = gtx.Namespace("mesh")
-    # the fixture hands out a plain mapping; an ambient namespace binds an
-    # *object* whose public attributes are the connectivities
-    bound = types.SimpleNamespace(**unstructured_case.offset_provider)
+    # one rule for everything ambient: the declaration is the key. The fixture
+    # hands out a name-keyed mapping, so re-key it on the offset declarations.
+    bound = {V2E: unstructured_case.offset_provider["V2E"]}
 
     if entry_point == "program":
         callee = sum_edges_program.with_backend(unstructured_case.backend)
@@ -74,10 +71,10 @@ def test_ambient_binding_matches_explicit_offset_provider(
     if mechanism == "offset_provider":
         callee(*args, **kwargs, offset_provider=unstructured_case.offset_provider)
     elif mechanism == "context_manager":
-        with gtx.bind(mesh, bound):
+        with gtx.bind(V2E, bound[V2E]):
             callee(*args, **kwargs)
     else:
-        callee(*args, **kwargs, bind={mesh: bound})
+        callee(*args, **kwargs, bind=bound)
 
     np.testing.assert_allclose(out.asnumpy(), _reference(unstructured_case, inp))
 
@@ -86,9 +83,8 @@ def test_ambient_binding_matches_explicit_offset_provider(
 def test_bind_kwarg_does_not_leak_past_the_call(unstructured_case):
     inp = cases.allocate(unstructured_case, sum_edges, "edge_f")()
     out = cases.allocate(unstructured_case, sum_edges, cases.RETURN)()
-    mesh = gtx.Namespace("mesh")
-    bound = types.SimpleNamespace(**unstructured_case.offset_provider)
+    bound = {V2E: unstructured_case.offset_provider["V2E"]}
 
-    sum_edges_program.with_backend(unstructured_case.backend)(inp, out, bind={mesh: bound})
+    sum_edges_program.with_backend(unstructured_case.backend)(inp, out, bind=bound)
 
     assert gtx.ambient.offset_provider() == {}

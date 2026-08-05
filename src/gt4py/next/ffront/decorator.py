@@ -401,12 +401,12 @@ class Program(_CompilableGTEntryPointMixin[ffront_stages.DSLProgramDef]):
         self,
         *args: Any,
         offset_provider: common.OffsetProvider | None = None,
-        bind: Mapping[ambient.Namespace, Any] | None = None,
+        bind: Mapping[Any, Any] | Any | None = None,
         enable_jit: bool | None = None,
         **kwargs: Any,
     ) -> None:
         """Call the program; `bind` scopes ambient bindings to this call."""
-        with ambient.bindings(bind or {}):
+        with ambient.bindings(ambient.as_bindings(bind) if bind else {}):
             self._invoke(*args, offset_provider=offset_provider, enable_jit=enable_jit, **kwargs)
 
     def _invoke(
@@ -700,7 +700,7 @@ class FieldOperator(_CompilableGTEntryPointMixin[ffront_stages.DSLFieldOperatorD
 
     def __call__(self, *args: Any, enable_jit: bool | None = None, **kwargs: Any) -> Any:
         """Call the field operator; `bind` scopes ambient bindings to this call."""
-        with ambient.bindings(kwargs.pop("bind", None) or {}):
+        with ambient.bindings(ambient.as_bindings(b) if (b := kwargs.pop("bind", None)) else {}):
             return self._invoke(*args, enable_jit=enable_jit, **kwargs)
 
     def _invoke(self, *args: Any, enable_jit: bool | None = None, **kwargs: Any) -> Any:
