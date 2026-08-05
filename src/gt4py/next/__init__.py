@@ -20,8 +20,8 @@ module in question is a submodule, defines `__all__` and exports many public API
 
 # ruff: noqa: F401
 from .._core.definitions import CUPY_DEVICE_TYPE, Device, DeviceType, is_scalar_type
-from . import common, ffront, iterator, program_processors, typing
-from .ambient import Namespace, bind
+from . import ambient, common, ffront, iterator, program_processors, typing
+from .ambient import Namespace, bind, freeze
 from .common import (
     CartesianConnectivity,
     Connectivity,
@@ -138,8 +138,10 @@ __all__ = [  # noqa: RUF022 [unsorted-dunder-all]
     "as_field",
     "as_connectivity",
     # from ambient
+    "ambient",
     "Namespace",
     "bind",
+    "freeze",
     # from ffront
     "FieldOffset",
     "field_operator",

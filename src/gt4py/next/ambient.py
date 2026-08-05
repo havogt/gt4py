@@ -27,6 +27,9 @@ import contextvars
 from collections.abc import Generator, Mapping
 from typing import Any
 
+import numpy as np
+
+from gt4py.eve import utils as eve_utils
 from gt4py.next import common
 
 
@@ -62,14 +65,52 @@ class Namespace:
         return binding
 
 
+def freeze(elem: Any, *, readonly: bool = False) -> Any:
+    """
+    Give an offset provider element a content hash, so it identifies by value.
+
+    An ambient value is static for the jitted programs that see it, so it may
+    identify itself by *content* rather than by `id`. The hash is computed once,
+    here — the O(size) cost is paid at freeze time, never per call.
+
+    `readonly` additionally marks the buffer immutable, which is what makes the
+    cached hash trustworthy. It is **off by default because it breaks the gtfn
+    bindings**: they are generated with mutable `ndarray` parameters and reject
+    a non-writeable array outright. Until that is fixed, the hash is only as
+    stable as the caller's discipline.
+    """
+    if common.frozen_content_hash(elem) is not None:
+        return elem
+    buffer = getattr(elem, "ndarray", None)
+    if buffer is None:
+        return elem
+    if readonly:
+        buffer.flags.writeable = False
+    digest = int(eve_utils.content_hash(np.asarray(buffer)), 16)
+    object.__setattr__(elem, common.FROZEN_HASH_ATTR, digest)
+    return elem
+
+
 @contextlib.contextmanager
 def bind(namespace: Namespace, value: Any) -> Generator[None, None, None]:
     """Bind `value` to `namespace` for the duration of the context."""
+    for elem in offset_provider_of(value).values():
+        freeze(elem)
     token = _bindings.set({**_bindings.get({}), namespace: value})
     try:
         yield
     finally:
         _bindings.reset(token)
+
+
+def offset_provider_of(value: Any) -> dict[str, Any]:
+    """The connectivities and dimensions reachable as public attributes of `value`."""
+    return {
+        key: elem
+        for key in dir(value)
+        if not key.startswith("_")
+        and isinstance(elem := getattr(value, key), (common.Connectivity, common.Dimension))
+    }
 
 
 def offset_provider() -> common.OffsetProvider:
@@ -82,15 +123,11 @@ def offset_provider() -> common.OffsetProvider:
     """
     collected: dict[str, Any] = {}
     for namespace, value in _bindings.get({}).items():
-        for key in dir(value):
-            if key.startswith("_"):
-                continue
-            elem = getattr(value, key)
-            if isinstance(elem, (common.Connectivity, common.Dimension)):
-                if key in collected and collected[key] is not elem:
-                    raise ValueError(
-                        f"Ambient offset '{key}' is provided by more than one namespace;"
-                        f" '{namespace}' conflicts with an earlier binding."
-                    )
-                collected[key] = elem
+        for key, elem in offset_provider_of(value).items():
+            if key in collected and collected[key] is not elem:
+                raise ValueError(
+                    f"Ambient offset '{key}' is provided by more than one namespace;"
+                    f" '{namespace}' conflicts with an earlier binding."
+                )
+            collected[key] = elem
     return collected

@@ -1222,17 +1222,33 @@ def has_offset(offset_provider: OffsetProvider | OffsetProviderType, offset_tag:
     return True
 
 
+#: Attribute carrying the content hash of a frozen (immutable) offset provider element.
+FROZEN_HASH_ATTR: Final[str] = "__gt_frozen_hash__"
+
+
+def frozen_content_hash(elem: OffsetProviderElem) -> int | None:
+    """Content hash of a frozen offset provider element, or `None` if it is not frozen."""
+    return getattr(elem, FROZEN_HASH_ATTR, None)
+
+
 def hash_offset_provider_items_by_id(offset_provider: OffsetProvider) -> int:
     """
-    Compute hash of an offset provider on the tuples of key and value id.
+    Compute hash of an offset provider on the tuples of key and value.
 
-    This function is unsafe since it uses the `id` of the values in the
-    offset provider, which could generate different hashes for two
-    offset providers that are semantically equal. It additionally relies
-    on the ordering of the items in the mapping, which could also lead to
-    different hashes for semantically equal offset providers.
+    A *frozen* element (immutable buffer, content hash computed once at freeze
+    time) contributes that content hash, so two semantically equal offset
+    providers share a compiled program. Any other element falls back to its
+    `id`, which is unsafe: it could generate different hashes for two offset
+    providers that are semantically equal. This additionally relies on the
+    ordering of the items in the mapping, which could also lead to different
+    hashes for semantically equal offset providers.
     """
-    return hash(tuple((k, id(v)) for k, v in offset_provider.items()))
+    return hash(
+        tuple(
+            (k, h if (h := frozen_content_hash(v)) is not None else id(v))
+            for k, v in offset_provider.items()
+        )
+    )
 
 
 DomainDimT = TypeVar("DomainDimT", bound="Dimension")
