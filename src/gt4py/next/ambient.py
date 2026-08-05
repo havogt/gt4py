@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
+import dataclasses
 from collections.abc import Generator, Mapping
 from typing import Any
 
@@ -53,6 +54,13 @@ class Namespace:
     def __repr__(self) -> str:
         return f"Namespace('{self._name}')"
 
+    def __getattr__(self, name: str) -> AmbientRef:
+        # only reached when normal lookup fails; dunder/private probes (pickle,
+        # copy, the DSL frontend) must not be turned into references
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return AmbientRef(self, name)
+
     @property
     def bound(self) -> Any:
         """The object currently bound to this namespace."""
@@ -63,6 +71,26 @@ class Namespace:
                 " Use 'gtx.bind(<namespace>, <value>)' around the call."
             )
         return binding
+
+
+@dataclasses.dataclass(frozen=True)
+class AmbientRef:
+    """
+    A deferred reference to `namespace.name`, resolved when something is bound.
+
+    Attribute access on a `Namespace` yields one of these instead of a value,
+    because at the point an operator is *defined* nothing is bound yet.
+    """
+
+    namespace: Namespace
+    name: str
+
+    def __repr__(self) -> str:
+        return f"{self.namespace._name}.{self.name}"
+
+    @property
+    def value(self) -> Any:
+        return getattr(self.namespace.bound, self.name)
 
 
 def freeze(elem: Any, *, readonly: bool = False) -> Any:
@@ -81,13 +109,15 @@ def freeze(elem: Any, *, readonly: bool = False) -> Any:
     """
     if common.frozen_content_hash(elem) is not None:
         return elem
-    buffer = getattr(elem, "ndarray", None)
-    if buffer is None:
+    if not hasattr(elem, "ndarray"):
         return elem
     if readonly:
-        buffer.flags.writeable = False
-    digest = int(eve_utils.content_hash(np.asarray(buffer)), 16)
-    object.__setattr__(elem, common.FROZEN_HASH_ATTR, digest)
+        # numpy-only; device buffers have no writeable flag
+        elem.ndarray.flags.writeable = False
+    # asnumpy, not np.asarray: the latter refuses device arrays outright, so
+    # hashing through it fails on every GPU backend.
+    host = elem.asnumpy() if hasattr(elem, "asnumpy") else np.asarray(elem.ndarray)
+    object.__setattr__(elem, common.FROZEN_HASH_ATTR, int(eve_utils.content_hash(host), 16))
     return elem
 
 
@@ -120,10 +150,18 @@ def resolve(explicit: common.OffsetProvider | None) -> common.OffsetProvider:
 
 
 def offset_provider_of(value: Any) -> dict[str, Any]:
-    """The connectivities and dimensions reachable as public attributes of `value`."""
+    """
+    The connectivities and dimensions reachable as public attributes of `value`.
+
+    Attribute *order* is preserved from the bound object's own `__dict__`, not
+    taken from `dir()`: `dir()` sorts alphabetically, and gt4py's offset
+    provider is order-sensitive (see `hash_offset_provider_items_by_id`), so
+    reordering silently hands a compiled program the wrong tables.
+    """
+    names = vars(value).keys() if hasattr(value, "__dict__") else dir(value)
     return {
         key: elem
-        for key in dir(value)
+        for key in names
         if not key.startswith("_")
         and isinstance(elem := getattr(value, key), (common.Connectivity, common.Dimension))
     }
