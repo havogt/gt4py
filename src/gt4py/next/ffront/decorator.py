@@ -27,6 +27,7 @@ from gt4py._core import definitions as core_defs
 from gt4py.eve import extended_typing as xtyping
 from gt4py.eve.extended_typing import Self, Unpack, override
 from gt4py.next import (
+    ambient,
     backend as next_backend,
     common,
     custom_layout_allocators as next_allocators,
@@ -383,7 +384,7 @@ class Program(_CompilableGTEntryPointMixin[ffront_stages.DSLProgramDef]):
         **kwargs: Any,
     ) -> None:
         if offset_provider is None:
-            offset_provider = {}
+            offset_provider = ambient.offset_provider()
         enable_jit = self.compilation_options.enable_jit if enable_jit is None else enable_jit
 
         with program_call_context(
