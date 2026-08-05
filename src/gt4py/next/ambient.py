@@ -34,9 +34,10 @@ from gt4py.eve import utils as eve_utils
 from gt4py.next import common
 
 
-_bindings: contextvars.ContextVar[Mapping[Namespace, Any]] = contextvars.ContextVar(
-    "_ambient_bindings"
-)
+_UNBOUND: Any = object()
+
+#: keyed by declaration object: a `Namespace` or an `AmbientValue`
+_bindings: contextvars.ContextVar[Mapping[Any, Any]] = contextvars.ContextVar("_ambient_bindings")
 
 
 class Namespace:
@@ -93,6 +94,62 @@ class AmbientRef:
         return getattr(self.namespace.bound, self.name)
 
 
+class AmbientValue:
+    """
+    A value declared here and bound later: `dx = Extern[float]`.
+
+    The declaration carries the *type*, which is all the frontend needs when the
+    operator is defined; the *value* arrives at bind time. Use the declaration
+    object itself as the binding key: `bind={dx: 0.5}`.
+
+    `Extern[T]` is supplied to the compiled program as a runtime argument.
+    `Static[T]` is folded into it as a literal, so each distinct value gets its
+    own compiled variant.
+    """
+
+    def __init__(self, type_hint: Any, *, static: bool, name: str = "?") -> None:
+        self.type_hint = type_hint
+        self.static = static
+        self.name = name
+
+    def __repr__(self) -> str:
+        return f"{'Static' if self.static else 'Extern'}[{getattr(self.type_hint, '__name__', self.type_hint)}]"
+
+    def __gt_type__(self) -> Any:
+        from gt4py.next.type_system import type_translation
+
+        return type_translation.from_type_hint(self.type_hint)
+
+    @property
+    def value(self) -> Any:
+        binding = _bindings.get({}).get(self, _UNBOUND)
+        if binding is _UNBOUND:
+            raise ValueError(
+                f"Ambient value '{self!r}' is not bound."
+                f" Pass 'bind={{<declaration>: <value>}}' at the call, or use 'gtx.bind'."
+            )
+        return binding
+
+
+class _Declarator:
+    def __init__(self, static: bool) -> None:
+        self._static = static
+
+    def __getitem__(self, type_hint: Any) -> AmbientValue:
+        return AmbientValue(type_hint, static=self._static)
+
+
+#: `dx = Extern[float]` — supplied as a runtime argument.
+Extern = _Declarator(static=False)
+#: `dx = Static[float]` — folded in as a literal; one compiled variant per value.
+Static = _Declarator(static=True)
+
+
+def ambient_values_in(closure_vars: Mapping[str, Any]) -> dict[str, AmbientValue]:
+    """The ambient declarations referenced by a set of closure variables."""
+    return {k: v for k, v in closure_vars.items() if isinstance(v, AmbientValue)}
+
+
 def freeze(elem: Any, *, readonly: bool = False) -> Any:
     """
     Give an offset provider element a content hash, so it identifies by value.
@@ -122,7 +179,7 @@ def freeze(elem: Any, *, readonly: bool = False) -> Any:
 
 
 @contextlib.contextmanager
-def bindings(mapping: Mapping[Namespace, Any]) -> Generator[None, None, None]:
+def bindings(mapping: Mapping[Any, Any]) -> Generator[None, None, None]:
     """Bind several namespaces at once, for the duration of the context."""
     if not mapping:
         yield

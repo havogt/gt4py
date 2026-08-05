@@ -21,7 +21,7 @@ module in question is a submodule, defines `__all__` and exports many public API
 # ruff: noqa: F401
 from .._core.definitions import CUPY_DEVICE_TYPE, Device, DeviceType, is_scalar_type
 from . import ambient, common, ffront, iterator, program_processors, typing
-from .ambient import Namespace, bind, freeze
+from .ambient import Extern, Namespace, Static, bind, freeze
 from .common import (
     CartesianConnectivity,
     Connectivity,
@@ -141,6 +141,8 @@ __all__ = [  # noqa: RUF022 [unsorted-dunder-all]
     "ambient",
     "Namespace",
     "bind",
+    "Extern",
+    "Static",
     "freeze",
     # from ffront
     "FieldOffset",
