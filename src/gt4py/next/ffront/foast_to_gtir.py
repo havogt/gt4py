@@ -12,7 +12,7 @@ from typing import Any, Callable, Optional
 
 from gt4py import eve
 from gt4py.eve.extended_typing import Never, cast
-from gt4py.next import ambient, common, utils
+from gt4py.next import common, utils
 from gt4py.next.ffront import (
     dialect_ast_enums,
     experimental as experimental_builtins,
@@ -38,30 +38,7 @@ def foast_to_gtir(inp: ffront_stages.FOASTOperatorDef) -> itir.FunctionDefinitio
 
     See the docstring of `FieldOperatorLowering` for details.
     """
-    node = inp.foast_node
-    bound = ambient.bound_values_in(inp.closure_vars)
-    if bound:
-        node = _SubstituteAmbientValues(bound).visit(node)
-    return FieldOperatorLowering.apply(node)
-
-
-class _SubstituteAmbientValues(eve.PreserveLocationVisitor, eve.NodeTranslator):
-    """
-    Replace references to bound ambient declarations by their value.
-
-    Runs here rather than in `ClosureVarFolding` because nothing is bound when
-    the operator is defined; the value only exists at call time.
-    """
-
-    def __init__(self, values: dict[str, Any]) -> None:
-        self.values = values
-
-    def visit_Name(self, node: foast.Name, **kwargs: Any) -> foast.Name | foast.Constant:
-        if node.id in self.values:
-            return foast.Constant(
-                value=self.values[node.id], type=node.type, location=node.location
-            )
-        return node
+    return FieldOperatorLowering.apply(inp.foast_node)
 
 
 def foast_to_gtir_factory(

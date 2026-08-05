@@ -126,9 +126,20 @@ class _CompilableGTEntryPointMixin(Generic[ffront_stages.DSLDefinitionT]):
         # calling `compile()`, the pool is initialized with the options passed
         # to `compile()` instead of re-using the existing compilations options.
         return self._make_compiled_programs_pool(
-            static_params=self.compilation_options.static_params or (),
+            static_params=(*(self.compilation_options.static_params or ()), *self._ambient_statics),
             static_domains=self.compilation_options.static_domains,
         )
+
+    @property
+    def _ambient_statics(self) -> tuple[str, ...]:
+        """Synthesised parameters for ambient `Static[T]` declarations.
+
+        Listing them as static parameters is the whole difference between
+        `Static[T]` and `Extern[T]`: the existing static-argument machinery then
+        folds the value into the generated code and keys the compiled variant on
+        it, while an `Extern[T]` stays an ordinary runtime argument.
+        """
+        return ()
 
     def _make_compiled_programs_pool(
         self, static_params: Sequence[str], static_domains: bool
@@ -308,6 +319,16 @@ class Program(_CompilableGTEntryPointMixin[ffront_stages.DSLProgramDef]):
     def _all_closure_vars(self) -> dict[str, Any]:
         return transform_utils._get_closure_vars_recursively(self.past_stage.closure_vars)
 
+    @property
+    def _ambient_statics(self) -> tuple[str, ...]:
+        return tuple(
+            sorted(
+                name
+                for name, decl in ambient.ambient_values_in(self._all_closure_vars).items()
+                if decl.static
+            )
+        )
+
     @functools.cached_property
     def gtir(self) -> itir.Program:
         no_args_past = toolchain.ConcreteArtifact(
@@ -397,6 +418,15 @@ class Program(_CompilableGTEntryPointMixin[ffront_stages.DSLProgramDef]):
     ) -> None:
         offset_provider = ambient.resolve(offset_provider)
         enable_jit = self.compilation_options.enable_jit if enable_jit is None else enable_jit
+        # Ambient declarations became synthesised parameters when the program was
+        # defined, so from here on they are ordinary arguments and the caller
+        # never names them. Embedded execution is the exception: it runs the
+        # Python function, which reads them from its own closure.
+        ambient_args = {
+            name: decl.value
+            for name, decl in ambient.ambient_values_in(self._all_closure_vars).items()
+        }
+        kwargs = {**kwargs, **ambient_args}
 
         with program_call_context(
             program=self,
@@ -426,9 +456,12 @@ class Program(_CompilableGTEntryPointMixin[ffront_stages.DSLProgramDef]):
                     stacklevel=2,
                 )
 
+                embedded_kwargs = {k: v for k, v in kwargs.items() if k not in ambient_args}
                 with next_embedded.context.update(offset_provider=offset_provider):
-                    with embedded_program_call_context(self, args, offset_provider, kwargs):
-                        self.definition_stage.definition(*args, **kwargs)
+                    with embedded_program_call_context(
+                        self, args, offset_provider, embedded_kwargs
+                    ):
+                        self.definition_stage.definition(*args, **embedded_kwargs)
 
 
 try:

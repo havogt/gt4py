@@ -22,13 +22,20 @@ Two things are ambient:
   inside an operator. It never appears in a signature, so it does not have to be
   threaded through nested operators.
 
-``Static[T]`` is folded into the generated code, so each distinct value gets its
-own compiled variant. ``Extern[T]`` is meant to be supplied as a runtime
-argument instead — **not yet implemented**: it currently behaves like
-``Static[T]``, because making it a runtime argument requires synthesising a
-program parameter (the reference cannot stay a free symbol: eve validates symbol
-refs when ``itir.Program`` is constructed). Ambient *fields* (``mesh.edge_length``)
-need that same parameter machinery.
+A declaration becomes a **synthesised program parameter** when the program is
+defined (`func_to_past`), so from there on it travels the ordinary path: type
+checking, lowering, `static_params` and the compiled-program key all treat it
+like any other argument, and only the *value* is supplied per call. The caller
+never names it.
+
+The two forms differ in one place only — whether that parameter is listed as a
+static one:
+
+- ``Extern[T]`` is an ordinary runtime argument: one compiled program serves
+  every value.
+- ``Static[T]`` is a static argument, so the existing static-argument machinery
+  folds it into the generated code and keys the compiled variant on it: one
+  compiled program per distinct value.
 """
 
 from __future__ import annotations
@@ -300,48 +307,3 @@ def offset_provider() -> common.OffsetProvider:
                 )
             collected[key] = elem
     return collected
-
-
-def bound_values_in(closure_vars: Mapping[str, Any]) -> dict[str, Any]:
-    """
-    Resolved values of the ambient declarations referenced by `closure_vars`.
-
-    Unbound declarations are skipped rather than raising: a program may close
-    over declarations it does not use on this path, and the ones it does use
-    surface later as a missing symbol.
-    """
-    current = _bindings.get({})
-    return {
-        name: current[decl]
-        for name, decl in ambient_values_in(closure_vars).items()
-        if decl in current
-    }
-
-
-def current_static_key() -> tuple[Any, ...]:
-    """A hashable summary of the bound `Static[T]` values, for compiled-program keys."""
-    return tuple(
-        sorted(
-            (id(decl), eve_utils.content_hash(value))
-            for decl, value in _bindings.get({}).items()
-            if isinstance(decl, AmbientValue) and decl.static
-        )
-    )
-
-
-def fingerprint_declaration(decl: AmbientValue) -> Any:
-    """
-    What an ambient declaration contributes to a stage fingerprint.
-
-    A `Static[T]` value is baked into the lowered code, so the *current binding*
-    has to be part of the fingerprint — otherwise the lowering cache serves one
-    value's code for another. Reads the binding rather than mirroring it onto
-    the declaration, so it stays context-local.
-    """
-    current = _bindings.get({})
-    bound = current.get(decl, _UNBOUND)
-    return (
-        decl.static,
-        decl.type_hint,
-        None if bound is _UNBOUND else eve_utils.content_hash(bound),
-    )

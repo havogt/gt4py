@@ -24,7 +24,7 @@ from typing import Any, Generic, TypeAlias, TypeVar
 
 from gt4py._core import definitions as core_defs
 from gt4py.eve import extended_typing as xtyping, utils as eve_utils
-from gt4py.next import ambient, backend as gtx_backend, common, errors, utils as gtx_utils
+from gt4py.next import backend as gtx_backend, common, errors, utils as gtx_utils
 from gt4py.next.ffront import (
     stages as ffront_stages,
     type_info as ffront_type_info,
@@ -41,9 +41,8 @@ T = TypeVar("T")
 
 ScalarOrTupleOfScalars: TypeAlias = xtyping.MaybeNestedInTuple[core_defs.Scalar]
 
-#: Content of the key: (*hashable_arg_descriptors, id(offset_provider),
-#: concrete_instantation_if_generic, bound_ambient_static_values)
-CompiledProgramsKey: TypeAlias = tuple[tuple[Hashable, ...], int, None | str, tuple[Any, ...]]
+#: Content of the key: (*hashable_arg_descriptors, id(offset_provider), concrete_instantation_if_generic)
+CompiledProgramsKey: TypeAlias = tuple[tuple[Hashable, ...], int, None | str]
 
 ArgStaticDescriptorsByType: TypeAlias = dict[
     type[arguments.ArgStaticDescriptor], dict[str, arguments.ArgStaticDescriptor]
@@ -426,9 +425,6 @@ class CompiledProgramsPool(Generic[ffront_stages.DSLDefinitionT]):
             static_args_values,
             common.hash_offset_provider_items_by_id(offset_provider),
             arg_specialization_key,
-            # ambient `Static[T]` values are folded into the generated code, so
-            # each distinct value needs its own compiled variant
-            ambient.current_static_key(),
         )
 
         try:
@@ -619,7 +615,6 @@ class CompiledProgramsPool(Generic[ffront_stages.DSLDefinitionT]):
             self._argument_descriptor_cache_key_from_descriptors(argument_descriptor_contexts),
             common.hash_offset_provider_items_by_id(offset_provider),
             eve_utils.content_hash(arg_specialization_info) if self._is_generic else None,
-            ambient.current_static_key(),
         )
         assert call_key is None or call_key == key
 

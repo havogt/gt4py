@@ -21,9 +21,10 @@ from next_tests.integration_tests.cases_utils import exec_alloc_descriptor
 
 IJFloatField = gtx.Field[gtx.Dims[IDim, JDim], gtx.float64]
 
-#: declared here, bound at the call — never a parameter, so it does not have to
-#: be threaded through nested operators
+#: declared here, bound at the call — never a parameter in the user's source, so
+#: it does not have to be threaded through nested operators
 dx = gtx.Static[gtx.float64]
+dx_extern = gtx.Extern[gtx.float64]
 
 
 @gtx.field_operator
@@ -43,9 +44,20 @@ def run_delta_x(f: IJFloatField, out: IJFloatField) -> None:
     delta_x(f, out=out)
 
 
+@gtx.field_operator
+def delta_x_extern(f: IJFloatField) -> IJFloatField:
+    """Same, but supplied as a runtime argument instead of folded in."""
+    return (1.0 / dx_extern) * (f(IDim + 1) - f)
+
+
 @gtx.program
 def run_delta_x_twice(f: IJFloatField, out: IJFloatField) -> None:
     delta_x_twice(f, out=out)
+
+
+@gtx.program
+def run_delta_x_extern(f: IJFloatField, out: IJFloatField) -> None:
+    delta_x_extern(f, out=out)
 
 
 def _inputs(case):
@@ -94,6 +106,31 @@ def test_context_manager_binding(cartesian_case):
     with gtx.bind(dx, 0.5):
         run_delta_x.with_backend(cartesian_case.backend)(data, out)
     np.testing.assert_allclose(out.asnumpy(), _reference(data, 0.5))
+
+
+@pytest.mark.uses_cartesian_shift
+@pytest.mark.parametrize("spacing", [0.5, 0.25])
+def test_extern_value_is_bound_at_call(cartesian_case, spacing):
+    data, out = _inputs(cartesian_case)
+    run_delta_x_extern.with_backend(cartesian_case.backend)(data, out, bind={dx_extern: spacing})
+    np.testing.assert_allclose(out.asnumpy(), _reference(data, spacing))
+
+
+@pytest.mark.uses_cartesian_shift
+def test_static_specializes_but_extern_does_not(cartesian_case):
+    """The one difference between the two forms: how many programs get compiled."""
+    if cartesian_case.backend is None:
+        pytest.skip("compiled-program pool only exists for compiled backends")
+    data, out = _inputs(cartesian_case)
+
+    static_prog = run_delta_x.with_backend(cartesian_case.backend)
+    extern_prog = run_delta_x_extern.with_backend(cartesian_case.backend)
+    for spacing in (0.5, 0.25):
+        static_prog(data, out, bind={dx: spacing})
+        extern_prog(data, out, bind={dx_extern: spacing})
+
+    assert len(static_prog._compiled_programs.compiled_programs) == 2
+    assert len(extern_prog._compiled_programs.compiled_programs) == 1
 
 
 def test_declaration_types_itself_without_a_binding():

@@ -14,7 +14,7 @@ import typing
 from typing import Any, cast
 
 from gt4py._core import definitions as core_defs
-from gt4py.next import errors
+from gt4py.next import ambient, errors
 from gt4py.next.ffront import (
     dialect_ast_enums,
     experimental,
@@ -22,6 +22,7 @@ from gt4py.next.ffront import (
     program_ast as past,
     source_utils,
     stages as ffront_stages,
+    transform_utils,
     type_specifications as ts_ffront,
 )
 from gt4py.next.ffront.dialect_parser import DialectParser
@@ -65,10 +66,59 @@ def func_to_past(inp: DSLProgramDef) -> PASTProgramDef:
     closure_vars = source_utils.get_closure_vars_from_function(inp.definition)
     annotations = typing.get_type_hints(inp.definition)
     return ffront_stages.PASTProgramDef(
-        past_node=ProgramParser.apply(source_def, closure_vars, annotations),
+        past_node=_with_ambient_params(
+            ProgramParser.apply(source_def, closure_vars, annotations), closure_vars
+        ),
         closure_vars=closure_vars,
         grid_type=inp.grid_type,
         debug=inp.debug,
+    )
+
+
+def _with_ambient_params(node: past.Program, closure_vars: dict[str, typing.Any]) -> past.Program:
+    """
+    Give every ambient declaration the program references a synthesised parameter.
+
+    Ambient values are referenced by bare name inside operators, so at the IR
+    level they are free symbols. Turning them into parameters here — once, when
+    the program is defined — puts them on the ordinary path: type checking,
+    lowering, `static_params` and the compiled-program key all treat them like
+    any other argument, and only the *value* has to be supplied per call.
+    """
+    declarations = ambient.ambient_values_in(
+        transform_utils._get_closure_vars_recursively(closure_vars)
+    )
+    if not declarations:
+        return node
+    assert isinstance(node.type, ts_ffront.ProgramType)
+    extra = [
+        past.DataSymbol(
+            id=name,
+            type=decl.__gt_type__(),
+            namespace=dialect_ast_enums.Namespace.LOCAL,
+            location=node.location,
+        )
+        # deterministic order: the parameter list is part of the compiled signature
+        for name, decl in sorted(declarations.items())
+    ]
+    definition = node.type.definition
+    return past.Program(
+        id=node.id,
+        type=ts_ffront.ProgramType(
+            definition=ts.FunctionType(
+                pos_only_args=definition.pos_only_args,
+                pos_or_kw_args={
+                    **definition.pos_or_kw_args,
+                    **{s.id: s.type for s in extra},
+                },
+                kw_only_args=definition.kw_only_args,
+                returns=definition.returns,
+            )
+        ),
+        params=[*node.params, *extra],
+        body=node.body,
+        closure_vars=node.closure_vars,
+        location=node.location,
     )
 
 

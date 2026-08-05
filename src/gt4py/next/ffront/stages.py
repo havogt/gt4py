@@ -27,7 +27,7 @@ import types
 import typing
 from typing import Any, Optional, TypeVar
 
-from gt4py.next import ambient, common, fingerprinting
+from gt4py.next import common, fingerprinting
 from gt4py.next.ffront import field_operator_ast as foast, program_ast as past, source_utils
 from gt4py.next.otf import arguments, toolchain
 
@@ -59,20 +59,9 @@ def _deconstruct_definition_function(func: types.FunctionType) -> fingerprinting
 #: identical operators at different locations must not share an entry) and
 #: fingerprints DSL definition functions by their source code and closure
 #: variables (instead of by qualified name).
-#: An ambient declaration contributes its *current binding*: a `Static[T]` value
-#: is baked into the lowered code, so two bindings must not share a cache entry.
-def _deconstruct_ambient_declaration(decl: ambient.AmbientValue) -> fingerprinting.Deconstruction:
-    return fingerprinting.Deconstruction.from_pieces(
-        ambient.fingerprint_declaration(decl), state=b"ambient_declaration"
-    )
-
-
 semantic_fingerprinter: fingerprinting.Fingerprinter = fingerprinting.make_fingerprinter(
     deconstructor=fingerprinting.make_lenient_data_deconstructor(
-        {
-            types.FunctionType: _deconstruct_definition_function,
-            ambient.AmbientValue: _deconstruct_ambient_declaration,
-        }
+        {types.FunctionType: _deconstruct_definition_function}
     ),
 )
 
