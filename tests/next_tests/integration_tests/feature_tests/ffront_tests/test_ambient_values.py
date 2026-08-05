@@ -1,0 +1,108 @@
+# GT4Py - GridTools Framework
+#
+# Copyright (c) 2014-2024, ETH Zurich
+# All rights reserved.
+#
+# Please, refer to the LICENSE file in the root directory.
+# SPDX-License-Identifier: BSD-3-Clause
+
+"""Ambient values referenced by name inside an operator, bound at call time."""
+
+import numpy as np
+import pytest
+
+import gt4py.next as gtx
+from gt4py.next.type_system import type_specifications as ts
+
+from next_tests.integration_tests import cases
+from next_tests.integration_tests.cases import IDim, JDim, cartesian_case
+from next_tests.integration_tests.cases_utils import exec_alloc_descriptor
+
+
+IJFloatField = gtx.Field[gtx.Dims[IDim, JDim], gtx.float64]
+
+#: declared here, bound at the call — never a parameter, so it does not have to
+#: be threaded through nested operators
+dx = gtx.Static[gtx.float64]
+
+
+@gtx.field_operator
+def delta_x(f: IJFloatField) -> IJFloatField:
+    """Forward difference in x."""
+    return (1.0 / dx) * (f(IDim + 1) - f)
+
+
+@gtx.field_operator
+def delta_x_twice(f: IJFloatField) -> IJFloatField:
+    """`dx` is used one level down, and still never appears in a signature."""
+    return delta_x(f) + delta_x(f)
+
+
+@gtx.program
+def run_delta_x(f: IJFloatField, out: IJFloatField) -> None:
+    delta_x(f, out=out)
+
+
+@gtx.program
+def run_delta_x_twice(f: IJFloatField, out: IJFloatField) -> None:
+    delta_x_twice(f, out=out)
+
+
+def _inputs(case):
+    data = gtx.as_field([IDim, JDim], np.arange(20.0).reshape(5, 4), allocator=case.allocator)
+    out = gtx.zeros(gtx.domain({IDim: 4, JDim: 4}), dtype=np.float64, allocator=case.allocator)
+    return data, out
+
+
+def _reference(data, spacing, factor=1):
+    a = data.asnumpy()
+    return factor * (1.0 / spacing) * (a[1:5, :] - a[0:4, :])
+
+
+@pytest.mark.uses_cartesian_shift
+@pytest.mark.parametrize("spacing", [0.5, 0.25])
+def test_static_value_is_bound_at_call(cartesian_case, spacing):
+    data, out = _inputs(cartesian_case)
+    run_delta_x.with_backend(cartesian_case.backend)(data, out, bind={dx: spacing})
+    np.testing.assert_allclose(out.asnumpy(), _reference(data, spacing))
+
+
+@pytest.mark.uses_cartesian_shift
+def test_distinct_values_do_not_share_a_compiled_program(cartesian_case):
+    """The second binding must not reuse the first one's folded literal."""
+    data, out = _inputs(cartesian_case)
+    prog = run_delta_x.with_backend(cartesian_case.backend)
+
+    prog(data, out, bind={dx: 0.5})
+    np.testing.assert_allclose(out.asnumpy(), _reference(data, 0.5))
+
+    prog(data, out, bind={dx: 0.25})
+    np.testing.assert_allclose(out.asnumpy(), _reference(data, 0.25))
+
+
+@pytest.mark.uses_cartesian_shift
+def test_value_reaches_a_nested_operator(cartesian_case):
+    """`dx` is referenced two levels down without being passed as an argument."""
+    data, out = _inputs(cartesian_case)
+    run_delta_x_twice.with_backend(cartesian_case.backend)(data, out, bind={dx: 0.5})
+    np.testing.assert_allclose(out.asnumpy(), _reference(data, 0.5, factor=2))
+
+
+@pytest.mark.uses_cartesian_shift
+def test_context_manager_binding(cartesian_case):
+    data, out = _inputs(cartesian_case)
+    with gtx.bind(dx, 0.5):
+        run_delta_x.with_backend(cartesian_case.backend)(data, out)
+    np.testing.assert_allclose(out.asnumpy(), _reference(data, 0.5))
+
+
+def test_declaration_types_itself_without_a_binding():
+    """The frontend only needs the type at decoration; the value comes later."""
+    expected = ts.ScalarType(kind=ts.ScalarKind.FLOAT64)
+    assert gtx.Static[gtx.float64].__gt_type__() == expected
+    assert gtx.Extern[gtx.float64].__gt_type__() == expected
+
+
+def test_unbound_declaration_reports_itself():
+    with pytest.raises(ValueError, match="not bound"):
+        gtx.Static[gtx.float64].value

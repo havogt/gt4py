@@ -14,10 +14,21 @@ appearing in a signature. Binding happens at execution time (JIT time for
 compiled backends), so the same programs can run against a second mesh in one
 process.
 
-This module implements the *binding* half only: the connectivities a program
-needs are taken from the ambient context when the caller passes no
-``offset_provider``. Referring to ambient *fields* by name inside an operator
-(``mesh.edge_length``) is not implemented here.
+Two things are ambient:
+
+- **Connectivities**, via a `Namespace`: a program called without an
+  ``offset_provider`` takes one from whatever is bound.
+- **Values**, via a declaration ``dx = Static[float]`` referenced by bare name
+  inside an operator. It never appears in a signature, so it does not have to be
+  threaded through nested operators.
+
+``Static[T]`` is folded into the generated code, so each distinct value gets its
+own compiled variant. ``Extern[T]`` is meant to be supplied as a runtime
+argument instead — **not yet implemented**: it currently behaves like
+``Static[T]``, because making it a runtime argument requires synthesising a
+program parameter (the reference cannot stay a free symbol: eve validates symbol
+refs when ``itir.Program`` is constructed). Ambient *fields* (``mesh.edge_length``)
+need that same parameter machinery.
 """
 
 from __future__ import annotations
@@ -130,6 +141,53 @@ class AmbientValue:
             )
         return binding
 
+    # Embedded execution runs the operator body as plain Python, so a bound
+    # declaration has to behave like the scalar it stands for.
+    def _v(self) -> Any:
+        return self.value
+
+    def __float__(self) -> float:
+        return float(self.value)
+
+    def __int__(self) -> int:
+        return int(self.value)
+
+    def __bool__(self) -> bool:
+        return bool(self.value)
+
+    def __neg__(self) -> Any:
+        return -self.value
+
+    def __add__(self, other: Any) -> Any:
+        return self.value + other
+
+    def __radd__(self, other: Any) -> Any:
+        return other + self.value
+
+    def __sub__(self, other: Any) -> Any:
+        return self.value - other
+
+    def __rsub__(self, other: Any) -> Any:
+        return other - self.value
+
+    def __mul__(self, other: Any) -> Any:
+        return self.value * other
+
+    def __rmul__(self, other: Any) -> Any:
+        return other * self.value
+
+    def __truediv__(self, other: Any) -> Any:
+        return self.value / other
+
+    def __rtruediv__(self, other: Any) -> Any:
+        return other / self.value
+
+    def __pow__(self, other: Any) -> Any:
+        return self.value**other
+
+    def __rpow__(self, other: Any) -> Any:
+        return other**self.value
+
 
 class _Declarator:
     def __init__(self, static: bool) -> None:
@@ -188,9 +246,27 @@ def bindings(mapping: Mapping[Any, Any]) -> Generator[None, None, None]:
         for elem in offset_provider_of(value).values():
             freeze(elem)
     token = _bindings.set({**_bindings.get({}), **mapping})
+    # The lowered code bakes a `Static[T]` value in, and the lowering cache
+    # fingerprints the stage's closure variables — i.e. the declaration object.
+    # Mirroring the binding into the instance makes that fingerprint vary with
+    # the value, so two values cannot share a cache entry. (Prototype
+    # limitation: this mirror is process-wide, unlike the ContextVar itself.)
+    previous = [
+        (decl, decl.__dict__.get("_bound", _UNBOUND))
+        for decl in mapping
+        if isinstance(decl, AmbientValue)
+    ]
+    for decl, value in mapping.items():
+        if isinstance(decl, AmbientValue):
+            decl.__dict__["_bound"] = value
     try:
         yield
     finally:
+        for decl, old_value in previous:
+            if old_value is _UNBOUND:
+                decl.__dict__.pop("_bound", None)
+            else:
+                decl.__dict__["_bound"] = old_value
         _bindings.reset(token)
 
 
@@ -242,3 +318,30 @@ def offset_provider() -> common.OffsetProvider:
                 )
             collected[key] = elem
     return collected
+
+
+def bound_values_in(closure_vars: Mapping[str, Any]) -> dict[str, Any]:
+    """
+    Resolved values of the ambient declarations referenced by `closure_vars`.
+
+    Unbound declarations are skipped rather than raising: a program may close
+    over declarations it does not use on this path, and the ones it does use
+    surface later as a missing symbol.
+    """
+    current = _bindings.get({})
+    return {
+        name: current[decl]
+        for name, decl in ambient_values_in(closure_vars).items()
+        if decl in current
+    }
+
+
+def current_static_key() -> tuple[Any, ...]:
+    """A hashable summary of the bound `Static[T]` values, for compiled-program keys."""
+    return tuple(
+        sorted(
+            (id(decl), eve_utils.content_hash(value))
+            for decl, value in _bindings.get({}).items()
+            if isinstance(decl, AmbientValue) and decl.static
+        )
+    )
