@@ -92,15 +92,31 @@ def freeze(elem: Any, *, readonly: bool = False) -> Any:
 
 
 @contextlib.contextmanager
-def bind(namespace: Namespace, value: Any) -> Generator[None, None, None]:
-    """Bind `value` to `namespace` for the duration of the context."""
-    for elem in offset_provider_of(value).values():
-        freeze(elem)
-    token = _bindings.set({**_bindings.get({}), namespace: value})
+def bindings(mapping: Mapping[Namespace, Any]) -> Generator[None, None, None]:
+    """Bind several namespaces at once, for the duration of the context."""
+    if not mapping:
+        yield
+        return
+    for value in mapping.values():
+        for elem in offset_provider_of(value).values():
+            freeze(elem)
+    token = _bindings.set({**_bindings.get({}), **mapping})
     try:
         yield
     finally:
         _bindings.reset(token)
+
+
+@contextlib.contextmanager
+def bind(namespace: Namespace, value: Any) -> Generator[None, None, None]:
+    """Bind `value` to `namespace` for the duration of the context."""
+    with bindings({namespace: value}):
+        yield
+
+
+def resolve(explicit: common.OffsetProvider | None) -> common.OffsetProvider:
+    """The caller's offset provider if given, otherwise the ambient one."""
+    return offset_provider() if explicit is None else explicit
 
 
 def offset_provider_of(value: Any) -> dict[str, Any]:

@@ -19,7 +19,7 @@ import functools
 import types
 import typing
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any, Generic, Optional, Sequence, TypeAlias
 
 from gt4py import eve
@@ -380,11 +380,22 @@ class Program(_CompilableGTEntryPointMixin[ffront_stages.DSLProgramDef]):
         self,
         *args: Any,
         offset_provider: common.OffsetProvider | None = None,
+        bind: Mapping[ambient.Namespace, Any] | None = None,
         enable_jit: bool | None = None,
         **kwargs: Any,
     ) -> None:
-        if offset_provider is None:
-            offset_provider = ambient.offset_provider()
+        """Call the program; `bind` scopes ambient bindings to this call."""
+        with ambient.bindings(bind or {}):
+            self._invoke(*args, offset_provider=offset_provider, enable_jit=enable_jit, **kwargs)
+
+    def _invoke(
+        self,
+        *args: Any,
+        offset_provider: common.OffsetProvider | None = None,
+        enable_jit: bool | None = None,
+        **kwargs: Any,
+    ) -> None:
+        offset_provider = ambient.resolve(offset_provider)
         enable_jit = self.compilation_options.enable_jit if enable_jit is None else enable_jit
 
         with program_call_context(
@@ -433,11 +444,10 @@ class ProgramWithBoundArgs(Program):
     bound_args: dict[str, float | int | bool] = dataclasses.field(default_factory=dict)
 
     @override
-    def __call__(
+    def _invoke(
         self, *args: Any, offset_provider: common.OffsetProvider | None = None, **kwargs: Any
     ) -> None:
-        if offset_provider is None:
-            offset_provider = {}
+        offset_provider = ambient.resolve(offset_provider)
         type_ = self.past_stage.past_node.type
         assert isinstance(type_, ts_ffront.ProgramType)
         new_type = ts_ffront.ProgramType(
@@ -486,7 +496,7 @@ class ProgramWithBoundArgs(Program):
                 else:
                     full_kwargs[str(param.id)] = self.bound_args[param.id]
 
-        return super().__call__(*tuple(full_args), offset_provider=offset_provider, **full_kwargs)
+        return super()._invoke(*tuple(full_args), offset_provider=offset_provider, **full_kwargs)
 
     @override
     def compile(
@@ -656,9 +666,14 @@ class FieldOperator(_CompilableGTEntryPointMixin[ffront_stages.DSLFieldOperatorD
         return self.foast_stage.closure_vars
 
     def __call__(self, *args: Any, enable_jit: bool | None = None, **kwargs: Any) -> Any:
+        """Call the field operator; `bind` scopes ambient bindings to this call."""
+        with ambient.bindings(kwargs.pop("bind", None) or {}):
+            return self._invoke(*args, enable_jit=enable_jit, **kwargs)
+
+    def _invoke(self, *args: Any, enable_jit: bool | None = None, **kwargs: Any) -> Any:
         if not next_embedded.context.within_valid_context() and self.backend is not None:
             # non embedded execution
-            offset_provider = {**kwargs.pop("offset_provider", {})}
+            offset_provider = {**ambient.resolve(kwargs.pop("offset_provider", None))}
             if "out" not in kwargs:
                 raise errors.MissingArgumentError(None, "out", True)
             out = kwargs.pop("out")
@@ -680,7 +695,7 @@ class FieldOperator(_CompilableGTEntryPointMixin[ffront_stages.DSLFieldOperatorD
         else:
             if not next_embedded.context.within_valid_context():
                 # field_operator as program
-                kwargs["offset_provider"] = {**kwargs.pop("offset_provider", {})}
+                kwargs["offset_provider"] = {**ambient.resolve(kwargs.pop("offset_provider", None))}
             attributes = (
                 self.definition_stage.attributes
                 if self.definition_stage

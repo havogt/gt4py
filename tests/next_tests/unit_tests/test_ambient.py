@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 
 import gt4py.next as gtx
-from gt4py.next import common
+from gt4py.next import common, neighbor_sum
 
 
 Vertex = common.Dimension("Vertex")
@@ -99,3 +99,58 @@ def test_readonly_freeze_marks_the_buffer_immutable():
     conn = gtx.freeze(make_mesh([[0, 1], [1, 2]]).V2E, readonly=True)
     with pytest.raises(ValueError):
         conn.ndarray[0, 0] = 7
+
+
+# --- embedded end-to-end (backend-free) --------------------------------------
+
+V2E = gtx.FieldOffset("V2E", source=Edge, target=(Vertex, V2EDim))
+
+
+@gtx.field_operator
+def sum_edges(a: gtx.Field[gtx.Dims[Edge], gtx.int32]) -> gtx.Field[gtx.Dims[Vertex], gtx.int32]:
+    return neighbor_sum(a(V2E), axis=V2EDim)
+
+
+@gtx.program
+def run(
+    a: gtx.Field[gtx.Dims[Edge], gtx.int32], out: gtx.Field[gtx.Dims[Vertex], gtx.int32]
+) -> None:
+    sum_edges(a, out=out)
+
+
+@pytest.fixture
+def inputs():
+    return (
+        gtx.as_field([Edge], np.arange(3, dtype=np.int32)),
+        make_mesh([[0, 1], [1, 2]]),
+        np.asarray([1, 3], dtype=np.int32),
+    )
+
+
+@pytest.mark.parametrize("entry_point", ["program", "field_operator"])
+@pytest.mark.parametrize("mechanism", ["offset_provider", "context_manager", "bind_kwarg"])
+def test_embedded_execution_via_every_mechanism(inputs, entry_point, mechanism):
+    a, m, expected = inputs
+    out = gtx.zeros(gtx.domain({Vertex: 2}), dtype=np.int32)
+    callee = run if entry_point == "program" else sum_edges
+    kwargs = {"out": out} if entry_point == "field_operator" else {}
+    args = (a,) if entry_point == "field_operator" else (a, out)
+    mesh = gtx.Namespace("mesh")
+
+    if mechanism == "offset_provider":
+        callee(*args, **kwargs, offset_provider={"V2E": m.V2E})
+    elif mechanism == "context_manager":
+        with gtx.bind(mesh, m):
+            callee(*args, **kwargs)
+    else:
+        callee(*args, **kwargs, bind={mesh: m})
+
+    np.testing.assert_array_equal(out.asnumpy(), expected)
+
+
+def test_bind_kwarg_is_scoped_to_the_call(inputs):
+    a, m, _ = inputs
+    mesh = gtx.Namespace("mesh")
+    out = gtx.zeros(gtx.domain({Vertex: 2}), dtype=np.int32)
+    run(a, out, bind={mesh: m})
+    assert gtx.ambient.offset_provider() == {}
