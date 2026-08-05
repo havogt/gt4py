@@ -246,27 +246,9 @@ def bindings(mapping: Mapping[Any, Any]) -> Generator[None, None, None]:
         for elem in offset_provider_of(value).values():
             freeze(elem)
     token = _bindings.set({**_bindings.get({}), **mapping})
-    # The lowered code bakes a `Static[T]` value in, and the lowering cache
-    # fingerprints the stage's closure variables — i.e. the declaration object.
-    # Mirroring the binding into the instance makes that fingerprint vary with
-    # the value, so two values cannot share a cache entry. (Prototype
-    # limitation: this mirror is process-wide, unlike the ContextVar itself.)
-    previous = [
-        (decl, decl.__dict__.get("_bound", _UNBOUND))
-        for decl in mapping
-        if isinstance(decl, AmbientValue)
-    ]
-    for decl, value in mapping.items():
-        if isinstance(decl, AmbientValue):
-            decl.__dict__["_bound"] = value
     try:
         yield
     finally:
-        for decl, old_value in previous:
-            if old_value is _UNBOUND:
-                decl.__dict__.pop("_bound", None)
-            else:
-                decl.__dict__["_bound"] = old_value
         _bindings.reset(token)
 
 
@@ -344,4 +326,22 @@ def current_static_key() -> tuple[Any, ...]:
             for decl, value in _bindings.get({}).items()
             if isinstance(decl, AmbientValue) and decl.static
         )
+    )
+
+
+def fingerprint_declaration(decl: AmbientValue) -> Any:
+    """
+    What an ambient declaration contributes to a stage fingerprint.
+
+    A `Static[T]` value is baked into the lowered code, so the *current binding*
+    has to be part of the fingerprint — otherwise the lowering cache serves one
+    value's code for another. Reads the binding rather than mirroring it onto
+    the declaration, so it stays context-local.
+    """
+    current = _bindings.get({})
+    bound = current.get(decl, _UNBOUND)
+    return (
+        decl.static,
+        decl.type_hint,
+        None if bound is _UNBOUND else eve_utils.content_hash(bound),
     )

@@ -154,3 +154,21 @@ def test_bind_kwarg_is_scoped_to_the_call(inputs):
     out = gtx.zeros(gtx.domain({Vertex: 2}), dtype=np.int32)
     run(a, out, bind={mesh: m})
     assert gtx.ambient.offset_provider() == {}
+
+
+def test_bindings_are_context_local():
+    """The binding must not leak between contexts (the fingerprint reads it, not a mirror)."""
+    import contextvars
+
+    decl = gtx.Static[gtx.float64]
+    seen = {}
+
+    def bind_and_record():
+        with gtx.bind(decl, 0.25):
+            seen["inner"] = decl.value
+
+    with gtx.bind(decl, 0.5):
+        contextvars.copy_context().run(bind_and_record)
+        seen["outer"] = decl.value
+
+    assert seen == {"inner": 0.25, "outer": 0.5}
