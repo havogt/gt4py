@@ -165,6 +165,24 @@ class Container(metaclass=_ContainerMeta):
             )
         cls._type_view = type(f"{cls.__name__}_types", (), dict(cls._declarations))
 
+    def __init__(self, **values: Any) -> None:
+        """
+        Carry values for this container's declarations: `Grid(dx=0.5, nu=1e-3)`.
+
+        A container instance is used two ways, and the two do not collide: one
+        constructed *with* values carries them in its instance dict and is what
+        `bind=` takes; one constructed empty carries nothing, so attribute access
+        falls through to `__getattr__` and reads the bound value. That is the
+        instance an operator reads through.
+        """
+        unknown = set(values) - set(type(self)._declarations)
+        if unknown:
+            raise TypeError(
+                f"'{type(self).__name__}' does not declare {sorted(unknown)};"
+                f" it declares {sorted(type(self)._declarations)}."
+            )
+        self.__dict__.update(values)
+
     def __getattr__(self, name: str) -> Any:
         try:
             declaration = type(self)._declarations[name]
@@ -218,10 +236,27 @@ def freeze(elem: Any, *, readonly: bool = False) -> Any:
 
 
 def as_bindings(spec: Any) -> dict[Any, Any]:
-    """Normalise what `bind=` accepts into a declaration -> value mapping."""
+    """
+    Normalise what `bind=` accepts into a declaration -> value mapping.
+
+    A filled container binds everything it carries, which is usually what you
+    want: a grid or a mesh is one thing semantically, and each program picks the
+    parts it needs rather than the caller tracking which those are.
+    """
+    if isinstance(spec, Container):
+        declarations = type(spec)._declarations
+        return {declarations[attr].var: value for attr, value in vars(spec).items()}
     if isinstance(spec, Mapping):
         return dict(spec)
-    raise TypeError(f"'{spec!r}' is not a mapping of declarations to values.")
+    if isinstance(spec, (list, tuple)):
+        merged: dict[Any, Any] = {}
+        for element in spec:
+            merged.update(as_bindings(element))
+        return merged
+    raise TypeError(
+        f"'{spec!r}' is not a container, a mapping of declarations to values,"
+        " or a sequence of those."
+    )
 
 
 @contextlib.contextmanager
@@ -241,9 +276,18 @@ def bindings(mapping: Mapping[Any, Any]) -> Generator[None, None, None]:
 
 
 @contextlib.contextmanager
-def bind(declaration: Any, value: Any) -> Generator[None, None, None]:
-    """Bind `value` to `declaration` for the duration of the context."""
-    with bindings({declaration: value}):
+def bind(*specs: Any, **values: Any) -> Generator[None, None, None]:
+    """
+    Bind for the duration of the context.
+
+        with gtx.bind(Grid(dx=0.5, nu=1e-3)):  # a filled container
+        with gtx.bind(Grid.dx, 0.5):           # one declaration
+    """
+    if len(specs) == 2 and not isinstance(specs[0], (Container, Mapping, list, tuple)):
+        mapping = {specs[0]: specs[1]}
+    else:
+        mapping = as_bindings(list(specs) + list(values.values()))
+    with bindings(mapping):
         yield
 
 

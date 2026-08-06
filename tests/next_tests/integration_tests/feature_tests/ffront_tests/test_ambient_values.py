@@ -74,8 +74,8 @@ def _inputs(case):
 
 
 def _binding(spacing):
-    """A container is bound as a unit, so every declaration it holds gets a value."""
-    return {Grid.dx: spacing, Grid.dx_extern: spacing}
+    """The whole grid is provided; each program picks the parts it needs."""
+    return Grid(dx=spacing, dx_extern=spacing)
 
 
 def _reference(data, spacing, factor=1):
@@ -115,7 +115,7 @@ def test_value_reaches_a_nested_operator(cartesian_case):
 @pytest.mark.uses_cartesian_shift
 def test_context_manager_binding(cartesian_case):
     data, out = _inputs(cartesian_case)
-    with gtx.bindings(_binding(0.5)):
+    with gtx.bind(_binding(0.5)):
         run_delta_x.with_backend(cartesian_case.backend)(data, out)
     np.testing.assert_allclose(out.asnumpy(), _reference(data, 0.5))
 
@@ -152,6 +152,17 @@ def test_declaration_types_itself_without_a_binding():
     assert Grid._declarations["dx_extern"].__gt_type__() == expected
 
 
+def test_whole_container_binds_every_value_it_carries():
+    """A grid is one thing semantically; the caller need not track who uses what."""
+    with gtx.bind(Grid(dx=0.5, dx_extern=1.5)):
+        assert (grid.dx, grid.dx_extern) == (0.5, 1.5)
+
+
+def test_container_rejects_an_undeclared_value():
+    with pytest.raises(TypeError, match="does not declare"):
+        Grid(dz=1.0)
+
+
 def test_bind_key_is_a_plain_contextvar():
     """No bespoke declaration object: binding is stdlib set/reset."""
     assert isinstance(Grid.dx, contextvars.ContextVar)
@@ -165,6 +176,6 @@ def test_unbound_declaration_reports_itself():
 
 def test_class_access_is_the_variable_instance_access_the_value():
     """What lets embedded execution see a plain scalar, with no arithmetic protocol."""
-    with gtx.bindings({Grid.dx: 0.5}):
+    with gtx.bind(Grid.dx, 0.5):
         assert grid.dx == 0.5
         assert 1.0 / grid.dx == 2.0
