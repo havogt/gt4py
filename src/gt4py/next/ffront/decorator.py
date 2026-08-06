@@ -27,6 +27,7 @@ from gt4py._core import definitions as core_defs
 from gt4py.eve import extended_typing as xtyping
 from gt4py.eve.extended_typing import Self, Unpack, override
 from gt4py.next import (
+    ambient,
     backend as next_backend,
     common,
     custom_layout_allocators as next_allocators,
@@ -105,6 +106,12 @@ class _CompilableGTEntryPointMixin(Generic[ffront_stages.DSLDefinitionT]):
     @abc.abstractmethod
     def __gt_type__(self) -> ts.CallableType: ...
 
+    @property
+    @abc.abstractmethod
+    def _ambient_declarations(self) -> dict[str, ambient.Declaration]:
+        """Ambient declarations read by this program-like, by synthesised parameter name."""
+        ...
+
     def with_backend(self, backend: next_backend.Backend | None) -> Self:
         return dataclasses.replace(self, backend=backend)
 
@@ -137,12 +144,18 @@ class _CompilableGTEntryPointMixin(Generic[ffront_stages.DSLDefinitionT]):
 
         program_type = ffront_type_info.type_in_program_context(self.__gt_type__())
         assert isinstance(program_type, ts_ffront.ProgramType)
+        ambient_declarations: dict[str, ambient.Declaration] = self._ambient_declarations
+        program_type = ambient.with_parameters(program_type, ambient_declarations)
 
         # The argument descriptor mapping built here must be kept in sync with the descriptors
         # created in the explicitly-triggered-compilation code path
         # `CompiledProgramsPool.compile()`.
         argument_descriptor_mapping: dict[type[arguments.ArgStaticDescriptor], Sequence[str]] = {}
 
+        static_params = (
+            *static_params,
+            *(name for name, decl in ambient_declarations.items() if decl.static),
+        )
         if static_params:
             argument_descriptor_mapping[arguments.StaticArg] = static_params
 
@@ -308,6 +321,10 @@ class Program(_CompilableGTEntryPointMixin[ffront_stages.DSLProgramDef]):
         return transform_utils._get_closure_vars_recursively(self.past_stage.closure_vars)
 
     @functools.cached_property
+    def _ambient_declarations(self) -> dict[str, ambient.Declaration]:
+        return ambient.declarations(self.past_stage.closure_vars)
+
+    @functools.cached_property
     def gtir(self) -> itir.Program:
         no_args_past = toolchain.ConcreteArtifact(
             data=ffront_stages.PASTProgramDef(
@@ -380,10 +397,17 @@ class Program(_CompilableGTEntryPointMixin[ffront_stages.DSLProgramDef]):
         *args: Any,
         offset_provider: common.OffsetProvider | None = None,
         enable_jit: bool | None = None,
+        bind: ambient.Binding | None = None,
         **kwargs: Any,
     ) -> None:
+        if bind is not None:
+            with ambient.bind(bind):
+                self(*args, offset_provider=offset_provider, enable_jit=enable_jit, **kwargs)
+            return
+
         if offset_provider is None:
-            offset_provider = {}
+            offset_provider = ambient.offset_provider(self.past_stage.closure_vars)
+        ambient_kwargs = ambient.values(self._ambient_declarations)
         enable_jit = self.compilation_options.enable_jit if enable_jit is None else enable_jit
 
         with program_call_context(
@@ -398,12 +422,19 @@ class Program(_CompilableGTEntryPointMixin[ffront_stages.DSLProgramDef]):
                 past_process_args._validate_args(
                     self.past_stage.past_node,
                     arg_types=[type_translation.from_value(arg) for arg in args],
-                    kwarg_types={k: type_translation.from_value(v) for k, v in kwargs.items()},
+                    kwarg_types={
+                        k: type_translation.from_value(v)
+                        for k, v in {**kwargs, **ambient_kwargs}.items()
+                    },
                 )
 
             if self.backend is not None:
                 self._compiled_programs(
-                    *args, **kwargs, offset_provider=offset_provider, enable_jit=enable_jit
+                    *args,
+                    **kwargs,
+                    **ambient_kwargs,
+                    offset_provider=offset_provider,
+                    enable_jit=enable_jit,
                 )
             else:
                 # Embedded execution.
@@ -654,10 +685,29 @@ class FieldOperator(_CompilableGTEntryPointMixin[ffront_stages.DSLFieldOperatorD
     def __gt_closure_vars__(self) -> dict[str, Any]:
         return self.foast_stage.closure_vars
 
-    def __call__(self, *args: Any, enable_jit: bool | None = None, **kwargs: Any) -> Any:
+    @functools.cached_property
+    def _ambient_declarations(self) -> dict[str, ambient.Declaration]:
+        return ambient.operator_declarations(self.foast_stage)
+
+    def _offset_provider(self, offset_provider: common.OffsetProvider | None) -> dict[str, Any]:
+        if offset_provider is None:
+            return ambient.offset_provider(self.foast_stage.closure_vars)
+        return {**offset_provider}
+
+    def __call__(
+        self,
+        *args: Any,
+        enable_jit: bool | None = None,
+        bind: ambient.Binding | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        if bind is not None:
+            with ambient.bind(bind):
+                return self(*args, enable_jit=enable_jit, **kwargs)
+
         if not next_embedded.context.within_valid_context() and self.backend is not None:
             # non embedded execution
-            offset_provider = {**kwargs.pop("offset_provider", {})}
+            offset_provider = self._offset_provider(kwargs.pop("offset_provider", None))
             if "out" not in kwargs:
                 raise errors.MissingArgumentError(None, "out", True)
             out = kwargs.pop("out")
@@ -670,6 +720,7 @@ class FieldOperator(_CompilableGTEntryPointMixin[ffront_stages.DSLFieldOperatorD
             return self._compiled_programs(
                 *args,
                 **kwargs,
+                **ambient.values(self._ambient_declarations),
                 out=out,
                 offset_provider=offset_provider,
                 enable_jit=self.compilation_options.enable_jit
@@ -679,7 +730,9 @@ class FieldOperator(_CompilableGTEntryPointMixin[ffront_stages.DSLFieldOperatorD
         else:
             if not next_embedded.context.within_valid_context():
                 # field_operator as program
-                kwargs["offset_provider"] = {**kwargs.pop("offset_provider", {})}
+                kwargs["offset_provider"] = self._offset_provider(
+                    kwargs.pop("offset_provider", None)
+                )
             attributes = (
                 self.definition_stage.attributes
                 if self.definition_stage

@@ -14,7 +14,7 @@ import typing
 from typing import Any, cast
 
 from gt4py._core import definitions as core_defs
-from gt4py.next import errors
+from gt4py.next import ambient, errors
 from gt4py.next.ffront import (
     dialect_ast_enums,
     experimental,
@@ -112,6 +112,14 @@ class ProgramParser(DialectParser[past.Program]):
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> past.Program:
         self._check_not_a_reserved_name(node.name, self.get_location(node))
+        loc = self.get_location(node)
+        params: list[past.DataSymbol] = [
+            *self.visit(node.args),
+            *(
+                past.DataSymbol(id=name, type=declaration.type_, location=loc)
+                for name, declaration in ambient.declarations(self.closure_vars).items()
+            ),
+        ]
         closure_symbols: list[past.Symbol] = [
             past.Symbol(
                 id=name,
@@ -125,10 +133,10 @@ class ProgramParser(DialectParser[past.Program]):
         return past.Program(
             id=node.name,
             type=ts.DeferredType(constraint=ts_ffront.ProgramType),
-            params=self.visit(node.args),
+            params=params,
             body=[self.visit(node) for node in node.body],
             closure_vars=closure_symbols,
-            location=self.get_location(node),
+            location=loc,
         )
 
     def visit_arguments(self, node: ast.arguments) -> list[past.DataSymbol]:

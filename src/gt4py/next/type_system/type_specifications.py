@@ -79,6 +79,23 @@ class OffsetType(TypeSpec):
         return f"Offset[{self.source}, {self.target}]"
 
 
+class NamespaceType(TypeSpec):
+    """Type of an object whose attributes are named typed values, e.g. an ambient container."""
+
+    #: '__module__.__qualname__' of the object the namespace stands for.
+    qualified_name: str
+    element_types: tuple[tuple[str, TypeSpec], ...]
+
+    def __getattr__(self, name: str) -> TypeSpec:
+        for key, type_ in object.__getattribute__(self, "element_types"):
+            if key == name:
+                return type_
+        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+
+    def __str__(self) -> str:
+        return f"Namespace[{self.qualified_name}]"
+
+
 class ScalarKind(eve_types.IntEnum):
     BOOL = 1
     INT8 = 2
