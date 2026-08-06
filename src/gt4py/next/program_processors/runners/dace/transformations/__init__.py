@@ -65,6 +65,7 @@ from .scan_loop_unrolling import ScanLoopUnrolling
 from .simplify import (
     GT4PyMapBufferElimination,
     GT4PyMoveTaskletIntoMap,
+    GT4PyWriteBackBufferElimination,
     gt_inline_nested_sdfg,
     gt_reduce_distributed_buffering,
     gt_simplify,
@@ -98,6 +99,7 @@ __all__ = [
     "GT4PyMapBufferElimination",
     "GT4PyMoveTaskletIntoMap",
     "GT4PyStateFusion",
+    "GT4PyWriteBackBufferElimination",
     "HorizontalMapFusionCallback",
     "HorizontalMapSplitCallback",
     "LoopBlocking",
