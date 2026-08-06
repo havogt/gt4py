@@ -419,7 +419,7 @@ class Program(_CompilableGTEntryPointMixin[ffront_stages.DSLProgramDef]):
         enable_jit: bool | None = None,
         **kwargs: Any,
     ) -> None:
-        offset_provider = ambient.resolve(offset_provider)
+        offset_provider = ambient.resolve(offset_provider, self._all_closure_vars)
         enable_jit = self.compilation_options.enable_jit if enable_jit is None else enable_jit
         # Ambient declarations became synthesised parameters when the program was
         # defined, so from here on they are ordinary arguments and the caller
@@ -485,7 +485,7 @@ class ProgramWithBoundArgs(Program):
     def _invoke(
         self, *args: Any, offset_provider: common.OffsetProvider | None = None, **kwargs: Any
     ) -> None:
-        offset_provider = ambient.resolve(offset_provider)
+        offset_provider = ambient.resolve(offset_provider, self._all_closure_vars)
         type_ = self.past_stage.past_node.type
         assert isinstance(type_, ts_ffront.ProgramType)
         new_type = ts_ffront.ProgramType(
@@ -703,6 +703,10 @@ class FieldOperator(_CompilableGTEntryPointMixin[ffront_stages.DSLFieldOperatorD
     def __gt_closure_vars__(self) -> dict[str, Any]:
         return self.foast_stage.closure_vars
 
+    @functools.cached_property
+    def _all_closure_vars(self) -> dict[str, Any]:
+        return transform_utils._get_closure_vars_recursively(self.foast_stage.closure_vars)
+
     def __call__(self, *args: Any, enable_jit: bool | None = None, **kwargs: Any) -> Any:
         """Call the field operator; `bind` scopes ambient bindings to this call."""
         with ambient.bindings(ambient.as_bindings(b) if (b := kwargs.pop("bind", None)) else {}):
@@ -711,7 +715,9 @@ class FieldOperator(_CompilableGTEntryPointMixin[ffront_stages.DSLFieldOperatorD
     def _invoke(self, *args: Any, enable_jit: bool | None = None, **kwargs: Any) -> Any:
         if not next_embedded.context.within_valid_context() and self.backend is not None:
             # non embedded execution
-            offset_provider = {**ambient.resolve(kwargs.pop("offset_provider", None))}
+            offset_provider = {
+                **ambient.resolve(kwargs.pop("offset_provider", None), self._all_closure_vars)
+            }
             if "out" not in kwargs:
                 raise errors.MissingArgumentError(None, "out", True)
             out = kwargs.pop("out")
@@ -733,7 +739,9 @@ class FieldOperator(_CompilableGTEntryPointMixin[ffront_stages.DSLFieldOperatorD
         else:
             if not next_embedded.context.within_valid_context():
                 # field_operator as program
-                kwargs["offset_provider"] = {**ambient.resolve(kwargs.pop("offset_provider", None))}
+                kwargs["offset_provider"] = {
+                    **ambient.resolve(kwargs.pop("offset_provider", None), self._all_closure_vars)
+                }
             attributes = (
                 self.definition_stage.attributes
                 if self.definition_stage

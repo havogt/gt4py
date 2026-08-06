@@ -87,4 +87,4 @@ def test_bind_kwarg_does_not_leak_past_the_call(unstructured_case):
 
     sum_edges_program.with_backend(unstructured_case.backend)(inp, out, bind=bound)
 
-    assert gtx.ambient.offset_provider() == {}
+    assert gtx.ambient.offset_provider_for({"V2E": V2E}) == {}

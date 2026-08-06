@@ -9,55 +9,61 @@
 """
 Prototype: ambient values, bound at program-execution time.
 
-An ambient value is declared once and reached from any program without
-appearing in a signature. Binding happens at execution time (JIT time for
-compiled backends), so the same programs can run against a second mesh in one
-process.
+An ambient value is declared once and reached from any program without appearing
+in a signature, so it does not have to be threaded through nested operators.
+Binding happens at execution time (JIT time for compiled backends), which is what
+lets the same programs run against a second mesh in one process.
 
-Everything ambient is bound the same way: **the declaration is the key**.
+A declaration is an *annotation* in a container, and the thing it binds to is a
+plain `contextvars.ContextVar`::
 
-    prog(a, out, bind={V2E: connectivity, dx: 0.5})
+    class Grid(Container):
+        dx: Static[float]
+        nu: Extern[float]
 
-A `FieldOffset` is already a declaration — it names the offset and fixes its
-source and target — so it binds exactly like a `Static[T]` / `Extern[T]` value,
-and a program called without an ``offset_provider`` assembles one from the bound
-offsets. A container may declare what it supplies, in which case the class
-attribute is the declaration and the instance attribute the value::
 
-    class Mesh:
-        V2E = V2E  # this mesh supplies the V2E connectivity
-        dx = physics.dx
+    grid = Grid()
 
-Binding by declaration rather than by attribute *name* is what lets a container
-supply the very offset an operator refers to, instead of something that merely
-shares its name.
 
-A value declared this way is referenced by bare name inside an operator and
-never appears in a signature, so it does not have to be threaded through nested
-operators.
+    @gtx.field_operator
+    def delta_x(f: IJField) -> IJField:
+        return (1.0 / grid.dx) * (f(I + 1) - f)
+
+
+    prog(f, out, bind={Grid.dx: 0.5, Grid.nu: 1e-3})
+
+`Grid.dx` (class access) *is* the `ContextVar`, which is what `bind=` takes as a
+key; `grid.dx` (instance access) is its current value, so embedded execution --
+which runs the operator body as plain Python -- sees an ordinary float. A
+`FieldOffset` binds the same way, carrying its own `ContextVar`.
+
+`Static[T]` and `Extern[T]` are `Annotated` aliases, so a type checker sees plain
+`T` and only the binding machinery reads the marker.
 
 A declaration becomes a **synthesised program parameter** when the program is
-defined (`func_to_past`), so from there on it travels the ordinary path: type
+defined (`func_to_past`), so from there it travels the ordinary path: type
 checking, lowering, `static_params` and the compiled-program key all treat it
-like any other argument, and only the *value* is supplied per call. The caller
-never names it.
+like any other argument, and only the *value* is supplied per call. The two forms
+differ in one place only -- whether that parameter is listed as static:
 
-The two forms differ in one place only — whether that parameter is listed as a
-static one:
-
-- ``Extern[T]`` is an ordinary runtime argument: one compiled program serves
-  every value.
-- ``Static[T]`` is a static argument, so the existing static-argument machinery
+- `Extern[T]` is an ordinary runtime argument: one compiled program serves every
+  value.
+- `Static[T]` is a static argument, so the existing static-argument machinery
   folds it into the generated code and keys the compiled variant on it: one
   compiled program per distinct value.
+
+Nothing here is global: what a program can see is decided by *its own* closure
+variables, never by a registry of everything that happens to be bound.
 """
 
 from __future__ import annotations
 
 import contextlib
 import contextvars
+import dataclasses
+import typing
 from collections.abc import Generator, Mapping
-from typing import Any
+from typing import Annotated, Any, ClassVar
 
 import numpy as np
 
@@ -66,112 +72,121 @@ from gt4py.next import common
 from gt4py.next.ffront import fbuiltins
 
 
-_UNBOUND: Any = object()
-
-#: keyed by declaration object: a `Namespace` or an `AmbientValue`
-_bindings: contextvars.ContextVar[Mapping[Any, Any]] = contextvars.ContextVar("_ambient_bindings")
+_UNSET: Any = object()
 
 
-class AmbientValue:
-    """
-    A value declared here and bound later: `dx = Extern[float]`.
+class _StaticMarker:
+    """Annotation marker: fold the value into the generated code."""
 
-    The declaration carries the *type*, which is all the frontend needs when the
-    operator is defined; the *value* arrives at bind time. Use the declaration
-    object itself as the binding key: `bind={dx: 0.5}`.
 
-    `Extern[T]` is supplied to the compiled program as a runtime argument.
-    `Static[T]` is folded into it as a literal, so each distinct value gets its
-    own compiled variant.
-    """
+class _ExternMarker:
+    """Annotation marker: pass the value as a runtime argument."""
 
-    def __init__(self, type_hint: Any, *, static: bool, name: str = "?") -> None:
-        self.type_hint = type_hint
-        self.static = static
-        self.name = name
 
-    def __repr__(self) -> str:
-        return f"{'Static' if self.static else 'Extern'}[{getattr(self.type_hint, '__name__', self.type_hint)}]"
+#: `dx: Static[float]` -- folded in; one compiled variant per distinct value.
+type Static[T] = Annotated[T, _StaticMarker]
+#: `nu: Extern[float]` -- a runtime argument; one compiled program for all values.
+type Extern[T] = Annotated[T, _ExternMarker]
+
+
+@dataclasses.dataclass(frozen=True)
+class Declaration:
+    """What a container annotation declares: a name, a type, a kind, a variable."""
+
+    #: container-qualified, so two modules declaring a `dx` cannot collide
+    name: str
+    type_hint: Any
+    static: bool
+    var: contextvars.ContextVar
 
     def __gt_type__(self) -> Any:
         from gt4py.next.type_system import type_translation
 
         return type_translation.from_type_hint(self.type_hint)
 
-    def __set_name__(self, owner: type, name: str) -> None:
-        # a declaration inside a container knows where it lives, which gives the
-        # synthesised parameter a name that cannot collide across modules
-        self.name = f"{owner.__name__}_{name}"
-
-    def __get__(self, obj: Any, objtype: type | None = None) -> Any:
-        """Class access yields the declaration, instance access the bound value.
-
-        That is what lets a container be both the thing you *declare* with
-        (`Grid.dx` as a `bind=` key) and the thing you *read* inside an operator
-        (`grid.dx`), without the declaration having to impersonate a scalar.
-        """
-        return self if obj is None else self.value
-
     @property
     def value(self) -> Any:
-        binding = _bindings.get({}).get(self, _UNBOUND)
-        if binding is _UNBOUND:
+        value = self.var.get(_UNSET)
+        if value is _UNSET:
             raise ValueError(
-                f"Ambient value '{self!r}' is not bound."
-                f" Pass 'bind={{<declaration>: <value>}}' at the call, or use 'gtx.bind'."
+                f"Ambient value '{self.name}' is not bound."
+                " Pass 'bind={<declaration>: <value>}' at the call, or use 'gtx.bind'."
             )
-        return binding
+        return value
 
 
-class Container:
+def _declared(hint: Any) -> tuple[Any, bool] | None:
+    """Split a `Static[T]` / `Extern[T]` annotation into `(T, is_static)`."""
+    alias = getattr(hint, "__origin__", None)
+    markers = getattr(getattr(alias, "__value__", None), "__metadata__", ())
+    if _StaticMarker in markers:
+        static = True
+    elif _ExternMarker in markers:
+        static = False
+    else:
+        return None
+    (base,) = typing.get_args(hint)
+    return base, static
+
+
+class _ContainerMeta(type):
+    def __getattr__(cls, name: str) -> contextvars.ContextVar:
+        # class access yields the variable, which is the `bind=` key
+        declarations: dict[str, Declaration] = cls.__dict__.get("_declarations", {})
+        if name in declarations:
+            return declarations[name].var
+        raise AttributeError(name)
+
+
+class Container(metaclass=_ContainerMeta):
     """
-    Base for a container of ambient declarations: `class Grid(Container): dx = Static[float]`.
+    Base for a container of ambient declarations.
 
-    Reading `grid.dx` inside an operator goes through the declaration's
-    descriptor, so in embedded execution it is simply the bound value — the
-    declaration never has to impersonate a scalar. `Grid.dx` (class access)
-    stays the declaration, which is what `bind=` takes as its key.
-
-    The container types itself as a *namespace* over its own class, so the
-    frontend resolves `grid.dx` to the declared type without needing a value.
+    Declarations are annotations, so they create no class attribute and instance
+    access reaches `__getattr__` -- which is where the `ContextVar` is read.
     """
+
+    _declarations: ClassVar[dict[str, Declaration]] = {}
+    #: class whose attributes carry the declared *types*, for the frontend
+    _type_view: ClassVar[type]
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        cls._declarations = {}
+        for attr, hint in typing.get_type_hints(cls, include_extras=True).items():
+            if (declared := _declared(hint)) is None:
+                continue
+            type_hint, static = declared
+            cls._declarations[attr] = Declaration(
+                name=f"{cls.__name__}_{attr}",
+                type_hint=type_hint,
+                static=static,
+                var=contextvars.ContextVar(f"{cls.__name__}.{attr}"),
+            )
+        cls._type_view = type(f"{cls.__name__}_types", (), dict(cls._declarations))
+
+    def __getattr__(self, name: str) -> Any:
+        try:
+            declaration = type(self)._declarations[name]
+        except KeyError:
+            raise AttributeError(name) from None
+        return declaration.value
 
     def __gt_type__(self) -> Any:
         from gt4py.next.type_system import type_translation
 
-        return type_translation.NamespaceProxy(type(self))
+        # a container types itself as a namespace over its declared types, so
+        # `grid.dx` resolves at definition time with nothing bound
+        return type_translation.NamespaceProxy(type(self)._type_view)
 
 
-class _Declarator:
-    def __init__(self, static: bool) -> None:
-        self._static = static
-
-    def __getitem__(self, type_hint: Any) -> AmbientValue:
-        return AmbientValue(type_hint, static=self._static)
-
-
-#: `dx = Extern[float]` — supplied as a runtime argument.
-Extern = _Declarator(static=False)
-#: `dx = Static[float]` — folded in as a literal; one compiled variant per value.
-Static = _Declarator(static=True)
-
-
-def declarations_in(closure_vars: Mapping[str, Any]) -> dict[str, AmbientValue]:
-    """
-    Ambient declarations reachable from a set of closure variables, by parameter name.
-
-    Declarations live in containers, so the key is the declaration's own
-    container-qualified name (`Grid_dx`) rather than whatever the referring
-    scope happens to call the container. That is what keeps two modules from
-    colliding when both declare a `dx`.
-    """
-    found: dict[str, AmbientValue] = {}
-    for value in closure_vars.values():
-        if isinstance(value, Container):
-            for decl in vars(type(value)).values():
-                if isinstance(decl, AmbientValue):
-                    found[decl.name] = decl
-    return found
+def variable_for(declaration: Any) -> contextvars.ContextVar:
+    """The `ContextVar` a declaration binds to."""
+    if isinstance(declaration, contextvars.ContextVar):
+        return declaration
+    if isinstance(declaration, fbuiltins.FieldOffset):
+        return declaration._ambient_var
+    raise TypeError(f"'{declaration!r}' is not an ambient declaration.")
 
 
 def freeze(elem: Any, *, readonly: bool = False) -> Any:
@@ -180,13 +195,13 @@ def freeze(elem: Any, *, readonly: bool = False) -> Any:
 
     An ambient value is static for the jitted programs that see it, so it may
     identify itself by *content* rather than by `id`. The hash is computed once,
-    here — the O(size) cost is paid at freeze time, never per call.
+    here -- the O(size) cost is paid at freeze time, never per call.
 
     `readonly` additionally marks the buffer immutable, which is what makes the
     cached hash trustworthy. It is **off by default because it breaks the gtfn
-    bindings**: they are generated with mutable `ndarray` parameters and reject
-    a non-writeable array outright. Until that is fixed, the hash is only as
-    stable as the caller's discipline.
+    bindings**: they are generated with mutable `ndarray` parameters and reject a
+    non-writeable array outright. Until that is fixed, the hash is only as stable
+    as the caller's discipline.
     """
     if common.frozen_content_hash(elem) is not None:
         return elem
@@ -203,49 +218,26 @@ def freeze(elem: Any, *, readonly: bool = False) -> Any:
 
 
 def as_bindings(spec: Any) -> dict[Any, Any]:
-    """
-    Normalise what `bind=` accepts into a declaration -> value mapping.
-
-    A mapping is taken as-is. Anything else is treated as a *container*: its
-    class attributes name the declarations it supplies, and the instance
-    attribute of the same name carries the value. The declaration object itself
-    is the key, so a container binds the very `Extern` an operator refers to
-    rather than something that merely shares its name.
-
-        class Grid:
-            dx = physics.dx        # the declaration this grid supplies
-
-        grid = Grid(); grid.dx = 0.5
-        prog(f, out, bind=grid)
-    """
+    """Normalise what `bind=` accepts into a declaration -> value mapping."""
     if isinstance(spec, Mapping):
         return dict(spec)
-    resolved: dict[Any, Any] = {}
-    for name, decl in vars(type(spec)).items():
-        if not isinstance(decl, (AmbientValue, fbuiltins.FieldOffset)):
-            continue
-        if name not in vars(spec):
-            raise ValueError(
-                f"'{type(spec).__name__}' declares '{name}' but the instance does not set it."
-            )
-        resolved[decl] = vars(spec)[name]
-    return resolved
+    raise TypeError(f"'{spec!r}' is not a mapping of declarations to values.")
 
 
 @contextlib.contextmanager
 def bindings(mapping: Mapping[Any, Any]) -> Generator[None, None, None]:
-    """Bind several namespaces at once, for the duration of the context."""
-    if not mapping:
-        yield
-        return
-    for value in mapping.values():
+    """Bind declarations to values for the duration of the context."""
+    tokens: list[tuple[contextvars.ContextVar, contextvars.Token]] = []
+    for declaration, value in mapping.items():
         if isinstance(value, common.Connectivity):
             freeze(value)
-    token = _bindings.set({**_bindings.get({}), **mapping})
+        var = variable_for(declaration)
+        tokens.append((var, var.set(value)))
     try:
         yield
     finally:
-        _bindings.reset(token)
+        for var, token in reversed(tokens):
+            var.reset(token)
 
 
 @contextlib.contextmanager
@@ -255,36 +247,48 @@ def bind(declaration: Any, value: Any) -> Generator[None, None, None]:
         yield
 
 
-def resolve(explicit: common.OffsetProvider | None) -> common.OffsetProvider:
-    """The caller's offset provider if given, otherwise the ambient one."""
-    return offset_provider() if explicit is None else explicit
-
-
-def offset_provider() -> common.OffsetProvider:
+def offset_provider_for(closure_vars: Mapping[str, Any]) -> common.OffsetProvider:
     """
-    Assemble the offset provider from the bound offset declarations.
+    Assemble the offset provider from the offsets *this* program references.
 
-    A `FieldOffset` is itself the declaration — it already names the offset and
-    fixes its source and target — so binding one is the same act as binding an
-    ambient value, and no attribute of the bound object has to be inspected.
+    Scoped to the given closure variables rather than to everything currently
+    bound: an unrelated mesh must not leak into a program's offset provider,
+    where it would also perturb the compiled-program key.
     """
     return {
-        str(decl.value): value
-        for decl, value in _bindings.get({}).items()
-        if isinstance(decl, fbuiltins.FieldOffset)
+        str(offset.value): value
+        for offset in closure_vars.values()
+        if isinstance(offset, fbuiltins.FieldOffset)
+        if (value := offset._ambient_var.get(_UNSET)) is not _UNSET
+    }
+
+
+def resolve(
+    explicit: common.OffsetProvider | None, closure_vars: Mapping[str, Any]
+) -> common.OffsetProvider:
+    """The caller's offset provider if given, otherwise the ambient one."""
+    return offset_provider_for(closure_vars) if explicit is None else explicit
+
+
+def declarations_in(closure_vars: Mapping[str, Any]) -> dict[str, Declaration]:
+    """Ambient declarations reachable from a set of closure variables, by parameter name."""
+    return {
+        decl.name: decl
+        for value in closure_vars.values()
+        if isinstance(value, Container)
+        for decl in type(value)._declarations.values()
     }
 
 
 def attribute_declarations(
     closure_vars: Mapping[str, Any],
-) -> dict[tuple[str | None, str], AmbientValue]:
+) -> dict[tuple[str | None, str], Declaration]:
     """Map `(container closure-var name, attribute)` to the declaration it reads."""
     return {
         (var_name, attr): decl
         for var_name, value in closure_vars.items()
         if isinstance(value, Container)
-        for attr, decl in vars(type(value)).items()
-        if isinstance(decl, AmbientValue)
+        for attr, decl in type(value)._declarations.items()
     }
 
 

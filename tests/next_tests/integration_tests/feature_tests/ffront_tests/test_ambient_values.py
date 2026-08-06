@@ -8,6 +8,8 @@
 
 """Ambient values referenced by name inside an operator, bound at call time."""
 
+import contextvars
+
 import numpy as np
 import pytest
 
@@ -25,8 +27,8 @@ IJFloatField = gtx.Field[gtx.Dims[IDim, JDim], gtx.float64]
 class Grid(gtx.Container):
     """Declarations live in a container; `grid.dx` reads the bound value."""
 
-    dx = gtx.Static[gtx.float64]
-    dx_extern = gtx.Extern[gtx.float64]
+    dx: gtx.Static[float]
+    dx_extern: gtx.Extern[float]
 
 
 grid = Grid()
@@ -146,18 +148,23 @@ def test_static_specializes_but_extern_does_not(cartesian_case):
 def test_declaration_types_itself_without_a_binding():
     """The frontend only needs the type at decoration; the value comes later."""
     expected = ts.ScalarType(kind=ts.ScalarKind.FLOAT64)
-    assert gtx.Static[gtx.float64].__gt_type__() == expected
-    assert gtx.Extern[gtx.float64].__gt_type__() == expected
+    assert Grid._declarations["dx"].__gt_type__() == expected
+    assert Grid._declarations["dx_extern"].__gt_type__() == expected
+
+
+def test_bind_key_is_a_plain_contextvar():
+    """No bespoke declaration object: binding is stdlib set/reset."""
+    assert isinstance(Grid.dx, contextvars.ContextVar)
+    assert Grid.dx.get(None) is None
 
 
 def test_unbound_declaration_reports_itself():
     with pytest.raises(ValueError, match="not bound"):
-        Grid.dx.value
+        grid.dx
 
 
-def test_class_access_is_the_declaration_instance_access_the_value():
-    """The descriptor is what lets embedded execution see a plain scalar."""
-    assert Grid.dx is not None and not isinstance(Grid.dx, float)
+def test_class_access_is_the_variable_instance_access_the_value():
+    """What lets embedded execution see a plain scalar, with no arithmetic protocol."""
     with gtx.bindings({Grid.dx: 0.5}):
         assert grid.dx == 0.5
-        assert 1.0 / grid.dx == 2.0  # no arithmetic protocol on the declaration
+        assert 1.0 / grid.dx == 2.0
