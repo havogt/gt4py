@@ -19,7 +19,7 @@ import functools
 import types
 import typing
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any, Generic, Optional, Sequence, TypeAlias
 
 from gt4py import eve
@@ -27,6 +27,7 @@ from gt4py._core import definitions as core_defs
 from gt4py.eve import extended_typing as xtyping
 from gt4py.eve.extended_typing import Self, Unpack, override
 from gt4py.next import (
+    ambient,
     backend as next_backend,
     common,
     custom_layout_allocators as next_allocators,
@@ -125,9 +126,20 @@ class _CompilableGTEntryPointMixin(Generic[ffront_stages.DSLDefinitionT]):
         # calling `compile()`, the pool is initialized with the options passed
         # to `compile()` instead of re-using the existing compilations options.
         return self._make_compiled_programs_pool(
-            static_params=self.compilation_options.static_params or (),
+            static_params=(*(self.compilation_options.static_params or ()), *self._ambient_statics),
             static_domains=self.compilation_options.static_domains,
         )
+
+    @property
+    def _ambient_statics(self) -> tuple[str, ...]:
+        """Synthesised parameters for ambient `Static[T]` declarations.
+
+        Listing them as static parameters is the whole difference between
+        `Static[T]` and `Extern[T]`: the existing static-argument machinery then
+        folds the value into the generated code and keys the compiled variant on
+        it, while an `Extern[T]` stays an ordinary runtime argument.
+        """
+        return ()
 
     def _make_compiled_programs_pool(
         self, static_params: Sequence[str], static_domains: bool
@@ -307,6 +319,19 @@ class Program(_CompilableGTEntryPointMixin[ffront_stages.DSLProgramDef]):
     def _all_closure_vars(self) -> dict[str, Any]:
         return transform_utils._get_closure_vars_recursively(self.past_stage.closure_vars)
 
+    @property
+    def _ambient_statics(self) -> tuple[str, ...]:
+        # only declarations that actually became parameters of *this* program;
+        # a container may hold others that it never reads
+        synthesised = {p.id for p in self.past_stage.past_node.params}
+        return tuple(
+            sorted(
+                name
+                for name, decl in ambient.referenced_declarations(self._all_closure_vars).items()
+                if decl.static and name in synthesised
+            )
+        )
+
     @functools.cached_property
     def gtir(self) -> itir.Program:
         no_args_past = toolchain.ConcreteArtifact(
@@ -379,12 +404,34 @@ class Program(_CompilableGTEntryPointMixin[ffront_stages.DSLProgramDef]):
         self,
         *args: Any,
         offset_provider: common.OffsetProvider | None = None,
+        bind: Mapping[Any, Any] | Any | None = None,
         enable_jit: bool | None = None,
         **kwargs: Any,
     ) -> None:
-        if offset_provider is None:
-            offset_provider = {}
+        """Call the program; `bind` scopes ambient bindings to this call."""
+        with ambient.bindings(ambient.as_bindings(bind) if bind else {}):
+            self._invoke(*args, offset_provider=offset_provider, enable_jit=enable_jit, **kwargs)
+
+    def _invoke(
+        self,
+        *args: Any,
+        offset_provider: common.OffsetProvider | None = None,
+        enable_jit: bool | None = None,
+        **kwargs: Any,
+    ) -> None:
+        offset_provider = ambient.resolve(offset_provider, self._all_closure_vars)
         enable_jit = self.compilation_options.enable_jit if enable_jit is None else enable_jit
+        # Ambient declarations became synthesised parameters when the program was
+        # defined, so from here on they are ordinary arguments and the caller
+        # never names them. Embedded execution is the exception: it runs the
+        # Python function, which reads them from its own closure.
+        synthesised = {p.id for p in self.past_stage.past_node.params}
+        ambient_args = {
+            name: decl.value
+            for name, decl in ambient.referenced_declarations(self._all_closure_vars).items()
+            if name in synthesised
+        }
+        kwargs = {**kwargs, **ambient_args}
 
         with program_call_context(
             program=self,
@@ -414,9 +461,12 @@ class Program(_CompilableGTEntryPointMixin[ffront_stages.DSLProgramDef]):
                     stacklevel=2,
                 )
 
+                embedded_kwargs = {k: v for k, v in kwargs.items() if k not in ambient_args}
                 with next_embedded.context.update(offset_provider=offset_provider):
-                    with embedded_program_call_context(self, args, offset_provider, kwargs):
-                        self.definition_stage.definition(*args, **kwargs)
+                    with embedded_program_call_context(
+                        self, args, offset_provider, embedded_kwargs
+                    ):
+                        self.definition_stage.definition(*args, **embedded_kwargs)
 
 
 try:
@@ -432,11 +482,10 @@ class ProgramWithBoundArgs(Program):
     bound_args: dict[str, float | int | bool] = dataclasses.field(default_factory=dict)
 
     @override
-    def __call__(
+    def _invoke(
         self, *args: Any, offset_provider: common.OffsetProvider | None = None, **kwargs: Any
     ) -> None:
-        if offset_provider is None:
-            offset_provider = {}
+        offset_provider = ambient.resolve(offset_provider, self._all_closure_vars)
         type_ = self.past_stage.past_node.type
         assert isinstance(type_, ts_ffront.ProgramType)
         new_type = ts_ffront.ProgramType(
@@ -485,7 +534,7 @@ class ProgramWithBoundArgs(Program):
                 else:
                     full_kwargs[str(param.id)] = self.bound_args[param.id]
 
-        return super().__call__(*tuple(full_args), offset_provider=offset_provider, **full_kwargs)
+        return super()._invoke(*tuple(full_args), offset_provider=offset_provider, **full_kwargs)
 
     @override
     def compile(
@@ -654,10 +703,21 @@ class FieldOperator(_CompilableGTEntryPointMixin[ffront_stages.DSLFieldOperatorD
     def __gt_closure_vars__(self) -> dict[str, Any]:
         return self.foast_stage.closure_vars
 
+    @functools.cached_property
+    def _all_closure_vars(self) -> dict[str, Any]:
+        return transform_utils._get_closure_vars_recursively(self.foast_stage.closure_vars)
+
     def __call__(self, *args: Any, enable_jit: bool | None = None, **kwargs: Any) -> Any:
+        """Call the field operator; `bind` scopes ambient bindings to this call."""
+        with ambient.bindings(ambient.as_bindings(b) if (b := kwargs.pop("bind", None)) else {}):
+            return self._invoke(*args, enable_jit=enable_jit, **kwargs)
+
+    def _invoke(self, *args: Any, enable_jit: bool | None = None, **kwargs: Any) -> Any:
         if not next_embedded.context.within_valid_context() and self.backend is not None:
             # non embedded execution
-            offset_provider = {**kwargs.pop("offset_provider", {})}
+            offset_provider = {
+                **ambient.resolve(kwargs.pop("offset_provider", None), self._all_closure_vars)
+            }
             if "out" not in kwargs:
                 raise errors.MissingArgumentError(None, "out", True)
             out = kwargs.pop("out")
@@ -679,7 +739,9 @@ class FieldOperator(_CompilableGTEntryPointMixin[ffront_stages.DSLFieldOperatorD
         else:
             if not next_embedded.context.within_valid_context():
                 # field_operator as program
-                kwargs["offset_provider"] = {**kwargs.pop("offset_provider", {})}
+                kwargs["offset_provider"] = {
+                    **ambient.resolve(kwargs.pop("offset_provider", None), self._all_closure_vars)
+                }
             attributes = (
                 self.definition_stage.attributes
                 if self.definition_stage

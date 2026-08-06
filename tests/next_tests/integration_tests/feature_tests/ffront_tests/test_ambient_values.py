@@ -1,0 +1,231 @@
+# GT4Py - GridTools Framework
+#
+# Copyright (c) 2014-2024, ETH Zurich
+# All rights reserved.
+#
+# Please, refer to the LICENSE file in the root directory.
+# SPDX-License-Identifier: BSD-3-Clause
+
+"""Ambient values referenced by name inside an operator, bound at call time."""
+
+import contextvars
+
+import numpy as np
+import pytest
+
+import gt4py.next as gtx
+from gt4py.next.type_system import type_specifications as ts
+
+from next_tests.integration_tests import cases
+from next_tests.integration_tests.cases import IDim, JDim, cartesian_case
+from next_tests.integration_tests.cases_utils import exec_alloc_descriptor
+
+
+IJFloatField = gtx.Field[gtx.Dims[IDim, JDim], gtx.float64]
+
+
+class Grid(gtx.Container):
+    """Declarations live in a container; `grid.dx` reads the bound value."""
+
+    dx: gtx.Static[float]
+    dx_extern: gtx.Extern[float]
+
+
+grid = Grid()
+
+
+@gtx.field_operator
+def delta_x(f: IJFloatField) -> IJFloatField:
+    """Forward difference in x."""
+    return (1.0 / grid.dx) * (f(IDim + 1) - f)
+
+
+@gtx.field_operator
+def delta_x_twice(f: IJFloatField) -> IJFloatField:
+    """`dx` is used one level down, and still never appears in a signature."""
+    return delta_x(f) + delta_x(f)
+
+
+@gtx.program
+def run_delta_x(f: IJFloatField, out: IJFloatField) -> None:
+    delta_x(f, out=out)
+
+
+@gtx.field_operator
+def delta_x_extern(f: IJFloatField) -> IJFloatField:
+    """Same, but supplied as a runtime argument instead of folded in."""
+    return (1.0 / grid.dx_extern) * (f(IDim + 1) - f)
+
+
+@gtx.program
+def run_delta_x_twice(f: IJFloatField, out: IJFloatField) -> None:
+    delta_x_twice(f, out=out)
+
+
+@gtx.program
+def run_delta_x_extern(f: IJFloatField, out: IJFloatField) -> None:
+    delta_x_extern(f, out=out)
+
+
+def _inputs(case):
+    data = gtx.as_field([IDim, JDim], np.arange(20.0).reshape(5, 4), allocator=case.allocator)
+    out = gtx.zeros(gtx.domain({IDim: 4, JDim: 4}), dtype=np.float64, allocator=case.allocator)
+    return data, out
+
+
+def _binding(spacing):
+    """The whole grid is provided; each program picks the parts it needs."""
+    return Grid(dx=spacing, dx_extern=spacing)
+
+
+def _reference(data, spacing, factor=1):
+    a = data.asnumpy()
+    return factor * (1.0 / spacing) * (a[1:5, :] - a[0:4, :])
+
+
+@pytest.mark.uses_cartesian_shift
+@pytest.mark.parametrize("spacing", [0.5, 0.25])
+def test_static_value_is_bound_at_call(cartesian_case, spacing):
+    data, out = _inputs(cartesian_case)
+    run_delta_x.with_backend(cartesian_case.backend)(data, out, bind=_binding(spacing))
+    np.testing.assert_allclose(out.asnumpy(), _reference(data, spacing))
+
+
+@pytest.mark.uses_cartesian_shift
+def test_distinct_values_do_not_share_a_compiled_program(cartesian_case):
+    """The second binding must not reuse the first one's folded literal."""
+    data, out = _inputs(cartesian_case)
+    prog = run_delta_x.with_backend(cartesian_case.backend)
+
+    prog(data, out, bind=_binding(0.5))
+    np.testing.assert_allclose(out.asnumpy(), _reference(data, 0.5))
+
+    prog(data, out, bind=_binding(0.25))
+    np.testing.assert_allclose(out.asnumpy(), _reference(data, 0.25))
+
+
+@pytest.mark.uses_cartesian_shift
+def test_value_reaches_a_nested_operator(cartesian_case):
+    """`dx` is referenced two levels down without being passed as an argument."""
+    data, out = _inputs(cartesian_case)
+    run_delta_x_twice.with_backend(cartesian_case.backend)(data, out, bind=_binding(0.5))
+    np.testing.assert_allclose(out.asnumpy(), _reference(data, 0.5, factor=2))
+
+
+@pytest.mark.uses_cartesian_shift
+def test_context_manager_binding(cartesian_case):
+    data, out = _inputs(cartesian_case)
+    with gtx.bind(_binding(0.5)):
+        run_delta_x.with_backend(cartesian_case.backend)(data, out)
+    np.testing.assert_allclose(out.asnumpy(), _reference(data, 0.5))
+
+
+@pytest.mark.uses_cartesian_shift
+@pytest.mark.parametrize("spacing", [0.5, 0.25])
+def test_extern_value_is_bound_at_call(cartesian_case, spacing):
+    data, out = _inputs(cartesian_case)
+    run_delta_x_extern.with_backend(cartesian_case.backend)(data, out, bind=_binding(spacing))
+    np.testing.assert_allclose(out.asnumpy(), _reference(data, spacing))
+
+
+@pytest.mark.uses_cartesian_shift
+def test_static_specializes_but_extern_does_not(cartesian_case):
+    """The one difference between the two forms: how many programs get compiled."""
+    if cartesian_case.backend is None:
+        pytest.skip("compiled-program pool only exists for compiled backends")
+    data, out = _inputs(cartesian_case)
+
+    static_prog = run_delta_x.with_backend(cartesian_case.backend)
+    extern_prog = run_delta_x_extern.with_backend(cartesian_case.backend)
+    for spacing in (0.5, 0.25):
+        static_prog(data, out, bind=_binding(spacing))
+        extern_prog(data, out, bind=_binding(spacing))
+
+    assert len(static_prog._compiled_programs.compiled_programs) == 2
+    assert len(extern_prog._compiled_programs.compiled_programs) == 1
+
+
+def test_declaration_types_itself_without_a_binding():
+    """The frontend only needs the type at decoration; the value comes later."""
+    expected = ts.ScalarType(kind=ts.ScalarKind.FLOAT64)
+    assert Grid._declarations["dx"].__gt_type__() == expected
+    assert Grid._declarations["dx_extern"].__gt_type__() == expected
+
+
+def test_whole_container_binds_every_value_it_carries():
+    """A grid is one thing semantically; the caller need not track who uses what."""
+    with gtx.bind(Grid(dx=0.5, dx_extern=1.5)):
+        assert (grid.dx, grid.dx_extern) == (0.5, 1.5)
+
+
+def test_container_rejects_an_undeclared_value():
+    with pytest.raises(TypeError, match="does not declare"):
+        Grid(dz=1.0)
+
+
+def test_same_named_containers_in_different_modules_do_not_collide():
+    """A class name is not unique; two modules may both declare a `Grid.dx`.
+
+    Sharing a synthesised parameter is silently wrong rather than an error --
+    one binding simply wins -- so the name is disambiguated by module.
+    """
+    elsewhere = type(
+        "Grid",
+        (gtx.Container,),
+        {"__annotations__": {"dx": gtx.Static[float]}, "__module__": "some.other.module"},
+    )
+    assert Grid._declarations["dx"].name != elsewhere._declarations["dx"].name
+    assert Grid._declarations["dx"].qualname != elsewhere._declarations["dx"].qualname
+
+
+def test_indistinguishable_containers_are_rejected():
+    """Two containers built by one factory share a module and qualified name.
+
+    Nothing stable tells them apart, and `id()` cannot be used -- it would change
+    the parameter name every run and miss the build cache -- so they are rejected
+    rather than silently sharing a parameter.
+    """
+
+    def make():
+        class Twin(gtx.Container):
+            dx: gtx.Static[float]
+
+        return Twin
+
+    make()
+    with pytest.raises(TypeError, match="already defined"):
+        make()
+
+
+def test_explicit_name_separates_them():
+    class Source(gtx.Container, name="ambient-test-source"):
+        dx: gtx.Static[float]
+
+    class Target(gtx.Container, name="ambient-test-target"):
+        dx: gtx.Static[float]
+
+    assert Source._declarations["dx"].name != Target._declarations["dx"].name
+
+
+def test_declaration_names_are_stable_across_runs():
+    """The name lands in the compiled signature, so it must not shift."""
+    assert Grid._declarations["dx"].name == Grid._declarations["dx"].name
+    assert Grid._declarations["dx"].name.startswith("Grid_dx_")
+
+
+def test_bind_key_is_a_plain_contextvar():
+    """No bespoke declaration object: binding is stdlib set/reset."""
+    assert isinstance(Grid.dx, contextvars.ContextVar)
+    assert Grid.dx.get(None) is None
+
+
+def test_unbound_declaration_reports_itself():
+    with pytest.raises(ValueError, match="not bound"):
+        grid.dx
+
+
+def test_class_access_is_the_variable_instance_access_the_value():
+    """What lets embedded execution see a plain scalar, with no arithmetic protocol."""
+    with gtx.bind(Grid.dx, 0.5):
+        assert grid.dx == 0.5
+        assert 1.0 / grid.dx == 2.0

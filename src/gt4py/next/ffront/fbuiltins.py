@@ -6,6 +6,7 @@
 # Please, refer to the LICENSE file in the root directory.
 # SPDX-License-Identifier: BSD-3-Clause
 
+import contextvars
 import dataclasses
 import functools
 import inspect
@@ -470,6 +471,11 @@ class FieldOffset(runtime.Offset):
     @functools.cached_property
     def _cache(self) -> dict:
         return {}
+
+    @functools.cached_property
+    def _ambient_var(self) -> contextvars.ContextVar:
+        """The variable this offset binds to, so it needs no central registry."""
+        return contextvars.ContextVar(f"offset.{self.value}")
 
     def __post_init__(self) -> None:
         if len(self.target) == 2 and self.target[1].kind != common.DimensionKind.LOCAL:
