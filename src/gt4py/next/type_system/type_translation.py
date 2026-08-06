@@ -260,7 +260,7 @@ def from_type_hint(
 
 
 ConstantPythonNamespaceObject: TypeAlias = eve_utils.FrozenNamespace | enum.EnumMeta
-PythonNamespaceObject: TypeAlias = ConstantPythonNamespaceObject | types.ModuleType
+PythonNamespaceObject: TypeAlias = ConstantPythonNamespaceObject | types.ModuleType | type
 
 
 class NamespaceProxy(ts.TypeSpec):
@@ -345,7 +345,13 @@ def from_value(value: Any) -> ts.TypeSpec:
         type_ = xtyping.infer_type(value, annotate_callable_kwargs=True)
         symbol_type = from_type_hint(type_)
 
-    if isinstance(symbol_type, (ts.DataType, ts.CallableType, ts.OffsetType, ts.DimensionType)):
+    # `NamespaceProxy` is accepted here so an object can declare itself a
+    # namespace through `__gt_type__`, not only by being one of the built-in
+    # namespace kinds above.
+    if isinstance(
+        symbol_type,
+        (ts.DataType, ts.CallableType, ts.OffsetType, ts.DimensionType, NamespaceProxy),
+    ):
         return symbol_type
     else:
         raise ValueError(f"Impossible to map '{value}' value to a 'Symbol'.")

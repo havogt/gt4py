@@ -12,7 +12,7 @@ from typing import Any, Callable, Optional
 
 from gt4py import eve
 from gt4py.eve.extended_typing import Never, cast
-from gt4py.next import common, utils
+from gt4py.next import ambient, common, utils
 from gt4py.next.ffront import (
     dialect_ast_enums,
     experimental as experimental_builtins,
@@ -38,7 +38,9 @@ def foast_to_gtir(inp: ffront_stages.FOASTOperatorDef) -> itir.FunctionDefinitio
 
     See the docstring of `FieldOperatorLowering` for details.
     """
-    return FieldOperatorLowering.apply(inp.foast_node)
+    return FieldOperatorLowering.apply(
+        inp.foast_node, ambient_names=ambient.attribute_parameter_names(inp.closure_vars)
+    )
 
 
 def foast_to_gtir_factory(
@@ -68,6 +70,9 @@ def promote_to_list(node_type: ts.TypeSpec) -> Callable[[itir.Expr], itir.Expr]:
 
 @dataclasses.dataclass
 class FieldOperatorLowering(eve.PreserveLocationVisitor, eve.NodeTranslator):
+    #: (container closure-var name, attribute) -> synthesised parameter name
+    ambient_names: dict[tuple[str | None, str], str] = dataclasses.field(default_factory=dict)
+
     """
     Lower FieldOperator AST (FOAST) to GTIR.
 
@@ -98,8 +103,12 @@ class FieldOperatorLowering(eve.PreserveLocationVisitor, eve.NodeTranslator):
     uid_generator: utils.IDGeneratorPool = dataclasses.field(default_factory=utils.IDGeneratorPool)
 
     @classmethod
-    def apply(cls, node: foast.LocatedNode) -> itir.FunctionDefinition:
-        result = cls().visit(node)
+    def apply(
+        cls,
+        node: foast.LocatedNode,
+        ambient_names: dict[tuple[str | None, str], str] | None = None,
+    ) -> itir.FunctionDefinition:
+        result = cls(ambient_names=ambient_names or {}).visit(node)
         assert isinstance(result, itir.FunctionDefinition)
         return result
 
@@ -236,7 +245,13 @@ class FieldOperatorLowering(eve.PreserveLocationVisitor, eve.NodeTranslator):
             return itir.AxisLiteral(value=node.type.dim.value, kind=node.type.dim.kind)
         return im.ref(node.id)
 
-    def visit_Attribute(self, node: foast.Attribute, **kwargs: Any) -> itir.AxisLiteral:
+    def visit_Attribute(self, node: foast.Attribute, **kwargs: Any) -> itir.Expr:
+        # `container.declaration` becomes a reference to the parameter
+        # synthesised for that declaration; it stays free here and is bound by
+        # the enclosing program's parameter list.
+        key = (getattr(node.value, "id", None), node.attr)
+        if key in self.ambient_names:
+            return im.ref(self.ambient_names[key])
         if isinstance(node.type, ts.DimensionType):
             return itir.AxisLiteral(value=node.type.dim.value, kind=node.type.dim.kind)
 

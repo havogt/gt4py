@@ -19,6 +19,7 @@ from gt4py.next.ffront import (
     dialect_ast_enums,
     experimental,
     fbuiltins,
+    field_operator_ast as foast,
     program_ast as past,
     source_utils,
     stages as ffront_stages,
@@ -75,6 +76,28 @@ def func_to_past(inp: DSLProgramDef) -> PASTProgramDef:
     )
 
 
+def _referenced_declarations(closure_vars: dict[str, typing.Any]) -> dict[str, typing.Any]:
+    """
+    Declarations the program's operators actually read, by parameter name.
+
+    Only these get a synthesised parameter: a container is a convenient place to
+    declare things, but an operator that never reads `grid.dx` must not acquire
+    it as an argument — for a `Static[T]` that would specialise the compiled
+    program on a value it does not use.
+    """
+    referenced: dict[str, typing.Any] = {}
+    for value in closure_vars.values():
+        foast_stage = getattr(value, "foast_stage", None)
+        if foast_stage is None:
+            continue
+        by_attribute = ambient.attribute_declarations(foast_stage.closure_vars)
+        for node in foast_stage.foast_node.walk_values().if_isinstance(foast.Attribute):
+            decl = by_attribute.get((getattr(node.value, "id", None), node.attr), None)
+            if decl is not None:
+                referenced[decl.name] = decl
+    return referenced
+
+
 def _with_ambient_params(node: past.Program, closure_vars: dict[str, typing.Any]) -> past.Program:
     """
     Give every ambient declaration the program references a synthesised parameter.
@@ -85,7 +108,7 @@ def _with_ambient_params(node: past.Program, closure_vars: dict[str, typing.Any]
     lowering, `static_params` and the compiled-program key all treat them like
     any other argument, and only the *value* has to be supplied per call.
     """
-    declarations = ambient.ambient_values_in(
+    declarations = _referenced_declarations(
         transform_utils._get_closure_vars_recursively(closure_vars)
     )
     if not declarations:

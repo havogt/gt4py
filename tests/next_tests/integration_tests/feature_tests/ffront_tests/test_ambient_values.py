@@ -21,16 +21,21 @@ from next_tests.integration_tests.cases_utils import exec_alloc_descriptor
 
 IJFloatField = gtx.Field[gtx.Dims[IDim, JDim], gtx.float64]
 
-#: declared here, bound at the call — never a parameter in the user's source, so
-#: it does not have to be threaded through nested operators
-dx = gtx.Static[gtx.float64]
-dx_extern = gtx.Extern[gtx.float64]
+
+class Grid(gtx.Container):
+    """Declarations live in a container; `grid.dx` reads the bound value."""
+
+    dx = gtx.Static[gtx.float64]
+    dx_extern = gtx.Extern[gtx.float64]
+
+
+grid = Grid()
 
 
 @gtx.field_operator
 def delta_x(f: IJFloatField) -> IJFloatField:
     """Forward difference in x."""
-    return (1.0 / dx) * (f(IDim + 1) - f)
+    return (1.0 / grid.dx) * (f(IDim + 1) - f)
 
 
 @gtx.field_operator
@@ -47,7 +52,7 @@ def run_delta_x(f: IJFloatField, out: IJFloatField) -> None:
 @gtx.field_operator
 def delta_x_extern(f: IJFloatField) -> IJFloatField:
     """Same, but supplied as a runtime argument instead of folded in."""
-    return (1.0 / dx_extern) * (f(IDim + 1) - f)
+    return (1.0 / grid.dx_extern) * (f(IDim + 1) - f)
 
 
 @gtx.program
@@ -66,6 +71,11 @@ def _inputs(case):
     return data, out
 
 
+def _binding(spacing):
+    """A container is bound as a unit, so every declaration it holds gets a value."""
+    return {Grid.dx: spacing, Grid.dx_extern: spacing}
+
+
 def _reference(data, spacing, factor=1):
     a = data.asnumpy()
     return factor * (1.0 / spacing) * (a[1:5, :] - a[0:4, :])
@@ -75,7 +85,7 @@ def _reference(data, spacing, factor=1):
 @pytest.mark.parametrize("spacing", [0.5, 0.25])
 def test_static_value_is_bound_at_call(cartesian_case, spacing):
     data, out = _inputs(cartesian_case)
-    run_delta_x.with_backend(cartesian_case.backend)(data, out, bind={dx: spacing})
+    run_delta_x.with_backend(cartesian_case.backend)(data, out, bind=_binding(spacing))
     np.testing.assert_allclose(out.asnumpy(), _reference(data, spacing))
 
 
@@ -85,10 +95,10 @@ def test_distinct_values_do_not_share_a_compiled_program(cartesian_case):
     data, out = _inputs(cartesian_case)
     prog = run_delta_x.with_backend(cartesian_case.backend)
 
-    prog(data, out, bind={dx: 0.5})
+    prog(data, out, bind=_binding(0.5))
     np.testing.assert_allclose(out.asnumpy(), _reference(data, 0.5))
 
-    prog(data, out, bind={dx: 0.25})
+    prog(data, out, bind=_binding(0.25))
     np.testing.assert_allclose(out.asnumpy(), _reference(data, 0.25))
 
 
@@ -96,14 +106,14 @@ def test_distinct_values_do_not_share_a_compiled_program(cartesian_case):
 def test_value_reaches_a_nested_operator(cartesian_case):
     """`dx` is referenced two levels down without being passed as an argument."""
     data, out = _inputs(cartesian_case)
-    run_delta_x_twice.with_backend(cartesian_case.backend)(data, out, bind={dx: 0.5})
+    run_delta_x_twice.with_backend(cartesian_case.backend)(data, out, bind=_binding(0.5))
     np.testing.assert_allclose(out.asnumpy(), _reference(data, 0.5, factor=2))
 
 
 @pytest.mark.uses_cartesian_shift
 def test_context_manager_binding(cartesian_case):
     data, out = _inputs(cartesian_case)
-    with gtx.bind(dx, 0.5):
+    with gtx.bindings(_binding(0.5)):
         run_delta_x.with_backend(cartesian_case.backend)(data, out)
     np.testing.assert_allclose(out.asnumpy(), _reference(data, 0.5))
 
@@ -112,7 +122,7 @@ def test_context_manager_binding(cartesian_case):
 @pytest.mark.parametrize("spacing", [0.5, 0.25])
 def test_extern_value_is_bound_at_call(cartesian_case, spacing):
     data, out = _inputs(cartesian_case)
-    run_delta_x_extern.with_backend(cartesian_case.backend)(data, out, bind={dx_extern: spacing})
+    run_delta_x_extern.with_backend(cartesian_case.backend)(data, out, bind=_binding(spacing))
     np.testing.assert_allclose(out.asnumpy(), _reference(data, spacing))
 
 
@@ -126,8 +136,8 @@ def test_static_specializes_but_extern_does_not(cartesian_case):
     static_prog = run_delta_x.with_backend(cartesian_case.backend)
     extern_prog = run_delta_x_extern.with_backend(cartesian_case.backend)
     for spacing in (0.5, 0.25):
-        static_prog(data, out, bind={dx: spacing})
-        extern_prog(data, out, bind={dx_extern: spacing})
+        static_prog(data, out, bind=_binding(spacing))
+        extern_prog(data, out, bind=_binding(spacing))
 
     assert len(static_prog._compiled_programs.compiled_programs) == 2
     assert len(extern_prog._compiled_programs.compiled_programs) == 1
@@ -142,4 +152,12 @@ def test_declaration_types_itself_without_a_binding():
 
 def test_unbound_declaration_reports_itself():
     with pytest.raises(ValueError, match="not bound"):
-        gtx.Static[gtx.float64].value
+        Grid.dx.value
+
+
+def test_class_access_is_the_declaration_instance_access_the_value():
+    """The descriptor is what lets embedded execution see a plain scalar."""
+    assert Grid.dx is not None and not isinstance(Grid.dx, float)
+    with gtx.bindings({Grid.dx: 0.5}):
+        assert grid.dx == 0.5
+        assert 1.0 / grid.dx == 2.0  # no arithmetic protocol on the declaration

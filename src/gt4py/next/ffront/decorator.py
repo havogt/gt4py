@@ -321,11 +321,14 @@ class Program(_CompilableGTEntryPointMixin[ffront_stages.DSLProgramDef]):
 
     @property
     def _ambient_statics(self) -> tuple[str, ...]:
+        # only declarations that actually became parameters of *this* program;
+        # a container may hold others that it never reads
+        synthesised = {p.id for p in self.past_stage.past_node.params}
         return tuple(
             sorted(
                 name
-                for name, decl in ambient.ambient_values_in(self._all_closure_vars).items()
-                if decl.static
+                for name, decl in ambient.declarations_in(self._all_closure_vars).items()
+                if decl.static and name in synthesised
             )
         )
 
@@ -422,9 +425,11 @@ class Program(_CompilableGTEntryPointMixin[ffront_stages.DSLProgramDef]):
         # defined, so from here on they are ordinary arguments and the caller
         # never names them. Embedded execution is the exception: it runs the
         # Python function, which reads them from its own closure.
+        synthesised = {p.id for p in self.past_stage.past_node.params}
         ambient_args = {
             name: decl.value
-            for name, decl in ambient.ambient_values_in(self._all_closure_vars).items()
+            for name, decl in ambient.declarations_in(self._all_closure_vars).items()
+            if name in synthesised
         }
         kwargs = {**kwargs, **ambient_args}
 

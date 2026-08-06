@@ -98,6 +98,20 @@ class AmbientValue:
 
         return type_translation.from_type_hint(self.type_hint)
 
+    def __set_name__(self, owner: type, name: str) -> None:
+        # a declaration inside a container knows where it lives, which gives the
+        # synthesised parameter a name that cannot collide across modules
+        self.name = f"{owner.__name__}_{name}"
+
+    def __get__(self, obj: Any, objtype: type | None = None) -> Any:
+        """Class access yields the declaration, instance access the bound value.
+
+        That is what lets a container be both the thing you *declare* with
+        (`Grid.dx` as a `bind=` key) and the thing you *read* inside an operator
+        (`grid.dx`), without the declaration having to impersonate a scalar.
+        """
+        return self if obj is None else self.value
+
     @property
     def value(self) -> Any:
         binding = _bindings.get({}).get(self, _UNBOUND)
@@ -108,52 +122,24 @@ class AmbientValue:
             )
         return binding
 
-    # Embedded execution runs the operator body as plain Python, so a bound
-    # declaration has to behave like the scalar it stands for.
-    def _v(self) -> Any:
-        return self.value
 
-    def __float__(self) -> float:
-        return float(self.value)
+class Container:
+    """
+    Base for a container of ambient declarations: `class Grid(Container): dx = Static[float]`.
 
-    def __int__(self) -> int:
-        return int(self.value)
+    Reading `grid.dx` inside an operator goes through the declaration's
+    descriptor, so in embedded execution it is simply the bound value — the
+    declaration never has to impersonate a scalar. `Grid.dx` (class access)
+    stays the declaration, which is what `bind=` takes as its key.
 
-    def __bool__(self) -> bool:
-        return bool(self.value)
+    The container types itself as a *namespace* over its own class, so the
+    frontend resolves `grid.dx` to the declared type without needing a value.
+    """
 
-    def __neg__(self) -> Any:
-        return -self.value
+    def __gt_type__(self) -> Any:
+        from gt4py.next.type_system import type_translation
 
-    def __add__(self, other: Any) -> Any:
-        return self.value + other
-
-    def __radd__(self, other: Any) -> Any:
-        return other + self.value
-
-    def __sub__(self, other: Any) -> Any:
-        return self.value - other
-
-    def __rsub__(self, other: Any) -> Any:
-        return other - self.value
-
-    def __mul__(self, other: Any) -> Any:
-        return self.value * other
-
-    def __rmul__(self, other: Any) -> Any:
-        return other * self.value
-
-    def __truediv__(self, other: Any) -> Any:
-        return self.value / other
-
-    def __rtruediv__(self, other: Any) -> Any:
-        return other / self.value
-
-    def __pow__(self, other: Any) -> Any:
-        return self.value**other
-
-    def __rpow__(self, other: Any) -> Any:
-        return other**self.value
+        return type_translation.NamespaceProxy(type(self))
 
 
 class _Declarator:
@@ -170,9 +156,22 @@ Extern = _Declarator(static=False)
 Static = _Declarator(static=True)
 
 
-def ambient_values_in(closure_vars: Mapping[str, Any]) -> dict[str, AmbientValue]:
-    """The ambient declarations referenced by a set of closure variables."""
-    return {k: v for k, v in closure_vars.items() if isinstance(v, AmbientValue)}
+def declarations_in(closure_vars: Mapping[str, Any]) -> dict[str, AmbientValue]:
+    """
+    Ambient declarations reachable from a set of closure variables, by parameter name.
+
+    Declarations live in containers, so the key is the declaration's own
+    container-qualified name (`Grid_dx`) rather than whatever the referring
+    scope happens to call the container. That is what keeps two modules from
+    colliding when both declare a `dx`.
+    """
+    found: dict[str, AmbientValue] = {}
+    for value in closure_vars.values():
+        if isinstance(value, Container):
+            for decl in vars(type(value)).values():
+                if isinstance(decl, AmbientValue):
+                    found[decl.name] = decl
+    return found
 
 
 def freeze(elem: Any, *, readonly: bool = False) -> Any:
@@ -274,3 +273,23 @@ def offset_provider() -> common.OffsetProvider:
         for decl, value in _bindings.get({}).items()
         if isinstance(decl, fbuiltins.FieldOffset)
     }
+
+
+def attribute_declarations(
+    closure_vars: Mapping[str, Any],
+) -> dict[tuple[str | None, str], AmbientValue]:
+    """Map `(container closure-var name, attribute)` to the declaration it reads."""
+    return {
+        (var_name, attr): decl
+        for var_name, value in closure_vars.items()
+        if isinstance(value, Container)
+        for attr, decl in vars(type(value)).items()
+        if isinstance(decl, AmbientValue)
+    }
+
+
+def attribute_parameter_names(
+    closure_vars: Mapping[str, Any],
+) -> dict[tuple[str | None, str], str]:
+    """Map `(container closure-var name, attribute)` to the synthesised parameter name."""
+    return {key: decl.name for key, decl in attribute_declarations(closure_vars).items()}
