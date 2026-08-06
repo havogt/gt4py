@@ -327,7 +327,7 @@ class Program(_CompilableGTEntryPointMixin[ffront_stages.DSLProgramDef]):
         return tuple(
             sorted(
                 name
-                for name, decl in ambient.declarations_in(self._all_closure_vars).items()
+                for name, decl in ambient.referenced_declarations(self._all_closure_vars).items()
                 if decl.static and name in synthesised
             )
         )
@@ -428,7 +428,7 @@ class Program(_CompilableGTEntryPointMixin[ffront_stages.DSLProgramDef]):
         synthesised = {p.id for p in self.past_stage.past_node.params}
         ambient_args = {
             name: decl.value
-            for name, decl in ambient.declarations_in(self._all_closure_vars).items()
+            for name, decl in ambient.referenced_declarations(self._all_closure_vars).items()
             if name in synthesised
         }
         kwargs = {**kwargs, **ambient_args}

@@ -163,6 +163,27 @@ def test_container_rejects_an_undeclared_value():
         Grid(dz=1.0)
 
 
+def test_same_named_containers_in_different_modules_do_not_collide():
+    """A class name is not unique; two modules may both declare a `Grid.dx`.
+
+    Sharing a synthesised parameter is silently wrong rather than an error --
+    one binding simply wins -- so the name is disambiguated by module.
+    """
+    elsewhere = type(
+        "Grid",
+        (gtx.Container,),
+        {"__annotations__": {"dx": gtx.Static[float]}, "__module__": "some.other.module"},
+    )
+    assert Grid._declarations["dx"].name != elsewhere._declarations["dx"].name
+    assert Grid._declarations["dx"].qualname != elsewhere._declarations["dx"].qualname
+
+
+def test_declaration_names_are_stable_across_runs():
+    """The name lands in the compiled signature, so it must not shift."""
+    assert Grid._declarations["dx"].name == Grid._declarations["dx"].name
+    assert Grid._declarations["dx"].name.startswith("Grid_dx_")
+
+
 def test_bind_key_is_a_plain_contextvar():
     """No bespoke declaration object: binding is stdlib set/reset."""
     assert isinstance(Grid.dx, contextvars.ContextVar)

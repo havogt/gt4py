@@ -61,6 +61,7 @@ from __future__ import annotations
 import contextlib
 import contextvars
 import dataclasses
+import hashlib
 import typing
 from collections.abc import Generator, Mapping
 from typing import Annotated, Any, ClassVar
@@ -93,8 +94,13 @@ type Extern[T] = Annotated[T, _ExternMarker]
 class Declaration:
     """What a container annotation declares: a name, a type, a kind, a variable."""
 
-    #: container-qualified, so two modules declaring a `dx` cannot collide
+    #: the synthesised parameter name. Readable, but disambiguated by a digest of
+    #: the fully qualified name: a container class name is not unique, and two
+    #: modules each declaring a `Grid.dx` would otherwise share one parameter and
+    #: silently take one another's value.
     name: str
+    #: fully qualified, for diagnostics
+    qualname: str
     type_hint: Any
     static: bool
     var: contextvars.ContextVar
@@ -109,7 +115,7 @@ class Declaration:
         value = self.var.get(_UNSET)
         if value is _UNSET:
             raise ValueError(
-                f"Ambient value '{self.name}' is not bound."
+                f"Ambient value '{self.qualname}' is not bound."
                 " Pass 'bind={<declaration>: <value>}' at the call, or use 'gtx.bind'."
             )
         return value
@@ -157,8 +163,13 @@ class Container(metaclass=_ContainerMeta):
             if (declared := _declared(hint)) is None:
                 continue
             type_hint, static = declared
+            qualname = f"{cls.__module__}.{cls.__qualname__}.{attr}"
+            # a stable digest, not a counter: the name lands in the compiled
+            # signature, so it must not shift with import order
+            digest = hashlib.sha1(qualname.encode()).hexdigest()[:6]
             cls._declarations[attr] = Declaration(
-                name=f"{cls.__name__}_{attr}",
+                name=f"{cls.__name__}_{attr}_{digest}",
+                qualname=qualname,
                 type_hint=type_hint,
                 static=static,
                 var=contextvars.ContextVar(f"{cls.__name__}.{attr}"),
@@ -314,14 +325,29 @@ def resolve(
     return offset_provider_for(closure_vars) if explicit is None else explicit
 
 
-def declarations_in(closure_vars: Mapping[str, Any]) -> dict[str, Declaration]:
-    """Ambient declarations reachable from a set of closure variables, by parameter name."""
-    return {
-        decl.name: decl
-        for value in closure_vars.values()
-        if isinstance(value, Container)
-        for decl in type(value)._declarations.values()
-    }
+def referenced_declarations(closure_vars: Mapping[str, Any]) -> dict[str, Declaration]:
+    """
+    Declarations the operators reachable from `closure_vars` actually read.
+
+    Walks each operator's *own* closure variables rather than a merged mapping:
+    merging is keyed by name, so two modules that both call their container
+    `grid` would shadow one another. Only read declarations are returned — an
+    operator that never reads `grid.dx` must not acquire it as a parameter, or a
+    `Static[T]` would specialise the compiled program on a value it does not use.
+    """
+    from gt4py.next.ffront import field_operator_ast as foast
+
+    referenced: dict[str, Declaration] = {}
+    for value in closure_vars.values():
+        foast_stage = getattr(value, "foast_stage", None)
+        if foast_stage is None:
+            continue
+        by_attribute = attribute_declarations(foast_stage.closure_vars)
+        for node in foast_stage.foast_node.walk_values().if_isinstance(foast.Attribute):
+            decl = by_attribute.get((getattr(node.value, "id", None), node.attr), None)
+            if decl is not None:
+                referenced[decl.name] = decl
+    return referenced
 
 
 def attribute_declarations(
