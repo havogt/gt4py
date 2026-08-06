@@ -178,6 +178,35 @@ def test_same_named_containers_in_different_modules_do_not_collide():
     assert Grid._declarations["dx"].qualname != elsewhere._declarations["dx"].qualname
 
 
+def test_indistinguishable_containers_are_rejected():
+    """Two containers built by one factory share a module and qualified name.
+
+    Nothing stable tells them apart, and `id()` cannot be used -- it would change
+    the parameter name every run and miss the build cache -- so they are rejected
+    rather than silently sharing a parameter.
+    """
+
+    def make():
+        class Twin(gtx.Container):
+            dx: gtx.Static[float]
+
+        return Twin
+
+    make()
+    with pytest.raises(TypeError, match="already defined"):
+        make()
+
+
+def test_explicit_name_separates_them():
+    class Source(gtx.Container, name="ambient-test-source"):
+        dx: gtx.Static[float]
+
+    class Target(gtx.Container, name="ambient-test-target"):
+        dx: gtx.Static[float]
+
+    assert Source._declarations["dx"].name != Target._declarations["dx"].name
+
+
 def test_declaration_names_are_stable_across_runs():
     """The name lands in the compiled signature, so it must not shift."""
     assert Grid._declarations["dx"].name == Grid._declarations["dx"].name

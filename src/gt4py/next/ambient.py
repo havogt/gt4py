@@ -63,6 +63,7 @@ import contextvars
 import dataclasses
 import hashlib
 import typing
+import weakref
 from collections.abc import Generator, Mapping
 from typing import Annotated, Any, ClassVar
 
@@ -74,6 +75,10 @@ from gt4py.next.ffront import fbuiltins
 
 
 _UNSET: Any = object()
+
+#: live ambient containers by stable key, so indistinguishable ones are rejected
+#: at definition. Weak, write-once, and never consulted on the execution path.
+_containers: weakref.WeakValueDictionary[str, type] = weakref.WeakValueDictionary()
 
 
 class _StaticMarker:
@@ -153,17 +158,35 @@ class Container(metaclass=_ContainerMeta):
     """
 
     _declarations: ClassVar[dict[str, Declaration]] = {}
+    #: stable identity of this container, unique among live containers
+    _key: ClassVar[str] = ""
     #: class whose attributes carry the declared *types*, for the frontend
     _type_view: ClassVar[type]
 
-    def __init_subclass__(cls, **kwargs: Any) -> None:
+    def __init_subclass__(cls, *, name: str | None = None, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
+        # Identity has to be *stable across interpreter restarts*: it ends up in
+        # the synthesised parameter name, which changes the stage fingerprint and
+        # therefore the build-cache key. `id()` would be unique but would miss the
+        # cache on every run. Module and qualified name are stable, but not always
+        # unique -- two containers built by the same factory are indistinguishable
+        # -- so that case is rejected rather than silently sharing a parameter.
+        key = name or f"{cls.__module__}.{cls.__qualname__}"
+        if (previous := _containers.get(key)) is not None and previous is not cls:
+            raise TypeError(
+                f"Ambient container '{key}' is already defined."
+                " Two containers that share a module and qualified name cannot be"
+                " told apart across runs; pass a distinct"
+                " 'class MyGrid(Container, name=...)' to separate them."
+            )
+        _containers[key] = cls
+        cls._key = key
         cls._declarations = {}
         for attr, hint in typing.get_type_hints(cls, include_extras=True).items():
             if (declared := _declared(hint)) is None:
                 continue
             type_hint, static = declared
-            qualname = f"{cls.__module__}.{cls.__qualname__}.{attr}"
+            qualname = f"{key}.{attr}"
             # a stable digest, not a counter: the name lands in the compiled
             # signature, so it must not shift with import order
             digest = hashlib.sha1(qualname.encode()).hexdigest()[:6]
