@@ -9,6 +9,7 @@
 import dataclasses
 from typing import Any, Optional
 
+from gt4py.next import ambient
 from gt4py.next.ffront import (
     dialect_ast_enums,
     foast_to_gtir,
@@ -113,10 +114,15 @@ class OperatorToProgram(workflow.Workflow[ConcreteFOASTOperatorDef, ConcretePAST
             *partial_program_type.definition.kw_only_args.keys(),
         ]
         assert isinstance(type_, ts.CallableType)
-        assert arg_types[-1] == type_info.return_type(
-            type_, with_args=list(arg_types), with_kwargs=kwarg_types
-        )
         assert args_names[-1] == "out"
+        # Like an explicitly written program, the generated one carries the parameters
+        # synthesised for the ambient values the operator reads.
+        ambient_declarations = ambient.operator_declarations(inp.data)
+        operator_arg_types = arg_types[: len(arg_types) - len(ambient_declarations)]
+        assert operator_arg_types[-1] == type_info.return_type(
+            type_, with_args=list(operator_arg_types), with_kwargs=kwarg_types
+        )
+        args_names += [*ambient_declarations]
 
         params_decl: list[past.Symbol] = [
             past.DataSymbol(
@@ -131,7 +137,10 @@ class OperatorToProgram(workflow.Workflow[ConcreteFOASTOperatorDef, ConcretePAST
                 strict=True,
             )
         ]
-        params_ref = [past.Name(id=pdecl.id, location=loc) for pdecl in params_decl[:-1]]
+        params_ref = [
+            past.Name(id=pdecl.id, location=loc)
+            for pdecl in params_decl[: len(operator_arg_types) - 1]
+        ]
         out_ref = past.Name(id="out", location=loc)
 
         if inp.data.foast_node.id in inp.data.closure_vars:

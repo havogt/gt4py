@@ -12,7 +12,7 @@ from typing import Any, Callable, Optional
 
 from gt4py import eve
 from gt4py.eve.extended_typing import Never, cast
-from gt4py.next import common, utils
+from gt4py.next import ambient, common, utils
 from gt4py.next.ffront import (
     dialect_ast_enums,
     experimental as experimental_builtins,
@@ -236,9 +236,14 @@ class FieldOperatorLowering(eve.PreserveLocationVisitor, eve.NodeTranslator):
             return itir.AxisLiteral(value=node.type.dim.value, kind=node.type.dim.kind)
         return im.ref(node.id)
 
-    def visit_Attribute(self, node: foast.Attribute, **kwargs: Any) -> itir.AxisLiteral:
+    def visit_Attribute(self, node: foast.Attribute, **kwargs: Any) -> itir.Expr:
         if isinstance(node.type, ts.DimensionType):
             return itir.AxisLiteral(value=node.type.dim.value, kind=node.type.dim.kind)
+
+        if isinstance(namespace_type := node.value.type, ts.NamespaceType):
+            # An ambient value: a free symbol resolving against the parameter the enclosing
+            # program synthesised for this declaration.
+            return im.ref(ambient.parameter_name(namespace_type.qualified_name, node.attr))
 
         if isinstance(named_tup_type := node.value.type, ts.NamedCollectionType):
             ind = named_tup_type.keys.index(node.attr)

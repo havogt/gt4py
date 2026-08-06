@@ -112,9 +112,26 @@ def past_to_gtir(inp: ConcretePASTProgramDef) -> definitions.CompilableProgramDe
             if not any(el is None for el in utils.flatten_nested_tuple(descr))  # type: ignore[arg-type]
         }
         body = remap_symbols.RemapSymbolRefs().visit(itir_program.body, symbol_map=static_args)
+        # Ambient values appear as free symbols inside the function definitions, resolving
+        # against the program parameters, so the substitution has to reach them there.
+        function_definitions = [
+            itir.FunctionDefinition(
+                id=fun.id,
+                params=fun.params,
+                expr=remap_symbols.RemapSymbolRefs().visit(
+                    fun.expr,
+                    symbol_map={
+                        name: value
+                        for name, value in static_args.items()
+                        if name not in {str(param.id) for param in fun.params}
+                    },
+                ),
+            )
+            for fun in itir_program.function_definitions
+        ]
         itir_program = itir.Program(
             id=itir_program.id,
-            function_definitions=itir_program.function_definitions,
+            function_definitions=function_definitions,
             params=itir_program.params,
             declarations=itir_program.declarations,
             body=body,
