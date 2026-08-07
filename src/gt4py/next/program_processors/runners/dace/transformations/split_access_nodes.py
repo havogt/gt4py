@@ -373,12 +373,17 @@ class SplitAccessNode(dace_transformation.SingleStateTransformation):
                 return None  # TODO(phimuell): Lift this.
 
             # All producers that might contribute to what this consumer reads have
-            #  to be part of the same fragment.
-            contributing = [
-                find_fragment(i)
-                for i, producer_edge in enumerate(producer_edges)
-                if gtx_dace_split.maybe_intersecting(producer_edge.data.dst_subset, consumer_subset)
-            ]
+            #  to be part of the same fragment. Several producers may already share a
+            #  fragment, so the ids have to be deduplicated before they are merged.
+            contributing = list(
+                dict.fromkeys(
+                    find_fragment(i)
+                    for i, producer_edge in enumerate(producer_edges)
+                    if gtx_dace_split.maybe_intersecting(
+                        producer_edge.data.dst_subset, consumer_subset
+                    )
+                )
+            )
             if len(contributing) == 0:
                 return None
 

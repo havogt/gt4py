@@ -988,3 +988,48 @@ def test_consumer_spanning_all_producers():
     sdfg.validate()
 
     _perform_test(sdfg, explected_applies=0)
+
+
+def test_consumer_spanning_already_merged_producers():
+    """A consumer spans producers that a previous consumer already merged."""
+    sdfg = dace.SDFG(util.unique_name("consumer_spanning_already_merged_producers"))
+    state = sdfg.add_state(is_start_block=True)
+
+    for name in "abctde":
+        sdfg.add_array(
+            name,
+            shape=(20,),
+            dtype=dace.float64,
+            transient=(name == "t"),
+        )
+    t = state.add_access("t")
+
+    for producer, (source, start) in enumerate([("a", 0), ("b", 5), ("c", 10)]):
+        state.add_mapped_tasklet(
+            f"producer_{producer}",
+            map_ranges={"__i": f"{start}:{start + 5}"},
+            inputs={"__in": dace.Memlet(f"{source}[__i]")},
+            code=f"__out = __in + {producer + 1}.0",
+            outputs={"__out": dace.Memlet("t[__i]")},
+            output_nodes={t},
+            external_edges=True,
+        )
+
+    # The first consumer merges producer 1 and producer 2 into one fragment. The
+    #  second one spans all three, so looking up the fragment of producer 1 and of
+    #  producer 2 now yields the same non-minimal id twice.
+    for consumer, (destination, rng) in enumerate([("d", "5:15"), ("e", "0:15")]):
+        state.add_mapped_tasklet(
+            f"consumer_{consumer}",
+            map_ranges={"__i": rng},
+            inputs={"__in": dace.Memlet("t[__i]")},
+            code="__out = __in + 13.0",
+            outputs={"__out": dace.Memlet(f"{destination}[__i]")},
+            input_nodes={t},
+            external_edges=True,
+        )
+    sdfg.validate()
+
+    # Everything ends up in a single fragment, so there is nothing to split -- the
+    #  point of the test is that determining that does not raise.
+    _perform_test(sdfg, explected_applies=0)
