@@ -1461,7 +1461,7 @@ class GT4PyWriteBackBufferElimination(dace_transformation.Pass):
                 continue
 
             if self._has_conflicting_global_access(
-                sdfg, reachable, glob_node, wb_state, def_states
+                sdfg, reachable, glob_node, wb_state, def_states, tmp_name
             ):
                 continue
 
@@ -1475,6 +1475,7 @@ class GT4PyWriteBackBufferElimination(dace_transformation.Pass):
         glob_node: dace_nodes.AccessNode,
         wb_state: dace.SDFGState,
         def_states: set[dace.SDFGState],
+        tmp_name: str,
     ) -> bool:
         """`G` must not be read where it is still expected to hold its old value."""
         for state in sdfg.states():
@@ -1484,11 +1485,35 @@ class GT4PyWriteBackBufferElimination(dace_transformation.Pass):
                 if state.in_degree(node) != 0:
                     return True
                 if state in def_states:
+                    # `assume_pointwise` only covers `G` being an input of the very
+                    #  Map that computes `T`, which is what ADR-18 rule 3 is about.
+                    #  Any other reader in the same state is unordered with respect
+                    #  to the producer and would race with the now direct write.
+                    if not self._only_feeds_tmp_producer(state, node, tmp_name):
+                        return True
                     if not self.assume_pointwise:
                         return True
                 elif state not in reachable[wb_state]:
                     return True
         return False
+
+    def _only_feeds_tmp_producer(
+        self,
+        state: dace.SDFGState,
+        glob_read: dace_nodes.AccessNode,
+        tmp_name: str,
+    ) -> bool:
+        """Checks that `glob_read` is consumed exclusively by the Maps writing `T`."""
+        producer_entries = {
+            state.entry_node(iedge.src)
+            for tmp_node in state.data_nodes()
+            if tmp_node.data == tmp_name
+            for iedge in state.in_edges(tmp_node)
+            if isinstance(iedge.src, dace_nodes.MapExit)
+        }
+        if not producer_entries:
+            return False
+        return all(oedge.dst in producer_entries for oedge in state.out_edges(glob_read))
 
     def _eliminate(
         self,
@@ -1531,3 +1556,8 @@ class GT4PyWriteBackBufferElimination(dace_transformation.Pass):
         except ValueError as e:
             if not str(e).startswith(f"Cannot remove data descriptor {tmp_name}:"):
                 raise
+
+        # The accesses now refer to `G`, whose strides generally differ from the ones
+        #  of the (contiguous) `T` they were derived from, so every descriptor inside
+        #  a NestedSDFG that was mapped from `T` has to be updated.
+        gtx_transformations.gt_propagate_strides_of(sdfg, glob_name)
