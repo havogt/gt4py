@@ -205,6 +205,53 @@ def test_rebound_parameter_declines():
     assert _apply(testee) == testee
 
 
+def _scan(*args):
+    scan = im.call("scan")(
+        im.lambda_("acc", *(f"x{i}" for i in range(len(args))))(im.plus("acc", im.deref("x0"))),
+        im.literal_from_value(True),
+        im.literal_from_value(0.0),
+    )
+    result = im.as_fieldop(scan)(*args)
+    result.type = k_field
+    return result
+
+
+def test_binding_feeding_a_scan_declines():
+    """A `scan` argument is materialized either way, so the copies buy nothing."""
+    tmp = im.ref("tmp", k_field)
+    testee = im.let(
+        "tmp", im.concat_where(_k_domain(itir.InfinityLiteral.NEGATIVE, 5), _a(), _b())
+    )(_scan(tmp, _shift(Koff, 1, tmp)))
+    assert _apply(testee) == testee
+
+
+def test_binding_feeding_a_scan_through_a_binding_declines():
+    """The use reaching the `scan` may be several bindings away."""
+    tmp = im.ref("tmp", k_field)
+    testee = im.let(
+        "tmp", im.concat_where(_k_domain(itir.InfinityLiteral.NEGATIVE, 5), _a(), _b())
+    )(
+        im.let("q", im.as_fieldop(im.lambda_("x")(im.deref("x")))(tmp))(
+            _scan(im.ref("q", k_field), _shift(Koff, 1, tmp))
+        )
+    )
+    assert _apply(testee) == testee
+
+
+def test_binding_beside_an_unrelated_scan_still_fires():
+    """Only a `scan` the binding actually reaches may block the rewrite."""
+    tmp = im.ref("tmp", k_field)
+    testee = im.let(
+        "tmp", im.concat_where(_k_domain(itir.InfinityLiteral.NEGATIVE, 5), _a(), _b())
+    )(
+        im.as_fieldop(im.lambda_("x", "y")(im.minus(im.deref("x"), im.deref("y"))))(
+            _scan(_b()), _shift(Koff, 1, tmp)
+        )
+    )
+    result = _apply(testee)
+    assert cpm.is_call_to(result.args[1], "concat_where")
+
+
 def _shift_chain(depth):
     """`depth` nested `let`s, each binding a `concat_where` reading the previous twice."""
     values = [im.concat_where(_k_domain(itir.InfinityLiteral.NEGATIVE, 5), _a(), _b())]

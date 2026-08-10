@@ -61,7 +61,10 @@ same scope its value was already written in -- under a name that is fresh in the
 substituted under a binder.
 
 Sinking into a `scan` is not merely unprofitable but wrong -- the fold would run over
-a different range -- so a `scan` stencil declines rather than being wrapped.
+a different range -- so a `scan` stencil declines rather than being wrapped. A binding
+that merely feeds a `scan` declines too, for a different reason: a `scan` argument is
+materialized either way, so there is no barrier left to remove and the copies the
+rewrite pays for buy nothing.
 
 It must run
 
@@ -198,6 +201,40 @@ def _shifted_reads(
 def _is_rebound(body: itir.Expr, param: eve.concepts.SymbolName) -> bool:
     """Whether `body` binds `param` again somewhere, shadowing the outer binding."""
     return any(sym.id == param for sym in body.walk_values().if_isinstance(itir.Sym))
+
+
+def _refers_to_any(expr: itir.Expr, names: set[eve.concepts.SymbolName]) -> bool:
+    return any(ref.id in names for ref in expr.walk_values().if_isinstance(itir.SymRef))
+
+
+def _is_scan(expr: itir.Expr) -> bool:
+    return cpm.is_applied_as_fieldop(expr) and cpm.is_call_to(expr.fun.args[0], "scan")
+
+
+def _feeds_a_scan(body: itir.Expr, param: eve.concepts.SymbolName) -> bool:
+    """Whether a value derived from `param` reaches an argument of a `scan`.
+
+    A `scan` argument is materialized whatever this pass does, so there is no fusion
+    barrier left to remove and the copies the rewrite pays for buy nothing. This is an
+    over approximation on purpose -- it follows every binding and ignores shadowing --
+    because being wrong here costs an optimization, not correctness.
+    """
+    tainted = {param}
+    while True:
+        grown = False
+        for call in body.walk_values().if_isinstance(itir.FunCall):
+            if not cpm.is_let(call):
+                continue
+            for bound, arg in zip(call.fun.params, call.args, strict=True):
+                if bound.id not in tainted and _refers_to_any(arg, tainted):
+                    tainted.add(bound.id)
+                    grown = True
+        if not grown:
+            break
+    return any(
+        _is_scan(call) and any(_refers_to_any(arg, tainted) for arg in call.args)
+        for call in body.walk_values().if_isinstance(itir.FunCall)
+    )
 
 
 def _bound_names(node: itir.Node) -> set[str]:
@@ -353,6 +390,8 @@ class PushShiftIntoConcatWhere(eve.PreserveLocationVisitor, eve.NodeTranslator):
             # Substituting under a binder that shadows `param` would rewrite reads of a
             #  different value; such a body is left alone rather than analyzed.
             if _is_rebound(body, param.id):
+                continue
+            if _feeds_a_scan(body, param.id):
                 continue
             replacements: dict[tuple[common.Dimension, int], itir.Sym] = {}
             for (dim, distance), shift_fun in _shifted_reads(body, param.id).items():
