@@ -18,40 +18,48 @@ inputs. This pass moves it::
       ->
     concat_where(u<K: [lo - d, hi - d[>, shift_d(a), shift_d(b))
 
-where `shift_d` distributes the shift all the way down to the leaves::
+where `shift_d` distributes the shift down to the leaves::
 
     shift_d(as_fieldop(S)(x0, ..., xn)) == as_fieldop(S)(shift_d(x0), ..., shift_d(xn))
 
-Sinking to the leaves is essential. Stopping at `as_fieldop(shift)(a)` leaves the
-shift on the intermediate `a`, which is the very fusion barrier this pass removes;
-the materialization would merely move from the `concat_where` result to `a`.
+Translating the condition together with the expression is what makes the rewrite
+safe: the shifted branch is only selected where the original branch was selected at
+the shifted position. This matters because a branch may be readable on a wider index
+range than it is selected on -- reading one element past the end of the selected
+range can be perfectly in bounds and still meaningless.
 
-Translating the condition together with the expression makes the rewrite safe by
-construction: the shifted branch is only evaluated where the original branch was
-valid at the shifted position, so no out-of-branch access can be introduced. This
-matters because a branch may be valid on a wider index range than it is selected
-on -- reading one element past the end of the selected range can be perfectly in
-bounds yet semantically meaningless.
+Sinking to the leaves is essential rather than an optimization. Stopping at
+`as_fieldop(shift)(a)` leaves the shift on the intermediate `a`, which is the very
+fusion barrier this pass exists to remove, and merely moves the materialization.
 
-The rewrite is only performed when it can be established, for every leaf the shift
-would reach, whether that leaf varies along the shifted dimension. Sinking a shift
-onto an argument that does not have the dimension makes domain inference fail, and
-failing to sink one onto an argument that does have it silently changes the result,
-so an unknown type makes the pass decline rather than guess.
+The pass never guesses. It fires only when the shape is recognized syntactically and
+every leaf the shift would reach can be classified from an already computed `type`;
+anything else declines.
 
-Where it does apply it applies unconditionally, mirroring how pointwise producers
-are already recomputed into every consumer (see
-`fuse_as_fieldop._arg_inline_predicate`); the shift is the only reason this case
-was treated differently. Should a program ever be hurt by that, the decision
-belongs in a cost model rather than in an arbitrary limit here.
+It never substitutes a binding itself -- doing so by hand risks capturing the free
+variables of the substituted expression. Instead, a `let` whose bound value is a
+`concat_where` that the body reads through a shift is inlined with the project's
+capture correct `inline_lambda`, restricted to exactly those parameters. This does
+duplicate the `concat_where` when the binding has several uses, which is the normal
+case here (`(H[k] - H[k+1]) * c` reads `H` twice). The duplication is intended: it is
+what exposes the `concat_where` to the rewrite, and the duplicate leaves are folded
+back together downstream by `fuse_as_fieldop`, which always inlines a single argument
+`as_fieldop`, and by CSE.
+
+Sinking into a `scan` is not merely unprofitable but wrong -- the fold would run over
+a different range -- so a `scan` stencil declines rather than being wrapped.
 
 It must run
 
 * after `concat_where.canonicalize_domain_argument`, so the condition is a plain
-  domain,
+  domain with a single range,
 * before `infer_domain.infer_program`, so the new branch domains are inferred, and
 * before `concat_where.transform_to_as_fieldop`, which replaces the `concat_where`
   by a position dependent `if_` that a shift can no longer be pushed through.
+
+Translating a condition can leave a branch selected on an empty region. Deciding that
+requires the inferred domain of the `concat_where`, which does not exist yet at this
+position, so it is deliberately left to `prune_empty_concat_where` downstream.
 """
 
 from __future__ import annotations
@@ -69,6 +77,7 @@ from gt4py.next.iterator.ir_utils import (
     ir_makers as im,
     misc as ir_misc,
 )
+from gt4py.next.iterator.transforms import inline_lambdas
 from gt4py.next.type_system import type_info, type_specifications as ts
 
 
@@ -125,41 +134,63 @@ class _DimUse(enum.Enum):
 def _dim_use(expr: itir.Expr, dim: common.Dimension) -> _DimUse:
     """Classifies whether `expr` varies along `dim`.
 
-    Only a type that is actually available yields a definite answer. Anything else
-    is `UNKNOWN`, which makes the caller decline the rewrite: sinking a shift onto
-    an argument that turns out not to have the dimension makes domain inference
-    fail, and not sinking one onto an argument that does have it silently changes
-    the result, so neither direction is safe to guess.
+    Only an available type yields a definite answer. Anything else is `UNKNOWN`,
+    which makes the caller decline: sinking a shift onto an argument that does not
+    have the dimension makes domain inference fail, and not sinking one onto an
+    argument that does have it silently changes the result, so neither direction is
+    safe to guess. Tuples and lists are `UNKNOWN` too, since a shifted tuple or list
+    iterator cannot be dereferenced componentwise here.
     """
     if isinstance(expr, itir.Literal):
         return _DimUse.WITHOUT
     type_ = expr.type
     if type_ is None or isinstance(type_, ts.DeferredType):
         return _DimUse.UNKNOWN
-    constituents = list(type_info.primitive_constituents(type_))
-    if all(isinstance(t, ts.ScalarType) for t in constituents):
-        return _DimUse.WITHOUT
-    fields = [t for t in constituents if isinstance(t, ts.FieldType)]
-    if len(fields) != len(constituents):
+    if isinstance(type_, ts.TupleType):
         return _DimUse.UNKNOWN
-    if all(dim not in t.dims for t in fields):
+    constituents = list(type_info.primitive_constituents(type_))
+    if len(constituents) != 1:
+        return _DimUse.UNKNOWN
+    (constituent,) = constituents
+    if isinstance(constituent, ts.ScalarType):
         return _DimUse.WITHOUT
-    if all(dim in t.dims for t in fields):
-        return _DimUse.WITH
-    return _DimUse.UNKNOWN
+    if not isinstance(constituent, ts.FieldType):
+        return _DimUse.UNKNOWN
+    if isinstance(constituent.dtype, ts.ListType):
+        return _DimUse.UNKNOWN
+    return _DimUse.WITH if dim in constituent.dims else _DimUse.WITHOUT
+
+
+def _reads_through_shift(body: itir.Expr, param: eve.concepts.SymbolName) -> bool:
+    """Whether `body` applies a non zero shift directly to `param`."""
+    for call in body.walk_values().if_isinstance(itir.FunCall):
+        if not (_is_plain_as_fieldop(call) and len(call.args) == 1):
+            continue
+        assert isinstance(call.fun, itir.FunCall)
+        shift_info = _shift_dim_and_distance(call.fun.args[0])
+        if shift_info is not None and shift_info[1] != 0 and cpm.is_ref_to(call.args[0], param):
+            return True
+    return False
+
+
+def _is_plain_as_fieldop(expr: itir.Expr) -> bool:
+    """An `as_fieldop` applied to a stencil alone, i.e. without an explicit domain."""
+    return cpm.is_applied_as_fieldop(expr) and len(expr.fun.args) == 1
 
 
 def _sink_shift(shift_fun: itir.Expr, dim: common.Dimension, arg: itir.Expr) -> Optional[itir.Expr]:
     """Applies the shift `as_fieldop` `shift_fun` to `arg`, sinking it to the leaves.
 
-    `as_fieldop(shift)(as_fieldop(S)(a0, ..., an))` becomes
-    `as_fieldop(S)(shift(a0), ..., shift(an))`, so that no new shared intermediate is
-    created. Arguments that do not have the shifted dimension are left alone.
-
-    Returns `None` if it cannot be established for every leaf whether it varies
-    along `dim`, in which case the rewrite must not be performed at all.
+    Returns `None` if the shift cannot be sunk soundly, in which case the whole
+    rewrite must be abandoned. Leaving the shift on a compound intermediate counts as
+    a failure rather than a fallback: that is the shape the pass exists to remove,
+    and it measures worse than not rewriting at all.
     """
-    if cpm.is_applied_as_fieldop(arg) and isinstance(arg.fun.args[0], itir.Lambda):
+    if cpm.is_applied_as_fieldop(arg):
+        if not _is_plain_as_fieldop(arg):
+            return None  # an explicit domain argument would be left stale
+        if cpm.is_call_to(arg.fun.args[0], "scan"):
+            return None  # sinking would run the fold over a different range
         new_args = []
         for a in arg.args:
             match _dim_use(a, dim):
@@ -172,7 +203,12 @@ def _sink_shift(shift_fun: itir.Expr, dim: common.Dimension, arg: itir.Expr) -> 
                 case _DimUse.UNKNOWN:
                     return None
         return itir.FunCall(fun=arg.fun, args=new_args, type=arg.type)
-    return itir.FunCall(fun=shift_fun, args=[arg], type=arg.type)
+
+    # Terminal positions: a name, a literal, or a nested `concat_where` that the
+    #  visitor pushes into on re-entry.
+    if isinstance(arg, (itir.SymRef, itir.Literal)) or cpm.is_call_to(arg, "concat_where"):
+        return itir.FunCall(fun=shift_fun, args=[arg], type=arg.type)
+    return None
 
 
 def _shifted_branch(
@@ -189,50 +225,28 @@ def _shifted_branch(
 
 @dataclasses.dataclass
 class PushShiftIntoConcatWhere(eve.PreserveLocationVisitor, eve.NodeTranslator):
-    PRESERVED_ANNEX_ATTRS = ("type",)
-
     @classmethod
     def apply(cls, node: itir.Program) -> itir.Program:
-        return cls().visit(node, env={})
+        return cls().visit(node)
 
-    def visit_Lambda(self, node: itir.Lambda, *, env: dict[str, itir.Expr]) -> itir.Lambda:
-        # The parameters shadow anything of the same name bound further out.
-        shadowed = {str(param.id) for param in node.params}
-        inner_env = {name: expr for name, expr in env.items() if name not in shadowed}
-        return itir.Lambda(
-            params=node.params, expr=self.visit(node.expr, env=inner_env), type=node.type
-        )
+    def visit_FunCall(self, node: itir.FunCall) -> itir.Expr:
+        node = self.generic_visit(node)
 
-    def visit_FunCall(self, node: itir.FunCall, *, env: dict[str, itir.Expr]) -> itir.Expr:
         if cpm.is_let(node):
-            # Record which parameters are bound to a `concat_where`, so that a shift
-            #  applied to a reference can look through the binding. Parameters bound
-            #  to anything else shadow an outer binding of the same name.
-            new_args = [self.visit(arg, env=env) for arg in node.args]
-            inner_env = dict(env)
-            for param, arg in zip(node.fun.params, new_args, strict=True):
-                if cpm.is_call_to(arg, "concat_where"):
-                    inner_env[str(param.id)] = arg
-                else:
-                    inner_env.pop(str(param.id), None)
-            new_body = self.visit(node.fun.expr, env=inner_env)
-            return itir.FunCall(
-                fun=itir.Lambda(params=node.fun.params, expr=new_body, type=node.fun.type),
-                args=new_args,
-                type=node.type,
-            )
-
-        # `type` must be carried along: the decision whether a shift may be sunk onto
-        #  an argument is taken from its type, and a reconstruction that drops it would
-        #  silently turn every case into `UNKNOWN`.
-        node = itir.FunCall(
-            fun=self.visit(node.fun, env=env),
-            args=[self.visit(a, env=env) for a in node.args],
-            type=node.type,
-        )
-
-        if not cpm.is_applied_as_fieldop(node) or len(node.args) != 1:
+            # Expose a `concat_where` that is only read through a shift, using the
+            #  capture correct inliner rather than substituting here.
+            eligible = [
+                cpm.is_call_to(arg, "concat_where")
+                and _reads_through_shift(node.fun.expr, param.id)
+                for param, arg in zip(node.fun.params, node.args, strict=True)
+            ]
+            if any(eligible):
+                return self.visit(inline_lambdas.inline_lambda(node, eligible_params=eligible))
             return node
+
+        if not _is_plain_as_fieldop(node) or len(node.args) != 1:
+            return node
+        assert isinstance(node.fun, itir.FunCall)  # `_is_plain_as_fieldop`
         shift_info = _shift_dim_and_distance(node.fun.args[0])
         if shift_info is None:
             return node
@@ -240,9 +254,8 @@ class PushShiftIntoConcatWhere(eve.PreserveLocationVisitor, eve.NodeTranslator):
         if distance == 0:
             return node
 
+        # Deliberately not looking through a binding, see the module docstring.
         arg = node.args[0]
-        if isinstance(arg, itir.SymRef) and str(arg.id) in env:
-            arg = env[str(arg.id)]
         if not cpm.is_call_to(arg, "concat_where"):
             return node
 
@@ -255,11 +268,10 @@ class PushShiftIntoConcatWhere(eve.PreserveLocationVisitor, eve.NodeTranslator):
             _shifted_branch(node.fun, dim, branch) for branch in (true_branch, false_branch)
         ]
         if any(branch is None for branch in new_branches):
-            # Not provable that the rewrite is meaning preserving, leave it alone.
             return node
 
         # The branches may themselves be `concat_where`s.
-        return self.visit(im.concat_where(new_cond, *new_branches), env=env)
+        return self.visit(im.concat_where(new_cond, *new_branches))
 
 
 push_shifts = PushShiftIntoConcatWhere.apply

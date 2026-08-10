@@ -13,6 +13,7 @@ from gt4py.next.iterator.ir_utils import (
     ir_makers as im,
 )
 from gt4py.next.iterator.transforms import concat_where
+from gt4py.next.iterator.transforms.inline_lambdas import InlineLambdas
 from gt4py.next.type_system import type_specifications as ts
 
 
@@ -108,27 +109,83 @@ def test_non_concat_where_argument_is_untouched():
     assert _apply(testee) == testee
 
 
-def test_shift_is_looked_through_a_let_binding():
-    testee = im.let(
-        "tmp", im.concat_where(_k_domain(itir.InfinityLiteral.NEGATIVE, 5), _a(), _b())
-    )(_shift(Koff, 1, im.ref("tmp", k_field)))
-    result = _apply(testee)
-
-    assert cpm.is_call_to(result.fun.expr, "concat_where")
-
-
-def test_shadowing_parameter_is_not_looked_through():
-    """A parameter shadowing an outer `concat_where` binding must not be substituted."""
+def test_binding_read_through_shift_is_inlined():
+    """A multi use binding must be exposed; that is the shape the pass exists for."""
     testee = im.let(
         "tmp", im.concat_where(_k_domain(itir.InfinityLiteral.NEGATIVE, 5), _a(), _b())
     )(
-        im.call(im.lambda_(im.sym("tmp", k_field))(_shift(Koff, 1, im.ref("tmp", k_field))))(
+        im.as_fieldop(im.lambda_("x", "y")(im.minus(im.deref("x"), im.deref("y"))))(
+            im.ref("tmp", k_field), _shift(Koff, 1, im.ref("tmp", k_field))
+        )
+    )
+    result = _apply(testee)
+
+    # the binding is gone, the unshifted use keeps the original condition and the
+    #  shifted one carries the translated condition
+    assert not cpm.is_let(result)
+    unshifted, shifted = result.args
+    assert cpm.is_call_to(unshifted, "concat_where")
+    assert cpm.is_call_to(shifted, "concat_where")
+    assert domain_utils.SymbolicDomain.from_expr(shifted.args[0]).ranges[KDim].stop == im.plus(
+        im.literal_from_value(5), -1
+    )
+
+
+def test_inlining_does_not_capture():
+    """The free variables of the inlined `concat_where` must not be captured."""
+    testee = im.let(
+        "tmp", im.concat_where(_k_domain(itir.InfinityLiteral.NEGATIVE, 5), _a(), _b())
+    )(
+        im.call(im.lambda_(im.sym("a", k_field))(_shift(Koff, 1, im.ref("tmp", k_field))))(
             im.ref("b", k_field)
         )
     )
     result = _apply(testee)
 
-    # The shift sits inside the inner lambda, whose `tmp` is the lambda parameter and
-    #  not the outer `concat_where`, so nothing may be pushed there.
-    inner_lambda_body = result.fun.expr.fun.expr
-    assert not cpm.is_call_to(inner_lambda_body, "concat_where")
+    # The inner parameter shadowed `a`, which the moved `concat_where` refers to, so
+    #  the inliner must have renamed it rather than capturing the reference.
+    assert isinstance(result.fun, itir.Lambda)
+    assert str(result.fun.params[0].id) != "a"
+
+
+def test_scan_branch_declines():
+    """Sinking into a scan would run the fold over a different range."""
+    scan = im.call("scan")(
+        im.lambda_("acc", "x")(im.plus("acc", im.deref("x"))),
+        im.literal_from_value(True),
+        im.literal_from_value(0.0),
+    )
+    branch = im.as_fieldop(scan)(_a())
+    branch.type = k_field
+    testee = _shift(
+        Koff, 1, im.concat_where(_k_domain(itir.InfinityLiteral.NEGATIVE, 5), branch, _b())
+    )
+    assert _apply(testee) == testee
+
+
+def test_explicit_domain_branch_declines():
+    """An explicit domain argument would be left stale by the rewrite."""
+    branch = im.as_fieldop(im.lambda_("x")(im.deref("x")), _k_domain(0, 10))(_a())
+    branch.type = k_field
+    testee = _shift(
+        Koff, 1, im.concat_where(_k_domain(itir.InfinityLiteral.NEGATIVE, 5), branch, _b())
+    )
+    assert _apply(testee) == testee
+
+
+def test_untyped_branch_declines():
+    """Without a type the pass cannot tell whether the dimension is present."""
+    testee = _shift(Koff, 1, im.concat_where(_k_domain(itir.InfinityLiteral.NEGATIVE, 5), "a", "b"))
+    assert _apply(testee) == testee
+
+
+def test_compound_leaf_declines():
+    """Leaving the shift on a compound intermediate is the shape the pass removes."""
+    leaf = im.tuple_get(0, im.make_tuple(_a(), _b()))
+    leaf.type = k_field
+    branch = im.as_fieldop(im.lambda_("x")(im.deref("x")))(leaf)
+    branch.type = k_field
+    testee = _shift(
+        Koff, 1, im.concat_where(_k_domain(itir.InfinityLiteral.NEGATIVE, 5), branch, _b())
+    )
+    assert _apply(testee) == testee
