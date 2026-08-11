@@ -36,7 +36,9 @@ class _PruneEmptyConcatWhere(PreserveLocationVisitor, NodeTranslator):
 
     A branch that does not span all dimensions of the `concat_where` is neither recognized as
      never selected, since its domain has no range in the missing dimension, nor usable as a
-     replacement for the entire expression, since that would drop a dimension.
+     replacement for the entire expression, since that would drop a dimension. Execute
+     `gt4py.next.iterator.transforms.concat_where.broadcast_branches` before to give every branch
+     the dimensions of the `concat_where`.
 
     >>> from gt4py.next.iterator.ir_utils import domain_utils, ir_makers as im
     >>> from gt4py.next.iterator.transforms import concat_where, infer_domain
