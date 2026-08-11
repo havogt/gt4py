@@ -214,6 +214,26 @@ def test_promote_domain(testee_ranges, dimensions, expected_ranges):
         assert promoted == expected
 
 
+def test_concat_where_branch_domain():
+    """The complement has to be taken before promoting, so the two are pinned together.
+
+    `domain_complement` is only defined on ranges that are infinite on exactly one side, which a
+    promoted dimension is not, so promoting first gives a different (wrong) result.
+    """
+    domain = _make_domain({I: (0, 10), J: (0, 10)})
+    cond = domain_utils.SymbolicDomain(
+        grid_type=common.GridType.CARTESIAN,
+        ranges={J: domain_utils.SymbolicRange(5, itir.InfinityLiteral.POSITIVE)},
+    )
+
+    assert domain_utils.concat_where_branch_domain(domain, cond, True).as_expr() == im.domain(
+        common.GridType.CARTESIAN, {I: (0, 10), J: (5, 10)}
+    )
+    assert domain_utils.concat_where_branch_domain(domain, cond, False).as_expr() == im.domain(
+        common.GridType.CARTESIAN, {I: (0, 10), J: (0, 5)}
+    )
+
+
 def test_is_finite_symbolic_range():
     assert not domain_utils.is_finite(infinity_range)
     assert not domain_utils.is_finite(left_infinity_range)
