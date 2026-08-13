@@ -181,6 +181,9 @@ def apply_common_transforms(
     )  # domain inference does not support dynamic offsets yet
     ir = infer_domain_ops.InferDomainOps.apply(ir)
     ir = concat_where.canonicalize_domain_argument(ir)
+    # Must run before the domains are inferred and before `transform_to_as_fieldop`
+    #  turns the `concat_where` into an `if_` that a shift cannot be pushed through.
+    ir = concat_where.push_shifts(ir)
 
     ir = infer_domain.infer_program(
         ir,
@@ -300,6 +303,8 @@ def apply_fieldview_transforms(
     ir = infer_domain_ops.InferDomainOps.apply(ir)
     ir = concat_where.canonicalize_domain_argument(ir)
     ir = ConstantFolding.apply(ir)  # type: ignore[assignment]  # always an itir.Program
+    # See the comment on the same call in `apply_common_transforms`.
+    ir = concat_where.push_shifts(ir)
 
     ir = infer_domain.infer_program(
         ir,
