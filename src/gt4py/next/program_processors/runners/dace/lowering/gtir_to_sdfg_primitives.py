@@ -236,7 +236,8 @@ def translate_as_fieldop(
     assert isinstance(node.type, (ts.FieldType, ts.TupleType))
 
     fun_node = node.fun
-    assert len(fun_node.args) == 2
+    if len(fun_node.args) != 2:
+        raise ValueError(f"Missing domain on 'as_fieldop' node: '{node}'.")
     fieldop_expr, fieldop_domain_expr = fun_node.args
 
     if cpm.is_call_to(fieldop_expr, "scan"):
