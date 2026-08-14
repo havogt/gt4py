@@ -180,6 +180,7 @@ def apply_common_transforms(
         ir, offset_provider_type=offset_provider_type, uids=uids
     )  # domain inference does not support dynamic offsets yet
     ir = infer_domain_ops.InferDomainOps.apply(ir)
+    ir = concat_where.broadcast_branches(ir, offset_provider_type=offset_provider_type)
     ir = concat_where.canonicalize_domain_argument(ir)
 
     ir = infer_domain.infer_program(
@@ -298,6 +299,7 @@ def apply_fieldview_transforms(
     )  # domain inference does not support dynamic offsets yet
 
     ir = infer_domain_ops.InferDomainOps.apply(ir)
+    ir = concat_where.broadcast_branches(ir, offset_provider_type=offset_provider_type)
     ir = concat_where.canonicalize_domain_argument(ir)
     ir = ConstantFolding.apply(ir)  # type: ignore[assignment]  # always an itir.Program
 
