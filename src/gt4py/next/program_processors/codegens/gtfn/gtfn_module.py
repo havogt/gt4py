@@ -92,7 +92,9 @@ class GTFNTranslationStep(
                     ):
                         # translate sparse dimensions to tuple dtype
                         dim_name = dim.value
-                        connectivity = common.get_offset_type(offset_provider_type, dim_name)
+                        connectivity = common.get_offset_type_by_neighbor_dim(
+                            offset_provider_type, dim
+                        )
                         assert isinstance(connectivity, common.NeighborConnectivityType)
                         size = connectivity.max_neighbors
                         arg = f"gridtools::sid::dimension_to_tuple_like<generated::{dim_name}_t, {size}>({arg})"

@@ -75,3 +75,31 @@ def _deduce_grid_type(
         )
 
     return deduced_grid_type if requested_grid_type is None else requested_grid_type
+
+
+def _check_offset_declarations(
+    offsets_and_dimensions: Iterable[fbuiltins.FieldOffset | common.Dimension],
+    offset_provider_type: common.OffsetProviderType,
+) -> None:
+    """
+    Check each `FieldOffset` declaration against the connectivity supplied for it.
+
+    A `FieldOffset` fixes `source`/`target` at definition time, when no connectivity is
+    available yet; only here do the two meet.
+    """
+    for offset in offsets_and_dimensions:
+        if not isinstance(offset, fbuiltins.FieldOffset) or len(offset.target) < 2:
+            continue
+        assert isinstance(offset.value, str)
+        if not common.has_offset(offset_provider_type, offset.value):
+            continue
+        conn = common.get_offset_type(offset_provider_type, offset.value)
+        declared = (offset.target[0], offset.target[1], offset.source)
+        provided = (conn.source_dim, conn.neighbor_dim, conn.codomain)
+        if declared != provided:
+            raise ValueError(
+                f"Offset '{offset.value}' is declared as "
+                f"'{offset.target[0]} x {offset.target[1]} -> {offset.source}', but the "
+                f"connectivity provided for it maps "
+                f"'{conn.source_dim} x {conn.neighbor_dim} -> {conn.codomain}'."
+            )
