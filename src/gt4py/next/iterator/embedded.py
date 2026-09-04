@@ -571,7 +571,10 @@ def execute_shift(
                 if tag == _CONST_DIM.value:
                     new_entry[i] = 0
                 else:
-                    offset_implementation = common.get_offset(offset_provider, tag)
+                    offset_implementation = common.get_offset_by_neighbor_dim(
+                        offset_provider,
+                        common.Dimension(tag, kind=common.DimensionKind.LOCAL),
+                    )
                     assert common.is_neighbor_table(offset_implementation)
                     source_dim = offset_implementation.__gt_type__().source_dim
                     cur_index = pos[source_dim.value]
@@ -951,7 +954,7 @@ def make_in_iterator(
     )
     if len(sparse_dimensions) >= 1:
         if len(sparse_dimensions) == 1:
-            return SparseListIterator(it, sparse_dimensions[0].value)
+            return SparseListIterator(it, sparse_dimensions[0])
         else:
             raise NotImplementedError(
                 f"More than one local dimension is currently not supported, got {sparse_dimensions}."
@@ -1002,7 +1005,7 @@ class NDArrayLocatedFieldWrapper(MutableLocatedField):
             if isinstance(value, _List):
                 for i, v in enumerate(value):  # type:ignore[var-annotated, arg-type]
                     self._ndarrayfield[
-                        self._translate_named_indices({**named_indices, value.offset.value: i})  # type: ignore[dict-item]
+                        self._translate_named_indices({**named_indices, value.offset.value: i})
                     ] = v
             elif isinstance(value, _ConstList):
                 self._ndarrayfield[
@@ -1398,22 +1401,15 @@ DT = TypeVar("DT")
 @dataclasses.dataclass(frozen=True)
 class _List(Generic[DT]):
     values: tuple[DT, ...]
-    offset: runtime.Offset
+    offset: common.Dimension
 
     def __getitem__(self, i: int):
         return self.values[i]
 
     def __gt_type__(self) -> ts.ListType:
-        offset_tag = self.offset.value
-        assert isinstance(offset_tag, str)
         element_type = type_translation.from_value(self.values[0])
         assert isinstance(element_type, ts.DataType)
-        offset_provider = embedded_context.get_offset_provider()
-        assert offset_provider is not None
-        connectivity = common.get_offset(offset_provider, offset_tag)
-        assert common.is_neighbor_table(connectivity)
-        local_dim = connectivity.__gt_type__().neighbor_dim
-        return ts.ListType(element_type=element_type, offset_type=local_dim)
+        return ts.ListType(element_type=element_type, offset_type=self.offset)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1440,13 +1436,14 @@ def neighbors(offset: runtime.Offset, it: ItIterator) -> _List:
     assert offset_provider is not None
     connectivity = common.get_offset(offset_provider, offset_str)
     assert common.is_neighbor_table(connectivity)
+    connectivity_type = connectivity.__gt_type__()
     return _List(
         values=tuple(
             shifted.deref()
-            for i in range(connectivity.__gt_type__().max_neighbors)
+            for i in range(connectivity_type.max_neighbors)
             if (shifted := it.shift(offset_str, i)).can_deref()
         ),
-        offset=offset,
+        offset=connectivity_type.neighbor_dim,
     )
 
 
@@ -1457,7 +1454,7 @@ def list_get(i, lst: _List[Optional[DT]]) -> Optional[DT] | Undefined:
     return _UNDEFINED  # might happen for lists originating from neighbors with skip values
 
 
-def _get_offset(*lists: _List | _ConstList) -> Optional[runtime.Offset]:
+def _get_offset(*lists: _List | _ConstList) -> Optional[common.Dimension]:
     offsets = set((lst.offset for lst in lists if hasattr(lst, "offset")))
     if len(offsets) == 0:
         return None
@@ -1506,34 +1503,34 @@ def reduce(fun, init):
 @dataclasses.dataclass(frozen=True)
 class SparseListIterator:
     it: ItIterator
-    list_offset: Tag
+    list_dim: common.Dimension
     offsets: Sequence[OffsetPart] = dataclasses.field(default_factory=list, kw_only=True)
 
     def deref(self) -> Any:
-        if self.list_offset == _CONST_DIM.value:
+        if self.list_dim == _CONST_DIM:
             return _ConstList(
-                value=self.it.shift(*self.offsets, SparseTag(self.list_offset), 0).deref()
+                value=self.it.shift(*self.offsets, SparseTag(self.list_dim.value), 0).deref()
             )
         offset_provider = embedded_context.get_offset_provider()
         assert offset_provider is not None
-        connectivity = common.get_offset(offset_provider, self.list_offset)
+        connectivity = common.get_offset_by_neighbor_dim(offset_provider, self.list_dim)
         assert common.is_neighbor_table(connectivity)
         return _List(
             values=tuple(
                 shifted.deref()
                 for i in range(connectivity.__gt_type__().max_neighbors)
                 if (
-                    shifted := self.it.shift(*self.offsets, SparseTag(self.list_offset), i)
+                    shifted := self.it.shift(*self.offsets, SparseTag(self.list_dim.value), i)
                 ).can_deref()
             ),
-            offset=runtime.Offset(value=self.list_offset),
+            offset=self.list_dim,
         )
 
     def can_deref(self) -> bool:
         return self.it.shift(*self.offsets).can_deref()
 
     def shift(self, *offsets: OffsetPart) -> SparseListIterator:
-        return SparseListIterator(self.it, self.list_offset, offsets=[*offsets, *self.offsets])
+        return SparseListIterator(self.it, self.list_dim, offsets=[*offsets, *self.offsets])
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1773,7 +1770,7 @@ def _fieldspec_list_to_value(
             offset_provider = embedded_context.get_offset_provider()
             offset_type = type_.offset_type
             assert isinstance(offset_type, common.Dimension)
-            connectivity = common.get_offset(offset_provider, offset_type.value)
+            connectivity = common.get_offset_by_neighbor_dim(offset_provider, offset_type)
             assert common.is_neighbor_table(connectivity)
             return domain.insert(
                 len(domain),

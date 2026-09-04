@@ -1212,6 +1212,44 @@ def get_offset(offset_provider: OffsetProvider, offset_tag: str) -> OffsetProvid
 get_offset_type: Callable[[OffsetProviderType, str], OffsetProviderTypeElem] = get_offset  # type: ignore[assignment] # overload not possible since OffsetProvider and OffsetProviderType overlap
 
 
+def _neighbor_dim_of(elem: OffsetProviderElem | OffsetProviderTypeElem) -> Dimension:
+    return (
+        elem.neighbor_dim
+        if isinstance(elem, NeighborConnectivityType)
+        else elem.__gt_type__().neighbor_dim
+    )
+
+
+def get_offset_by_neighbor_dim(
+    offset_provider: OffsetProvider, neighbor_dim: Dimension
+) -> OffsetProviderElem:
+    """
+    Get the `OffsetProviderElem` or `OffsetProviderTypeElem` whose local dimension is `neighbor_dim`.
+
+    A local dimension is the neighbor axis of exactly one connectivity, so it identifies that
+    connectivity without going through its tag.
+
+    Note: All accesses of `OffsetProvider` or `OffsetProviderType` should go through this
+    function or `get_offset`.
+    """
+    matches = [
+        tag for tag, elem in offset_provider.items() if _neighbor_dim_of(elem) == neighbor_dim
+    ]
+    if not matches:
+        raise KeyError(f"No offset with local dimension '{neighbor_dim}' found in offset provider.")
+    if len(matches) > 1:
+        raise KeyError(
+            f"Local dimension '{neighbor_dim}' does not identify a single offset, "
+            f"it is the local dimension of {sorted(matches)}."
+        )
+    return offset_provider[matches[0]]
+
+
+get_offset_type_by_neighbor_dim: Callable[
+    [OffsetProviderType, Dimension], OffsetProviderTypeElem
+] = get_offset_by_neighbor_dim  # type: ignore[assignment] # same reason as `get_offset_type`
+
+
 def has_offset(offset_provider: OffsetProvider | OffsetProviderType, offset_tag: str) -> bool:
     """Determine if offset provider has an element for the given offset tag."""
     try:

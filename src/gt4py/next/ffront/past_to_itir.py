@@ -79,6 +79,9 @@ def past_to_gtir(inp: ConcretePASTProgramDef) -> definitions.CompilableProgramDe
     grid_type = transform_utils._deduce_grid_type(
         inp.data.grid_type, offsets_and_dimensions.values()
     )
+    transform_utils._check_offset_declarations(
+        offsets_and_dimensions.values(), inp.args.offset_provider_type
+    )
 
     gt_callables = transform_utils._filter_closure_vars_by_type(
         all_closure_vars, gtcallable.GTCallable

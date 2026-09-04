@@ -90,6 +90,11 @@ class DataflowBuilder(Protocol):
     def get_offset_provider_type(self, offset: str) -> gtx_common.OffsetProviderTypeElem: ...
 
     @abc.abstractmethod
+    def get_offset_provider_type_by_neighbor_dim(
+        self, neighbor_dim: gtx_common.Dimension
+    ) -> gtx_common.OffsetProviderTypeElem: ...
+
+    @abc.abstractmethod
     def unique_nsdfg_name(self, prefix: str) -> str: ...
 
     @abc.abstractmethod
@@ -564,6 +569,11 @@ class GTIRToSDFG(eve.NodeVisitor, SDFGBuilder):
     def get_offset_provider_type(self, offset: str) -> gtx_common.OffsetProviderTypeElem:
         return gtx_common.get_offset_type(self.offset_provider_type, offset)
 
+    def get_offset_provider_type_by_neighbor_dim(
+        self, neighbor_dim: gtx_common.Dimension
+    ) -> gtx_common.OffsetProviderTypeElem:
+        return gtx_common.get_offset_type_by_neighbor_dim(self.offset_provider_type, neighbor_dim)
+
     def make_field(
         self,
         data_node: dace_nodes.AccessNode,
@@ -839,7 +849,11 @@ class GTIRToSDFG(eve.NodeVisitor, SDFGBuilder):
         for dim in dims:
             if dim.kind == gtx_common.DimensionKind.LOCAL:
                 # for local dimension, the size is taken from the associated connectivity type
-                shape.append(neighbor_table_types[dim.value].max_neighbors)
+                shape.append(
+                    gtx_common.get_offset_type_by_neighbor_dim(
+                        neighbor_table_types, dim
+                    ).max_neighbors
+                )
             elif gtx_dace_args.is_connectivity_identifier(name, self.offset_provider_type):
                 # we use symbolic size for the global dimension of a connectivity
                 shape.append(gtx_dace_args.field_size_symbol(name, dim, neighbor_table_types))

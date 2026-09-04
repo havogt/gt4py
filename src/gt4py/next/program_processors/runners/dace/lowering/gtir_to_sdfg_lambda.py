@@ -766,7 +766,7 @@ class LambdaToDataflow(eve.NodeVisitor):
             local_dim = arg.gt_dtype.offset_type
             assert local_dim is not None
             assert isinstance(
-                self.subgraph_builder.get_offset_provider_type(local_dim.value),
+                self.subgraph_builder.get_offset_provider_type_by_neighbor_dim(local_dim),
                 gtx_common.NeighborConnectivityType,
             )
             # find position of the local dimension in the field layout
@@ -1152,7 +1152,7 @@ class LambdaToDataflow(eve.NodeVisitor):
             self.sdfg, (conn_type.max_neighbors,), field_desc.dtype
         )
         neighbors_node = self.state.add_access(neighbors_temp)
-        offset_type = gtx_common.Dimension(offset, gtx_common.DimensionKind.LOCAL)
+        offset_type = conn_type.neighbor_dim
         neighbor_idx = gtir_to_sdfg_utils.get_map_variable(offset_type)
 
         index_connector = "__index"
@@ -1314,7 +1314,9 @@ class LambdaToDataflow(eve.NodeVisitor):
             if offset_type == _CONST_DIM:
                 # this input argument is the result of `make_const_list`
                 continue
-            offset_provider_t = self.subgraph_builder.get_offset_provider_type(offset_type.value)
+            offset_provider_t = self.subgraph_builder.get_offset_provider_type_by_neighbor_dim(
+                offset_type
+            )
             assert isinstance(offset_provider_t, gtx_common.NeighborConnectivityType)
             input_conn_types[offset_type] = offset_provider_t
 
@@ -1440,7 +1442,9 @@ class LambdaToDataflow(eve.NodeVisitor):
             and input_expr.gt_dtype.offset_type is not None
         )
         offset_type = input_expr.gt_dtype.offset_type
-        offset_provider_type = self.subgraph_builder.get_offset_provider_type(offset_type.value)
+        offset_provider_type = self.subgraph_builder.get_offset_provider_type_by_neighbor_dim(
+            offset_type
+        )
         assert isinstance(offset_provider_type, gtx_common.NeighborConnectivityType)
 
         inp_conn = "_in"
