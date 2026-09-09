@@ -266,3 +266,141 @@ trick is only valid without corners, nb04 §3.3), so 2-D is now straightforward.
 
 Backward mode. A 2-D adjoint would need a genuine reverse exchange (reversed two-phase, or a
 scatter-accumulate the library does not offer) — nb04 shows exactly why; not attempted.
+
+---
+
+# Round 3 — FESOM2-JAX-style halo transports for the SWM, forward + backward (2026-09-09)
+
+## Goal
+
+Reproduce FESOM2-JAX's design (arXiv:2608.01546, Sect. 2.2–2.3) on the structured SWM:
+the exchange is written *in JAX* from primitives with known transposes, so the distributed
+adjoint is obtained by composition, not by hand. Implement the four transports FESOM2-JAX
+compares, plus the GSPMD-automatic path from nb03 as a fifth baseline, and compare them by
+(a) adjoint exactness, (b) wire volume, (c) time.
+
+## What FESOM2-JAX does (from the paper)
+
+- `jax.shard_map` over a **1-D device axis**; each device holds owned entities followed by a
+  halo rim padded to a common size; the exchange is a pure function on that array.
+- Four transports: **all-gather broadcast** (moves the whole field, O(P) volume, exact
+  adjoint), **ragged all-to-all** (ships exactly the needed entries, one slot per peer,
+  **defective reverse-mode rule in their JAX → forward-only**), **padded all-to-all** (slot
+  per peer padded to a common size, zeros cross the wire, exact adjoint), **coloured
+  ppermute** (K rounds, one partner per round, cost flat in P, pays K latencies, exact
+  adjoint).
+- Findings: small mesh → ragged/padded fastest (latency-bound); large mesh → coloured
+  fastest (bandwidth-bound). "An exact adjoint costs nothing." Gradient step 4.7× forward;
+  memory (0.83 GiB/step) is the binding constraint, not time.
+- Verification invariants: sharded path on ONE device reproduces the single-device path
+  **bit for bit**; sharded gradient must match single-device gradient, which is checked
+  against finite differences; pointwise kernels 1e-15, accumulating kernels 1e-12.
+
+## Structured analogue for the SWM
+
+- 1-D device axis `"d"`, logical Rx×Ry torus decomposition, rank r → (rx, ry) = divmod(r, Ry);
+  neighbour tables are data, as in FESOM. Local array `(MLOC+2, NLOC+2)`, halo width 1.
+  Corners are needed (`p(I+1)(J+1)`), so every transport must deliver them.
+- Transports, each `exchange(local) -> local` inside `shard_map`:
+  1. `allgather` — `all_gather` every block, reassemble the global torus, slice own halo box.
+  2. `padded_a2a` — `all_to_all` with one slot per peer, padded to the largest message.
+  3. `coloured` — two-phase `ppermute` rounds (±x, then ±y); corners via phase order; K = 4.
+  4. `ragged_a2a` — `ragged_all_to_all` shipping exactly the strips; test its transpose.
+  5. `auto` — GSPMD `jnp.roll` on a sharded array (nb03), compiler-written.
+- Stencil: GT4Py `operators.timestep.definition` on JAX-backed local fields inside the
+  shard_map body (nb02's proven pattern), jax 0.6.2 in the gt4py venv. Exchange-only tests
+  are pure jnp and are additionally run in `.venv-jax` (jax 0.11.1) to cross-check the
+  ragged transpose defect across versions.
+
+## Comparison battery (every transport)
+
+1. exchange forward == `np.pad(interior, 1, "wrap")` exactly
+2. exchange dot-product test via `jax.vjp`, rel ≤ 1e-14; also against nb04's dense matrix
+3. sharded SWM on P=1 device == single-device model bit for bit (FESOM invariant)
+4. sharded SWM on P devices vs single-device: ≤ 1e-12
+5. sharded gradient vs single-device gradient: ≤ 1e-12
+6. Taylor test rate2 → 2.00
+7. HLO collectives: count, shapes, bytes per device (nb03's corrected helper)
+8. wall time of forward step and `value_and_grad` on 4 and 8 fake CPU devices, with the
+   caveat that CPU timings only rank latency-vs-volume qualitatively
+
+## Execution
+
+Orchestrated with subagents: one builds the harness + the `allgather` transport (proves the
+battery end to end); three implement the remaining transports in parallel against the fixed
+interface; one writes the comparison notebook; one adversarial reviewer re-runs everything.
+
+### What the FESOM2-JAX code actually does (from a full map of koldunovn/fesom_jax, HEAD c478400)
+
+Recorded env `jax==0.10.1` (0.11.0 also ran the suite). `jax.shard_map` over a 1-D axis
+`'p'`, `check_vma=False`, `jax.jit` **around** the shard_map (required for the backward
+when the scan body is `jax.checkpoint`ed). Device axis folded into the leading dim
+(`[P*Lmax, ...]` sharded `P('p')`), so per-device kernels see `[Lmax, ...]`.
+
+All four transports share one contract: **broadcast** exchange (owner -> halo copies, no
+accumulate), interior untouched, forward bit-exact against each other. Exact forms:
+
+| transport | body (halo.py) | adjoint | CPU |
+|---|---|---|---|
+| all_gather (default, **the oracle**) | `all_gather(field, axis=0, tiled=False)` -> `[P,Lmax,..]`, then `gathered[src_dev, src_lane]` | automatic | yes |
+| ragged | gather `send_idx` -> `ragged_all_to_all(op, out, send_off, send_sizes, out_off, recv_sizes)` -> gather -> `where(halo_mask)` | **broken**: violates <f(x),y>=<x,fᵀ(y)> by O(1), sign-flipped at P=2, fᵀ(ones) = axis_size × correct; transpose rule byte-identical in jax 0.11.1 | **no** ("not supported by XLA:CPU ThunkEmitter") |
+| padded | gather `pad_src` -> `where(pad_valid)` -> **one** `all_to_all(tiled=True)` -> gather `pad_slotpos` -> `where(halo_mask)` | automatic; **the `where(pad_valid)` is load-bearing for the transpose** (kills cotangents of duplicated pad gathers) | yes |
+| coloured | gather `send_idx` -> `where(send_valid)` -> K× `ppermute` on static slices (perms are static Python metadata) -> concatenate -> gather `colpos` -> `where(halo_mask)` | automatic; `send_valid` where load-bearing | yes |
+
+Verification gates (tests/test_halo.py): forward `np.array_equal` vs the all_gather oracle
+on valid lanes; gradient of `sum(w*exchange(x))` rel-max < 1e-12 vs oracle; coloured
+rounds asserted to be partial permutations covering the edge set exactly. Ragged is
+`xfail`; `run_steps_sharded` **refuses** `return_grad_fn` with ragged. The dot-product
+identity is used only for the bare-primitive bug reproducer (tol 1e-9). The `custom_vjp`
+workaround for ragged was designed but never implemented; padded/coloured replaced it.
+
+Measured volumes: padded pad factor 1.8x@P4 … 40.7x@P128 (98.4 % zeros); coloured
+1.0–1.4x the true halo at any P, K = 3–14. CPU lesson: "count the exchanges before you
+count the bytes" — CPU `psum` is O(P), `ppermute` flat.
+
+Consequences for round 3: (i) all_gather is the oracle and the gate is bit-equality +
+1e-12 gradient; (ii) ragged cannot run on this machine's CPU backend — it is implemented,
+its CPU failure recorded, and the transpose defect tested on the GPU only if a scratch
+`jax[cuda13]` venv can be stood up in tmp/; (iii) coloured gets two variants on the
+structured torus: FESOM's single-phase 8-neighbour schedule (K = 8, every direction is a
+full permutation) and a two-phase ±x/±y schedule (K = 4) that unstructured meshes cannot do.
+
+### Round-3 environment facts (probed 2026-09-09)
+
+- `lax.ragged_all_to_all` fails at compile on XLA:CPU in **both** jax 0.6.2 and 0.11.1:
+  `UNIMPLEMENTED: HLO opcode 'ragged-all-to-all' is not supported by XLA:CPU ThunkEmitter`
+  (2 fake devices, tmp/ragged_probe.py). FESOM's 0.10.1 observation still holds.
+- A scratch CUDA venv exists: `tmp/venv-cuda` (Python 3.13, `jax[cuda13]==0.11.1`, one
+  `CudaDevice`). `jax[cuda13-local]` did NOT find the system CUDA; the bundled wheels did.
+- Consequence: the ragged transport can be run on the GPU only at P=1, where the exchange
+  is the identity and FESOM's transpose over-count (`axis_size ×`) cannot manifest. So
+  ragged is delivered as: implementation against the interface, **numpy emulation of the
+  primitive's semantics to validate the offset/size tables**, the verbatim CPU failure,
+  and FESOM's documented defect cited rather than reproduced.
+
+### Target: real testing on Santis (CSCS Alps, GH200, 4 GPUs/node, aarch64)
+
+Decided 2026-09-09: the laptop run establishes correctness and the interface; the
+measurements that matter happen on Santis. Consequences for the round-3 deliverables:
+
+- **Everything CPU-only here becomes testable there**: the ragged transport on the real
+  primitive at P ≥ 2 (including whether FESOM's transpose over-count reproduces on the
+  installed JAX), and the latency-vs-bandwidth ranking of the four transports that CPU
+  timings cannot resolve.
+- **Portability requirements the code must meet before it goes there:**
+  1. shard_map import shim — the harness imports `jax.experimental.shard_map` (0.6.2
+     API, `check_rep=`); on JAX ≥ 0.11 that module is empty and the API is
+     `jax.shard_map(..., check_vma=)`. Add a compat layer in `halo_transports.py` and use
+     it everywhere.
+  2. `JAX_PLATFORMS` must not be hard-pinned to cpu in the harness; device count comes
+     from `jax.devices()`; the fake-device flag is a laptop-only convenience.
+  3. Multi-node: `jax.distributed.initialize()` under Slurm (JAX auto-detects
+     `slurm_cluster`), one process per GPU or per node; layouts up to Rx*Ry = P.
+  4. A `bench_transports.py` (+ sbatch template, uenv/venv notes) that runs the battery
+     and timing for every registered transport and writes one JSON/CSV row per
+     (transport, layout, P), so laptop and Santis results are directly comparable.
+  5. Whether GT4Py's JAX-backed embedded fields work on the JAX version available on
+     Santis is unknown; if not, the pure-jnp transcription of `timestep` is the fallback
+     for timing runs and must be kept forward-bit-identical to the GT4Py path.
+- The comparison notebook (nb05) is written against the laptop numbers with explicit
+  placeholders/columns for the Santis numbers.

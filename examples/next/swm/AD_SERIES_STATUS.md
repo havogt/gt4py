@@ -10,7 +10,7 @@ what was checked how, not as user documentation. -->
 and the phase list; this file holds where we actually are and what has already been
 established so it does not get re-derived.
 
-Last updated: 2026-09-01
+Last updated: 2026-09-09
 
 ## Current phase
 
@@ -485,7 +485,235 @@ one-sided, turn-point insertion still manual). Enzyme is the only tool doing non
 reverse mode without annotation, but treats `MPI_Test` as inactive — complete a request
 with Test instead of Wait and you silently get no adjoint communication.
 
-## Open for a future round## Open for a future round
+## Round 3 (complete): FESOM2-JAX-style halo transports, forward + backward
+
+Plan and the FESOM code-map facts are in AD_SERIES_PLAN.md "Round 3". Progress 2026-09-09:
+
+**Harness done** (`swm_sharded.py`, `halo_transports.py`, `transport_allgather.py`,
+`README_transports.md`). Interface frozen: `transport_<name>.py` registers a `Transport`
+with `prepare(layout) -> tables` and `exchange(a_local, tables, axis_name)`, pure
+`jax.lax` collectives only, must refresh all 4 faces + 4 corners. Battery T0–T8; the gate
+is FESOM's: forward `np.array_equal` vs the `allgather` oracle and gradient rel-max < 1e-12.
+
+`allgather` passes every layout 1x1 … 2x4 (P ≤ 8): T3 bit identity **exactly 0.0** (FESOM's
+invariant holds, checked at n_steps 1…50); T4 ≤ 2 ulp on p; T5 gradient 6–10e-12 rel, which
+is a small multiple of a **measured noise floor** of 2.8e-12 (two forward-bit-identical
+single-device implementations differ by that much in the gradient — it is cancellation-
+limited, not transport-limited); T6 rate2 2.00. GT4Py `timestep.definition` runs inside
+`shard_map` + `lax.scan` on jax 0.6.2 with no fallback. Forward wire volume: 3 ×
+`all-gather[P, MLOC*NLOC]` = 6144 B/device/step, flat in P (the O(P) baseline); backward
+is 3 × `reduce-scatter`, written entirely by JAX.
+
+**Finding worth keeping:** an earlier allgather variant broke bit identity by 16 ulp at
+n_steps ≥ 3. Traced by the harness agent to **XLA's SPMD partitioner compiling identical
+local arithmetic differently inside `shard_map`** — reproduced with a `shard_map` body
+containing no collective at all, unaffected by `check_rep` or
+`--xla_allow_excess_precision=false`. FESOM's index-pair form
+(`all_gather(tiled=False)` → `gathered[src_dev, src_lane]`) does not trigger it. T3 is
+kept strict; later transports are told to report nonzero ulps rather than chase them.
+
+Two of the coordinator's FESOM-derived cautions did not reproduce on 0.6.2: grad of a
+bare `shard_map` with a checkpointed scan body works (jit is still used, it is needed for
+`.lower().compile()`), and `check_rep=True` is fine with scan + GT4Py.
+
+**`padded` done** (`transport_padded.py`, Sonnet): all six layouts ALL PASS; T3 and T4
+exactly 0.0 on every layout (T4 is *better* than allgather's 6.8e-15); T5 6–9e-12 (noise
+floor); one `all_to_all` per field per step. pad factor 1.78× at P=4 — FESOM's 1.8× at P=4
+almost exactly — growing only to 2.29× at P=8 because the structured torus caps neighbour
+degree at 8 (FESOM's grows to 40× at P=128 because unstructured interface size keeps
+growing). Corrected forward volume 1536–1728 B/device/step vs allgather's flat 6144, and it
+*decreases* with P (O(halo) not O(field)).
+
+**Shared-helper defect found by the padded agent, to fix before comparison:** XLA:CPU
+compiles `lax.all_to_all(tiled=True)` into a P-way **tuple**-typed HLO instruction
+`(f64[s], ..., f64[s]) all-to-all(...)`; nb03's `collectives_in` regex captures only the
+first tuple element, so `bytes_moved` **undercounts all-to-all volume by a factor P** (and
+already undercounted reduce-scatter by ~P). Volumes for the comparison must be computed
+from the prepared tables (as FESOM does), with the HLO numbers as a cross-check only.
+
+**`ragged` + `ragged_emul` done** (`transport_ragged.py`, Opus). Tables built from
+`owner_lane()`; pad factor exactly 1.00 (every device sends `send_max` cells, no padding);
+degenerate layouts fall out (2x2: E≡W merged into one 16-cell chunk; 2x1: 16-cell
+self-sends). A pure-numpy replay of the docstring's slice loop over the tables reproduces
+`np.pad(wrap)` exactly on every layout, independent of JAX.
+- `ragged_emul` (`all_gather` of the operand + a static index pair transcribed from the
+  documented receive loop; asserts `send_sizes == all_to_all(recv_sizes)`; reproduces
+  JAX's own docstring example exactly): **all six layouts ALL PASS**, T3 and T4 exactly
+  0.0, T5 6–8e-12. It validates the ragged tables; its own HLO volume (`all-gather[P,
+  send_max]`) is P× ragged's and must not be quoted as ragged's.
+- `ragged` (real primitive) on CPU: every test `compile_error: UNIMPLEMENTED: HLO opcode
+  'ragged-all-to-all' is not supported by XLA:CPU ThunkEmitter` (verbatim, jax 0.6.2).
+- `ragged` on the laptop GPU (jax 0.11.1, needs `XLA_PYTHON_CLIENT_PREALLOCATE=false` on the
+  8 GiB card or NCCL fails to allocate): compiles, forward bit-exact vs `np.pad(wrap)` and
+  vs `ragged_emul`; dot-product identity 1.6e-16 at P=1 — **which proves nothing about the
+  defect**, since an `axis_size×` over-count is 1× at P=1.
+- Wire volume per device per step (3 fields): ragged 1632/1248/864/672 B for P=1/2/4/8
+  (exactly the true halo, shrinking with P) vs allgather flat 6144.
+
+**Finding that revises FESOM's diagnosis (labelled inference by the agent, and by me):**
+the Python transpose rule `_ragged_all_to_all_transpose` is algebraically correct. Traced by
+hand through JAX's docstring example it gives `f^T(ones) = [[1,1,1],[1,1,0]]` — FESOM's
+*expected* value, not their measured `[[2,2,2],[2,2,0]]` — and, substituting the CPU
+emulation for the primitive, `max|rule^T(t) − vjp(emul)(t)| = 0.0` at P=1,2,4,8. So the
+over-count FESOM measured on A100 is **not in the Python rule; it must be below it, in
+XLA:GPU's lowering / NCCL execution of the reverse `ragged-all-to-all`**. Consequence: on
+Santis (GH200, whatever JAX/XLA is there) the defect may or may not reproduce — that is now
+a real question. Also: the rules in 0.6.2 and 0.11.1 are identical in the `operand_t`
+branch and only API-modernised in the `output_t` branch (the plan's "byte-identical" was
+FESOM's 0.10.1-vs-0.11.1 statement). One genuine source-level defect exists but is
+irrelevant here: the `mask.at[output_offsets_].set(1)` under-counts when offsets coincide
+(zero-size chunks), corrupting only the cotangent of the constant `output` argument.
+
+**Housekeeping for the comparison stage:** `ragged_emul` does not resolve from the CLI
+cold (`get_transport` imports `transport_<name>` literally); a one-line retry with the
+`_suffix` stripped fixes it. The ragged agent drove its batteries via `tmp/run_ragged_battery.py`.
+
+**`coloured8` + `coloured2ph` done** (`transport_coloured.py`, Opus): all 12 runs ALL PASS;
+T3 and T4 exactly 0.0 everywhere. `ppermute` accepts self-pairs `(i,i)` on 0.6.2, so 1x1
+and Rx=1/Ry=1 need no local-routing branch. `prepare()` asserts every round is a partial
+permutation, the rounds cover every halo cell exactly once, and provenance composed
+through the phases equals `owner_lane()` cell for cell — four deliberate corruptions were
+all caught. Both schedules move **exactly the true halo** (ratio 1.00 at every layout, the
+floor of FESOM's 1.0–1.4×, because on a torus every colour class is a full permutation with
+uniform chunks). **Same bytes, K=8 vs K=4, and coloured2ph is faster at every layout** —
+1.92–2.16× forward and 1.47–2.14× backward on the canonical `--repeats 50` grid (at the
+default `--repeats 5` the same ratios scatter over 1.3–2.9×) — FESOM's "count the
+exchanges before you count the bytes",
+with volume held exactly equal. Backward is symmetric (inverse `collective-permute` per
+round, written by JAX). K does not collapse at 1x1: XLA keeps identity-perm permutes.
+
+Cross-transport observation: T4 is exactly 0.0 for padded/coloured/ragged_emul but
+6.8e-15 for allgather on some layouts; the three exact ones keep the interior as
+`a_flat` via `where(halo_mask, gathered, a_flat)` while allgather rebuilds it through the
+gather. Not chased.
+
+**Registry defect (three agents hit it):** `get_transport` imports `transport_<name>`
+literally, so `coloured8`, `coloured2ph`, `ragged_emul` do not resolve from the CLI cold.
+Fix: on a miss, import every sibling `transport_*.py` and retry.
+
+**GT4Py on modern JAX — diagnosed and shimmed (2026-09-09).** On jax 0.11.1 GT4Py's
+JAX-backed fields construct fine eagerly but fail under `grad`/`jit`/`scan` with
+`NotImplementedError` from `common.py:1100 _field`. Cause: gt4py registers `jnp.ndarray`
+(`is jax.Array`) with `functools.singledispatch`; on 0.11 `isinstance(tracer, jax.Array)`
+is still True but singledispatch no longer resolves tracer classes (`LinearizeTracer`, …)
+through it. Remedy, verified (eager/grad/jit values identical to 0.6.2):
+`common._field.register(jax.core.Tracer, JaxArrayField.from_array)` (+ connectivity). Applied
+as a shim in the examples; **proposed as a one-line fix in
+`gt4py/src/gt4py/next/embedded/nd_array_field.py`** — not applied to src without the owner's
+say. Venv for this: `tmp/venv-011-gt4py` (Python 3.13, jax 0.11.1, gt4py editable).
+
+**Santis environment decision:** the user can install any JAX. PyPI has linux_aarch64 CUDA
+wheels for jax 0.6.2 (cuda12, cp310–313) and 0.10.1/0.11.1 (cuda12 + cuda13, cp312+).
+Primary pin: **jax 0.11.1** (modern API, comparable to FESOM's 0.10.1/0.11.0 for the ragged
+result) with the tracer shim; fallback: 0.6.2 (laptop-proven). Both written:
+`requirements-santis.txt` and `requirements-santis-jax062.txt`.
+
+**Synthesis done** (2026-09-09). Shared-code fixes in `halo_transports.py` /
+`swm_sharded.py`, all verified:
+- **Registry:** `get_transport` falls back to importing every `transport_*.py` sibling, so
+  `coloured8`, `coloured2ph`, `ragged_emul` resolve from a cold CLI; unknown names still
+  raise a listing `KeyError`. The `sys.modules` alias hack in `transport_ragged.py` is gone.
+- **`shard_map` shim:** prefers `jax.shard_map(..., check_vma=)`, falls back to
+  `jax.experimental.shard_map`. 0.6.2 also exposes the top-level form and gives
+  bit-identical results through it, so both versions take the same path.
+- **GT4Py tracer dispatch shim:** registers `jax.core.Tracer` against
+  `JaxArrayField.from_array`, without which `gtx.as_field` raises `NotImplementedError`
+  under grad/jit/scan on jax >= 0.11. No-op on 0.6.2; nothing under `gt4py/src` touched.
+- **Wire volume:** optional `Transport.wire_cells(tables)` on all four modules;
+  `table_bytes_per_step = 3*wire_cells*8` is now the primary metric, with the true halo as
+  reference and the HLO as cross-check. Two HLO-counting defects fixed: the tuple-typed
+  `all-to-all` (undercount by P, found by the padded agent) **and** the `/*index=5*/`
+  markers XLA prints inside tuples of arity >= 6, which broke the first fix and produced a
+  whole benchmark run of silent 0-byte rows at 4x2/2x4.
+- No `JAX_PLATFORMS`/fake-device pin in the harness; device count from `jax.devices()`;
+  the `Rx*Ry <= 8` cap is gone.
+
+New files: `bench_transports.py` (+ `--table`), `santis_bench.sbatch`,
+`requirements-santis.txt`, `requirements-santis-jax062.txt`, and
+`nb05_halo_transports.ipynb` (30 cells, executed clean from a fresh kernel, 2 figures).
+Laptop grid: 6 transports x 6 layouts = 36 rows in `tmp/laptop_results.jsonl`, all ALL PASS
+except `ragged` (uncompilable on CPU). Table volume == HLO volume for
+allgather/padded/coloured at every layout; `padded` at 1x1 is 0 B in HLO because XLA
+deletes the single-device `all_to_all`; `ragged_emul`'s HLO is P x its table volume (the
+`all_gather` stand-in) and must not be quoted as `ragged`'s.
+
+**jax 0.11.1 + gt4py (`tmp/venv-011-gt4py`) runs the FULL battery ALL PASS** on 2x2 and
+4x2 for allgather/padded/coloured8/coloured2ph/ragged_emul, with T3 `max_ulp` 0.0 and T4,
+T5, T6 identical to 0.6.2 to every printed digit (`tmp/jax011_results.jsonl`).
+Exchange-only T1+T2 also pass in `.venv-jax` (0.11.1, no gt4py) via
+`tmp/exchange_only_0111.py`; `ragged` there fails with the same UNIMPLEMENTED message as on
+0.6.2. The GSPMD-automatic `jnp.roll` baseline was **not** implemented: it cannot run
+inside `shard_map` (manual axis -> a local roll communicates nothing), so it is a different
+program shape, not a fifth transport; nb03's measurement is cited in nb05 3.5 instead.
+`--distributed` was written but not exercised; see the review outcome below.
+
+## Round 3 review outcome (2026-09-09)
+
+An adversarial reviewer re-ran everything in four environments. **Verified clean:**
+correctness and adjoints (zero numeric mismatches against the committed JSONL), the
+table-derived volumes (an independent first-principles halo count agrees cell for cell,
+including 8x1/1x8 and h=2), the corrected HLO byte counter (an independently written
+tuple-aware parser agrees to the byte), both shims, and notebook reproducibility.
+Fifteen findings, all fixed:
+
+1. **`--distributed` could not have worked** — reproduced with a real 2-process job
+   (faked Slurm + gloo, CPU): the battery built inputs with `jnp.asarray` and read them
+   back with `np.asarray`, which raises on an array spanning non-addressable devices, and
+   T3 built a one-device mesh inside a multi-process program (a hang on NCCL, not an
+   error). **Ported, not guarded:** `swm_sharded.put_global`
+   (`jax.make_array_from_process_local_data`, each process contributing its own blocks) and
+   `get_global` (`multihost_utils.process_allgather`) now carry every test; references are
+   computed redundantly per process; T3 reports `skipped (multi-process)`. Tested: 2
+   processes over gloo, 1 device each at 2x1 and 2 devices each at 4x1/2x2/1x4 — all five
+   working transports ALL PASS on both processes, T4/T5 identical to single-process. The
+   summary print is now inside the `process_index == 0` guard.
+2. `CUDA_VISIBLE_DEVICES=$SLURM_LOCALID` deleted from the sbatch: wrong under `set -u`
+   when unset, pins every rank to one GPU when set, and redundant because
+   `jax.distributed.initialize()` already sets `local_device_ids=[SLURM_LOCALID]`.
+3. sbatch `set -eu` + a non-zero exit whenever `ragged` is in the set aborted the script at
+   the first `srun`; `ragged` now runs in its own `|| true` step.
+4. nb05 attributed T4's `allgather` 6.8e-15 to cotangent flow — but T4 has no `vjp` in it.
+   Corrected, with a new cell that shows the real cause: the exchange outputs are bitwise
+   equal, the model is bit-identical at 1 and 2 steps, the split appears at `n_steps >= 3`,
+   and one added `where` keeping the interior removes it. Same family as the SPMD finding.
+5. T3 was over-claimed as model reproducibility; both its sides call the same GT4Py step.
+   Reworded everywhere as a *partitioner* invariant, and the stronger statement added as a
+   real battery number: `roll_reference_forward`, a pure-`jnp.roll` model sharing no code
+   with the GT4Py path (1 ulp from it in u/v, bit-identical in p), reported by T4 as
+   `indep_max_rel_diff` — 1.45e-17 for padded/coloured8/coloured2ph/ragged_emul at every
+   layout, 6.82e-15 for allgather.
+6. `allgather.wire_cells` returns the *receive* side; its send side is `MLOC*NLOC` and
+   falls with P. Docstrings, README and nb05 now say so.
+7. `padded`'s pad factor is a function of the LAYOUT, not P: 3.60× at 8x1/1x8 (both P=8),
+   and at h=2 8x1 it moves 320 cells against allgather's 256 — worse than the whole field.
+   "Saturates just above 2" removed; the per-layout table and the h=2 crossover are in.
+8. `t7_hlo` discarded its own `MISSING-IN-GRAD` markers; they are now reported as
+   `missing_in_grad`.
+9. nb05 outputs were stale; re-executed from a clean kernel after every edit.
+10. `--table` dropped the environment, so concatenated laptop+cluster rows were
+    indistinguishable; an `env` column (jax + device kind + devices/processes) was added.
+11. `-e ../../..` in both requirements files is CWD-relative; replaced with an absolute
+    placeholder and a comment.
+12. The "verbatim" UNIMPLEMENTED message uses backticks, and the exception class is
+    `XlaRuntimeError` on 0.6.2 but `JaxRuntimeError` on 0.11.1; fixed in three places.
+13. `make_mesh` silently truncated `jax.devices()[:p]`; it now raises with a clear message,
+    and refuses a sub-global mesh in a multi-process run.
+14. Rounding drift in three quoted ranges fixed against the canonical grid: T5 8.55e-9 to
+    1.48e-8 absolute / 5.58e-12 to 9.66e-12 relative; grad/fwd 1.99 to 4.74; coloured
+    1.92–2.16× forward, 1.47–2.14× backward.
+15. Cosmetics: the duplicated heading above, the "two/three disagreements" mismatch between
+    nb05 and the README, "T4 exactly 0.0 except allgather" (allgather is also exact at 1x1
+    and 2x1), and a note that the README's verbatim block is a separate invocation from the
+    table row.
+
+Also added while fixing 14: `--repeats` on both CLIs (default 5, unchanged). The canonical
+laptop grid is now `--repeats 50`; at the old default the timing ratios were too noisy to
+quote. Correctness is bit-stable: five independent runs agreed on all 23 non-timing fields
+of all 36 rows.
+
+**Round 3 is complete.**
+
+## Open for a future round
 
 - The MPI hang (environment, not code)
 - Overlapped / non-blocking exchange schedules — the adjoint must reverse the
