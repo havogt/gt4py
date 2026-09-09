@@ -46,28 +46,22 @@ def _global_names_from_source(source: str) -> set[str]:
 
 @functools.cache
 def _global_names_of_code(code: types.CodeType) -> frozenset[str]:
-    # The toolchain collects the closure variables of one function many times over (every
-    # stage fingerprint does). The names are a property of the code object; the values are
-    # looked up on every call.
     return frozenset(_global_names_from_source(make_source_definition_from_function(code).source))
 
 
 def get_closure_vars_from_function(function: Callable) -> dict[str, Any]:
     # `inspect.getclosurevars` only sees the names of the function's own code object, which
     # misses names referenced only inside a nested scope such as a generator expression.
-    # Free variables are unaffected (they are cells of the function itself), so they are read
-    # from the cells directly and only the global names are taken from the source.
-    code = function.__code__
-    nonlocals = dict(
-        zip(code.co_freevars, (cell.cell_contents for cell in function.__closure__ or ()))
-    )
+    # Free variables are unaffected (they are cells of the function itself), so only the
+    # global names are taken from the source instead.
+    nonlocals = inspect.getclosurevars(function).nonlocals
     global_ns = function.__globals__
     builtin_ns = global_ns.get("__builtins__", builtins.__dict__)
     if inspect.ismodule(builtin_ns):
         builtin_ns = builtin_ns.__dict__
 
     closure_vars: dict[str, Any] = {}
-    for name in _global_names_of_code(code):
+    for name in _global_names_of_code(function.__code__):
         if name in global_ns:
             closure_vars[name] = global_ns[name]
         elif name in builtin_ns:
