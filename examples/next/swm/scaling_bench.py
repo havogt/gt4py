@@ -19,7 +19,9 @@
 ``--sizes`` are global square edges (strong scaling); with ``--weak`` they are the
 per-device block edge, ``M = s*Rx``, ``N = s*Ry``. Modes: ``fwd`` is the jitted sharded
 forward, ``grad`` the ``jax.grad`` of ``cost`` through the same program, ``ref`` the
-single-device ``reference_program`` (1x1 only) and its gradient ``ref_grad``.
+single-device ``reference_program`` (1x1 only) and its gradient ``ref_grad``;
+``exch``/``exch_grad`` time one ``exchange_program`` call and its VJP, per call rather than
+per step (``--steps`` is irrelevant and the row reports ``n_steps`` 1).
 
 Sizes are processed ascending; after an out-of-memory failure the larger sizes of that
 (layout, transport, mode) are skipped. ``--distributed`` as in ``bench_transports.py``.
@@ -33,6 +35,7 @@ import json
 import time
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 
 from bench_transports import _environment, _init_distributed
@@ -43,21 +46,32 @@ from swm_sharded import (
     cost,
     dx,
     dy,
+    exchange_program,
     put_global,
     radius,
     reference_program,
     sharded_program,
 )
 
-MODES = ("fwd", "grad", "ref", "ref_grad")
+MODES = ("fwd", "grad", "ref", "ref_grad", "exch", "exch_grad")
 
 
 def _grad_of(program):
     return jax.jit(jax.grad(lambda *f: cost(program(*f)), argnums=(0, 1, 2)))
 
 
+def _exchange_case(transport, layout, mode):
+    L = layout
+    exch = exchange_program(transport, L)
+    x = np.random.default_rng(0).standard_normal((L.P * L.local_shape[0], L.local_shape[1]))
+    prog = jax.jit(jax.grad(lambda a: jnp.sum(exch(a) ** 2))) if mode.endswith("grad") else exch
+    return prog, (put_global(x, L),)
+
+
 def _case(transport, layout, mode, n_steps):
     """``(jitted fn, device args)`` for one measurement."""
+    if mode.startswith("exch"):
+        return _exchange_case(transport, layout, mode)
     fields = initialize_interior(np, layout.M, layout.N, dx, dy, radius)
     if mode.startswith("ref"):
         prog = reference_program(n_steps, layout.M, layout.N)
@@ -134,6 +148,7 @@ def run(sizes, layout_specs, transports, modes, n_steps, repeats, weak, out_path
     oom = set()
     rows = []
     for size, spec, layout, transport, mode in _cases(sizes, layout_specs, transports, modes, weak):
+        steps = 1 if mode.startswith("exch") else n_steps
         row = {
             "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
             **env,
@@ -147,7 +162,7 @@ def run(sizes, layout_specs, transports, modes, n_steps, repeats, weak, out_path
             "NLOC": layout.NLOC,
             "transport": transport,
             "mode": mode,
-            "n_steps": n_steps,
+            "n_steps": steps,
             "repeats": repeats,
         }
         key = (spec, transport, mode)
@@ -156,7 +171,7 @@ def run(sizes, layout_specs, transports, modes, n_steps, repeats, weak, out_path
             row["status"] = "skipped"
         else:
             tr = get_transport(transport) if sharded else None
-            row.update(measure(tr, layout, mode, n_steps, repeats))
+            row.update(measure(tr, layout, mode, steps, repeats))
             if row["status"] == "oom":
                 oom.add(key)
         rows.append(row)
