@@ -72,12 +72,12 @@ def _time(fn, args, repeats):
     t0 = time.perf_counter()
     jax.block_until_ready(fn(*args))
     compile_s = time.perf_counter() - t0
-    best = float("inf")
+    samples = []
     for _ in range(repeats):
         t0 = time.perf_counter()
         jax.block_until_ready(fn(*args))
-        best = min(best, time.perf_counter() - t0)
-    return compile_s, best
+        samples.append(time.perf_counter() - t0)
+    return compile_s, samples
 
 
 def _peak_mem():
@@ -89,16 +89,18 @@ def _peak_mem():
 def measure(transport, layout, mode, n_steps, repeats):
     try:
         fn, args = _case(transport, layout, mode, n_steps)
-        compile_s, best = _time(fn, args, repeats)
+        compile_s, samples = _time(fn, args, repeats)
     except Exception as e:  # noqa: BLE001 - only OOM is recoverable
         if "RESOURCE_EXHAUSTED" not in str(e):
             raise
         return {"status": "oom"}
     cells = layout.M * layout.N
+    best = min(samples)
     return {
         "status": "ok",
         "compile_s": compile_s,
         "per_step_ms": 1e3 * best / n_steps,
+        "samples_step_ms": [1e3 * t / n_steps for t in samples],
         "cells": cells,
         "cell_updates_per_s": cells * n_steps / best,
         "peak_mem_cumulative_bytes": _peak_mem(),
