@@ -95,12 +95,12 @@ def test_source_is_analyzed_once_per_code_object(monkeypatch):
         "make_source_definition_from_function",
         lambda f: calls.append(f) or read_source(f),
     )
-    source_utils._GLOBAL_NAMES_BY_CODE.pop(_module_level_operator.__code__, None)
+    source_utils._global_names_of_code.cache_clear()
 
     get_closure_vars_from_function(_module_level_operator)
     get_closure_vars_from_function(_module_level_operator)
 
-    assert calls == [_module_level_operator]
+    assert calls == [_module_level_operator.__code__]
 
 
 def test_values_are_looked_up_on_every_call(monkeypatch):

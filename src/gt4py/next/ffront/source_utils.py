@@ -15,17 +15,12 @@ import pathlib
 import symtable
 import textwrap
 import types
-import weakref
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import Any, cast
 
 
 MISSING_FILENAME = "<string>"
-
-_GLOBAL_NAMES_BY_CODE: weakref.WeakKeyDictionary[types.CodeType, frozenset[str]] = (
-    weakref.WeakKeyDictionary()
-)
 
 
 def _global_names_from_source(source: str) -> set[str]:
@@ -49,15 +44,12 @@ def _global_names_from_source(source: str) -> set[str]:
     return set(walk(symtable.symtable(source, MISSING_FILENAME, "exec")))
 
 
-def _global_names_of_function(function: Callable) -> frozenset[str]:
-    # The names are a property of the code object and the toolchain collects the closure
-    # variables of one function many times over (every stage fingerprint does), so the
-    # source analysis is done once per code object. Values are looked up on every call.
-    code = function.__code__
-    if (names := _GLOBAL_NAMES_BY_CODE.get(code)) is None:
-        source = make_source_definition_from_function(function).source
-        names = _GLOBAL_NAMES_BY_CODE[code] = frozenset(_global_names_from_source(source))
-    return names
+@functools.cache
+def _global_names_of_code(code: types.CodeType) -> frozenset[str]:
+    # The toolchain collects the closure variables of one function many times over (every
+    # stage fingerprint does). The names are a property of the code object; the values are
+    # looked up on every call.
+    return frozenset(_global_names_from_source(make_source_definition_from_function(code).source))
 
 
 def get_closure_vars_from_function(function: Callable) -> dict[str, Any]:
@@ -75,7 +67,7 @@ def get_closure_vars_from_function(function: Callable) -> dict[str, Any]:
         builtin_ns = builtin_ns.__dict__
 
     closure_vars: dict[str, Any] = {}
-    for name in _global_names_of_function(function):
+    for name in _global_names_of_code(code):
         if name in global_ns:
             closure_vars[name] = global_ns[name]
         elif name in builtin_ns:
@@ -85,7 +77,7 @@ def get_closure_vars_from_function(function: Callable) -> dict[str, Any]:
     return dict(sorted({**closure_vars, **nonlocals}.items()))
 
 
-def make_source_definition_from_function(func: Callable) -> SourceDefinition:
+def make_source_definition_from_function(func: Callable | types.CodeType) -> SourceDefinition:
     try:
         filename = str(pathlib.Path(inspect.getabsfile(func)).resolve())
         if not filename:
