@@ -1,20 +1,11 @@
-# FALLBACK environment: the laptop-proven pin, in case 0.11.1 misbehaves on Santis.
+# FALLBACK environment for the transport benchmark on CSCS Alps / Santis (GH200, aarch64).
+# Two pin files: this is the laptop-proven jax 0.6.2 pin, in case 0.11.1
+# (requirements-santis.txt) misbehaves on Santis.
 #
-# Python 3.10-3.13. jax 0.6.2 publishes manylinux2014_aarch64 wheels for cp310-cp313;
-# on aarch64 only the CUDA 12 plugin exists at this version.
+# Python 3.10-3.13 (jax 0.6.2 wheels: cp310-cp313; on aarch64 only the CUDA 12 plugin exists).
 #
-#   uv venv --python 3.12 venv-santis-062
-#   uv pip install --python venv-santis-062 -r requirements-santis-jax062.txt
-#
-# This is the version every number in README_transports.md was measured with. Both shims
-# in halo_transports.py are no-ops here (0.6.2 already exposes jax.shard_map with the new
-# keyword names, and its singledispatch resolves tracers).
+#   uv pip install -r requirements-santis-jax062.txt
+#   uv pip install -e /abs/path/to/gt4py
 
 jax[cuda12]==0.6.2
-# Alternative against a uenv CUDA:
-#   jax[cuda12-local]==0.6.2
 numpy
-matplotlib
-# gt4py itself, editable from the repo root. `-e` paths are resolved relative to the
-# CURRENT WORKING DIRECTORY, not to this file, so give an absolute path:
--e /path/to/gt4py

@@ -1,28 +1,11 @@
 # PRIMARY environment for the transport benchmark on CSCS Alps / Santis (GH200, aarch64).
+# Two pin files: this is the jax 0.11.1 pin; requirements-santis-jax062.txt is the laptop-
+# proven fallback if 0.11.1 misbehaves on Santis.
 #
-# Python 3.12 or 3.13. jaxlib / jax-cuda12-plugin 0.11.1 publish manylinux_2_27_aarch64
-# wheels for cp312-cp315.
+# Python 3.12 or 3.13 (jaxlib / jax-cuda12-plugin 0.11.1 publish cp312-cp313 wheels).
 #
-#   uv venv --python 3.13 venv-santis
-#   uv pip install --python venv-santis -r requirements-santis.txt
-#
-# jax >= 0.11 needs BOTH shims the harness applies at import of halo_transports.py:
-#   * shard_map: jax.experimental.shard_map is an empty module on 0.11; the API is
-#     jax.shard_map(..., check_vma=).
-#   * gt4py field construction under grad/jit/scan: singledispatch no longer resolves JAX
-#     tracers through jax.Array, so jax.core.Tracer is registered explicitly.
-# Verified: full battery (T0-T8) ALL PASS on jax 0.11.1 + gt4py on CPU, 8 fake devices.
-#
-# FESOM2-JAX recorded jax 0.10.1 and also ran on 0.11.0, so this pin is the one directly
-# comparable to their ragged_all_to_all result.
+#   uv pip install -r requirements-santis.txt
+#   uv pip install -e /abs/path/to/gt4py
 
 jax[cuda12]==0.11.1
-# Alternative for a uenv that already provides CUDA (no bundled wheels):
-#   jax[cuda12-local]==0.11.1
-# With an NVIDIA driver >= 580 the CUDA 13 build also has aarch64 wheels:
-#   jax[cuda13]==0.11.1
 numpy
-matplotlib
-# gt4py itself, editable from the repo root. `-e` paths are resolved relative to the
-# CURRENT WORKING DIRECTORY, not to this file, so give an absolute path:
--e /path/to/gt4py

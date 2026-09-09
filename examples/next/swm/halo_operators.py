@@ -8,9 +8,7 @@
 
 """Halo exchange and its adjoint, written in the GT4Py field view.
 
-Support module for `nb01_halo_exchange_adjoint.ipynb`. The two deliberately
-broken adjoints are teaching material, not dead code -- the notebook runs the
-dot-product test against them to show what each mistake costs.
+The two deliberately broken adjoints are there to be measured against the correct one.
 """
 
 from gt4py import next as gtx
@@ -28,11 +26,8 @@ def halo_domain(M: int, N: int) -> gtx.Domain:
 
 
 def halo_exchange(f: IJField, M: int, N: int) -> IJField:
-    """Overwrite the halo of `f` from its interior, periodically.
-
-    Maps halo domain to halo domain, which is what a distributed halo update
-    does: whatever was in the halo before is discarded.
-    """
+    """Halo domain to halo domain, like a distributed halo update: whatever was in the
+    halo before is discarded."""
     return make_periodic(f[interior_domain(M, N)], M, N)
 
 
@@ -44,7 +39,7 @@ def halo_exchange_adjoint(g: IJField, M: gtx.int32, N: gtx.int32) -> IJField:
     owner, and each halo line is zeroed once its contribution has been
     collected.
     """
-    zero = 0.0 * g
+    zero = 0.0 * g  # concat_where needs a field, not a scalar
     # reverse of  concat_where(J == N, f(J - N), f)
     g = concat_where(J == 0, g + g(J + N), g)
     g = concat_where(J == N, zero, g)
@@ -86,9 +81,7 @@ def halo_exchange_adjoint_no_zeroing(g: IJField, M: gtx.int32, N: gtx.int32) -> 
 
 
 @gtx.field_operator
-def periodic_1d(
-    f: gtx.Field[gtx.Dims[I], dtype], M: gtx.int32
-) -> gtx.Field[gtx.Dims[I], dtype]:
+def periodic_1d(f: gtx.Field[gtx.Dims[I], dtype], M: gtx.int32) -> gtx.Field[gtx.Dims[I], dtype]:
     """One-dimensional periodic halo fill, interior domain to halo domain."""
     f = concat_where(I == -1, f(I + M), f)
     f = concat_where(I == M, f(I - M), f)

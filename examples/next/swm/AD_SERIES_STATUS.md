@@ -55,18 +55,26 @@ In `gt4py/examples/next/swm/` on branch `ad_halo`:
 | `nb03_jax_distributed_arrays.ipynb` | 41 (20 code) | 1 | **`.venv-jax`** |
 | `nb04_halo_exchange_patterns_2d.ipynb` | 54 (24 code) | 2 | gt4py venv |
 
-Plus modules and the round-2 GHEX code:
+| `nb05_halo_transports.ipynb` | 32 | — | gt4py venv |
 
-- `adjoint_operators.py` — `halo_exchange`, its DSL adjoint, the two broken
-  variants, `periodic_1d`
+Plus modules (file layout after the 2026-09-09 readability pass):
+
+- `halo_operators.py` (was `adjoint_operators.py`) — `halo_exchange`, its DSL adjoint,
+  the two broken variants, `periodic_1d`, the two domain constructors
 - `mpi_halo_exchange.py` — standalone mpi4py + `custom_vjp` script with a
-  distributed dot-product test. Passes on 2 and 4 real ranks with `HWLOC_COMPONENTS=-gl`.
+  distributed dot-product test (halo→halo convention, `jax.vjp`). Passes on 2 and 4 ranks.
 - `halo_lib.py` — nb04's illustrative emulated-rank exchange library
-- `swm_ghex.py`, `README_ghex.md` — GHEX-distributed SWM, forward, 1-D ring (round 2)
-- `swm_ghex_2d.py` — the same on an Rx x Ry decomposition, forward (round 2b)
-- `swm_ghex_ad.py` — its backward pass; completed before the forward-only cut, not built on
+- `swm_ghex.py` — GHEX pieces shared by the three GHEX scripts (`make_exchange` factory,
+  model, references, `gather_to_root`, `report`) plus the 1-D ring `main`;
+  `swm_ghex_2d.py` (Rx x Ry, forward), `swm_ghex_ad.py` (1-D, backward); `README_ghex.md`
+- Round 3: `halo_transports.py` (Layout incl. `halo_mask`/`halo_chunks`, Transport
+  protocol, registry), `jax_compat.py` (shard_map shim, explicit
+  `patch_gt4py_tracer_dispatch()`), `hlo_accounting.py`, `transport_*.py` (4),
+  `swm_sharded.py` (model + references only), `swm_battery.py` (T0–T8 + CLI),
+  `bench_transports.py`, `santis_bench.sbatch`, `requirements-santis*.txt`,
+  `README_transports.md`
 
-**12 files untracked on `ad_halo`; nothing committed.**
+Everything is committed on `ad_halo` except the readability pass (uncommitted, see log).
 
 Reading order is nb00 → nb01 → nb02 → nb04, with nb03 as a companion to nb02.
 
@@ -598,9 +606,13 @@ JAX-backed fields construct fine eagerly but fail under `grad`/`jit`/`scan` with
 is still True but singledispatch no longer resolves tracer classes (`LinearizeTracer`, …)
 through it. Remedy, verified (eager/grad/jit values identical to 0.6.2):
 `common._field.register(jax.core.Tracer, JaxArrayField.from_array)` (+ connectivity). Applied
-as a shim in the examples; **proposed as a one-line fix in
-`gt4py/src/gt4py/next/embedded/nd_array_field.py`** — not applied to src without the owner's
-say. Venv for this: `tmp/venv-011-gt4py` (Python 3.13, jax 0.11.1, gt4py editable).
+as a shim in the examples; **fixed upstream in draft PR
+[GridTools/gt4py#2867](https://github.com/GridTools/gt4py/pull/2867)** (branch
+`fix-jax-tracer-dispatch`, worktree `gt4py/.worktrees/fix-jax-tracer-dispatch`, off
+`upstream/main`; two-line registration in `nd_array_field.py` + regression test
+`test_jax_traced_array_dispatch`, which fails on `main` with the locked jax 0.11.0 and passes
+with the fix). The shim in `halo_transports.py` reports `"not needed"` once the PR is in.
+Venv for this: `tmp/venv-011-gt4py` (Python 3.13, jax 0.11.1, gt4py editable).
 
 **Santis environment decision:** the user can install any JAX. PyPI has linux_aarch64 CUDA
 wheels for jax 0.6.2 (cuda12, cp310–313) and 0.10.1/0.11.1 (cuda12 + cuda13, cp312+).
@@ -619,7 +631,7 @@ result) with the tracer shim; fallback: 0.6.2 (laptop-proven). Both written:
 - **GT4Py tracer dispatch shim:** registers `jax.core.Tracer` against
   `JaxArrayField.from_array`, without which `gtx.as_field` raises `NotImplementedError`
   under grad/jit/scan on jax >= 0.11. No-op on 0.6.2; nothing under `gt4py/src` touched.
-- **Wire volume:** optional `Transport.wire_cells(tables)` on all four modules;
+- **Wire volume:** `Transport.wire_cells(tables)` (optional then, required since the readability pass) on all four modules;
   `table_bytes_per_step = 3*wire_cells*8` is now the primary metric, with the true halo as
   reference and the HLO as cross-check. Two HLO-counting defects fixed: the tuple-typed
   `all-to-all` (undercount by P, found by the padded agent) **and** the `/*index=5*/`
@@ -725,8 +737,46 @@ of all 36 rows.
 - Folding the existing Taylor-test / 4D-Var / hybrid-NN material into a numbered
   tutorial series alongside nb01/nb02
 
+## Round 4: readability pass (2026-09-09, uncommitted)
+
+Three independent reviewers (readability-only brief) produced 142 findings on the new
+`.py`/`.md`/sbatch/requirements files; all applied by four agents, gated by re-running
+everything. Structural changes: `halo_transports.py` split into `halo_transports.py` /
+`jax_compat.py` / `hlo_accounting.py` (tracer shim is now an explicit call, no import-order
+contract); shared rim geometry moved into `Layout.halo_mask()` / `halo_chunks()` with one
+pair convention and one table vocabulary (`send_idx`, `recv_pos`, `halo_mask`);
+`swm_sharded.py` split into model (`swm_sharded.py`) and battery (`swm_battery.py`, owns
+the CLI; T3 = T4 on a 1x1 layout); `swm_ghex.py` made side-effect free with a
+`make_exchange(comm, global_shape, interior, halo, bwd=None)` factory that the 2-D and AD
+scripts import (2-D script 193 → 79 lines); `adjoint_operators.py` → `halo_operators.py`;
+comment/docstring policy applied throughout; `ruff format` clean (the repo's format hook
+has no `examples/` exclusion). Full reviewer lists: `<project>/tmp/review_readability/`.
+
+Two substantive findings surfaced by the pass:
+- The `where(pad_valid, ...)` mask in the padded transport is **not** load-bearing for the
+  transpose in this implementation (forward and gradient bit-identical without it, because
+  the receive side never reads pad slots). Removed; README/nb05 corrected. FESOM's
+  statement applies to their receive-side summation, not to a gather.
+- `mpi_halo_exchange.py` never exercised its `custom_vjp` (called `_bwd` directly); now
+  uses `jax.vjp`. Also needed an `np.array` copy of `pure_callback` inputs (mpi4py cannot
+  map the `'=d'` buffer format).
+
+Verification after the pass: battery ALL PASS for allgather/padded/coloured8/coloured2ph/
+ragged_emul on 2x4 and 2x2 (jax 0.6.2), padded/coloured8/allgather on 2x4 (jax 0.11.1,
+identical numbers); ragged still `UNIMPLEMENTED` on XLA:CPU; T7 volumes equal the
+pre-refactor `laptop_results.jsonl` rows (keys unchanged, file not regenerated);
+two-process gloo run PASS; all four MPI programs PASS on 4 ranks with numbers identical to
+before; `halo_lib` exchange matrices byte-identical; nb01/nb02/nb04/nb05 re-executed
+without errors. Known cosmetic change: nb04's degenerate thin-ring scratch-trick example
+now reports dot-product error 1e-1 instead of 3.8 (both wrong by design; slice mirroring
+is by name now instead of by value).
+
 ## Log
 
+- **2026-09-09** — Readability pass over all round-1..3 code (see Round 4 above).
+- **2026-09-09** — Opened draft PR GridTools/gt4py#2867: register `jax.core.Tracer` for
+  `common._field`/`_connectivity` (jax >= 0.11 `ArrayMeta` breaks singledispatch on
+  tracers); regression test added; verified fail-before/pass-after on jax 0.11.0.
 - **2026-08-20** — Cloned `havogt/gt4py` and `havogt/SWM`. Surveyed the four
   `swm_2026_*` branches. Created branch `ad_halo` off `swm_2026_halo_update`. Wrote
   `PLAN.md` and this file.

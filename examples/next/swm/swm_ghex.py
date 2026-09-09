@@ -14,19 +14,17 @@
 ``HWLOC_COMPONENTS=-gl`` is needed for every hydra launch on this machine, ``-n 1``
 included (see README_ghex.md).
 
-1-D ring decomposition along ``I``: rank r owns global rows
-``[r*MLOC, (r+1)*MLOC)`` and all ``N`` columns. Periodicity in ``I`` is a GHEX
-halo exchange (width 1 in ``I``, 0 in ``J``); periodicity in ``J`` is applied
-locally by ``periodic_j``. The local state lives on the halo domain
-``{I: (-1, MLOC+1), J: (-1, N+1)}`` as JAX-backed gt4py fields.
+1-D ring decomposition along ``I``: rank r owns global rows ``[r*MLOC, (r+1)*MLOC)``
+and all ``N`` columns. Periodicity in ``I`` is a GHEX halo exchange (width 1 in ``I``,
+0 in ``J``); periodicity in ``J`` is applied locally by ``periodic_j``. The local state
+lives on the halo domain ``{I: (-1, MLOC+1), J: (-1, N+1)}`` as JAX-backed gt4py fields.
 
-``ghex_exchange`` is a ``jax.custom_vjp`` around ``jax.pure_callback`` so JAX
-treats it as a pure function; the backward rule is not implemented yet.
+``make_exchange`` wraps the GHEX exchange in ``jax.custom_vjp`` around
+``jax.pure_callback`` so JAX treats it as a pure function.
 
-``operators.timestep`` calls ``make_periodic`` on its outputs, which for
-``M = MLOC`` writes *locally* periodic ``I`` halos. Those rows are wrong for
-R > 1 but are never read: every step begins by overwriting them with the
-exchange.
+``operators.timestep`` calls ``make_periodic`` on its outputs, which for ``M = MLOC``
+writes *locally* periodic ``I`` halos. Those rows are wrong for R > 1 but are never
+read: every step begins by overwriting them with the exchange.
 """
 
 import sys
@@ -34,10 +32,6 @@ import sys
 import jax
 import jax.numpy as jnp
 import numpy as np
-from mpi4py import MPI
-
-jax.config.update("jax_enable_x64", True)
-
 from ghex.context import make_context
 from ghex.structured.cartesian_sets import UnitRange
 from ghex.structured.regular import (
@@ -48,14 +42,20 @@ from ghex.structured.regular import (
     make_pattern,
 )
 from ghex.util import Architecture
+from mpi4py import MPI
 
 from gt4py import next as gtx
 from gt4py.next.experimental import concat_where
 
+from halo_operators import halo_domain, halo_exchange, interior_domain
 from initial_conditions import initialize_interior
-from operators import I, J, IJField, make_periodic
+from operators import IJField, J
 from operators import timestep as gtx_timestep
 
+jax.config.update("jax_enable_x64", True)
+
+# The field-operator wrapper dispatches to a backend and cannot be traced; its Python
+# definition runs the stencils eagerly on the JAX-backed fields, which JAX can see through.
 timestep = gtx_timestep.definition
 
 M = N = 16
@@ -63,19 +63,8 @@ dx = dy = 100000.0
 dt, radius, alpha = 90.0, 1000000.0, 0.001
 N_STEPS = 10
 
-COMM = MPI.COMM_WORLD
-RANK, SIZE = COMM.Get_rank(), COMM.Get_size()
-if M % SIZE:
-    raise SystemExit(f"M={M} is not divisible by {SIZE} ranks")
-MLOC = M // SIZE
-I0 = RANK * MLOC
 
-DOM_L_HALO = gtx.domain({I: (-1, MLOC + 1), J: (-1, N + 1)})
-DOM_L_INT = gtx.domain({I: (0, MLOC), J: (0, N)})
-DOM_G_INT = gtx.domain({I: (0, M), J: (0, N)})
-
-
-def fld(domain, array):
+def jax_field(domain, array):
     return gtx.as_field(domain, jnp.asarray(array, dtype=jnp.float64), allocator=jnp)
 
 
@@ -86,89 +75,115 @@ def periodic_j(f: IJField, N: gtx.int32) -> IJField:
     return f
 
 
-# --- GHEX setup: the exchanged array is the full local halo array (MLOC+2, N+2);
-# the J halo columns ride along as ordinary columns of an M x (N+2) global grid.
-_ctx = make_context(COMM, False)
-_owned = UnitRange(I0, I0 + MLOC) * UnitRange(0, N + 2)
-_domain = DomainDescriptor(_ctx.rank(), _owned)
-_halo_gen = HaloGenerator(UnitRange(0, M) * UnitRange(0, N + 2), ((1, 1), (0, 0)), (True, False))
-_pattern = make_pattern(_ctx, _halo_gen, [_domain])
-_co = make_communication_object(_ctx)
-_buf = np.empty((MLOC + 2, N + 2), dtype=np.float64)
-_fdesc = make_field_descriptor(_domain, _buf, (1, 0), _buf.shape, arch=Architecture.CPU)
+def make_exchange(comm, global_shape, interior, halo, bwd=None):
+    """GHEX halo exchange of this rank's block as a ``jax.custom_vjp`` function.
+
+    ``interior`` is the block's ``((i_lo, i_hi), (j_lo, j_hi))`` in the periodic
+    ``global_shape`` grid; the exchanged array is the block padded by ``halo`` cells per
+    dimension. ``bwd(exchange_np, g)`` is the NumPy backward rule; it receives the raw
+    GHEX exchange so it can reuse the forward pattern.
+    """
+    ctx = make_context(comm, False)
+    domain = DomainDescriptor(ctx.rank(), UnitRange(*interior[0]) * UnitRange(*interior[1]))
+    halo_gen = HaloGenerator(
+        UnitRange(0, global_shape[0]) * UnitRange(0, global_shape[1]),
+        tuple((h, h) for h in halo),
+        tuple(h > 0 for h in halo),
+    )
+    pattern = make_pattern(ctx, halo_gen, [domain])
+    co = make_communication_object(ctx)
+    buf = np.empty(tuple(hi - lo + 2 * h for (lo, hi), h in zip(interior, halo)))
+    fdesc = make_field_descriptor(domain, buf, halo, buf.shape, arch=Architecture.CPU)
+
+    def exchange_np(a):
+        np.copyto(buf, a)
+        co.exchange([pattern(fdesc)]).wait()
+        return buf.copy()
+
+    @jax.custom_vjp
+    def exchange(a):
+        return jax.pure_callback(exchange_np, jax.ShapeDtypeStruct(a.shape, a.dtype), a)
+
+    def fwd(a):
+        return exchange(a), None
+
+    def bwd_rule(_, g):
+        if bwd is None:
+            raise NotImplementedError("adjoint of the GHEX exchange")
+        out = jax.ShapeDtypeStruct(g.shape, g.dtype)
+        return (jax.pure_callback(lambda g: bwd(exchange_np, g), out, g),)
+
+    exchange.defvjp(fwd, bwd_rule)
+    return exchange
 
 
-def _exchange_impl(a):
-    np.copyto(_buf, a)
-    _co.exchange([_pattern(_fdesc)]).wait()
-    return _buf.copy()
-
-
-@jax.custom_vjp
-def ghex_exchange(a):
-    if a.shape != _buf.shape or a.dtype != _buf.dtype:
-        raise ValueError(f"ghex_exchange expects {_buf.shape} {_buf.dtype}, got {a.shape} {a.dtype}")
-    return jax.pure_callback(_exchange_impl, jax.ShapeDtypeStruct(a.shape, a.dtype), a)
-
-
-def _fwd(a):
-    return ghex_exchange(a), None
-
-
-def _bwd(_, g):
-    raise NotImplementedError("adjoint of ghex_exchange")
-
-
-ghex_exchange.defvjp(_fwd, _bwd)
-
-
-def refresh_halos(f):
-    return periodic_j(fld(DOM_L_HALO, ghex_exchange(f.ndarray)), N)
-
-
-def run_forward(u0, v0, p0, n_steps):
-    """u0, v0, p0: this rank's interior blocks (MLOC, N). Returns fields on DOM_L_HALO."""
-    u, v, p = (refresh_halos(fld(DOM_L_HALO, jnp.pad(a, 1))) for a in (u0, v0, p0))
-    state = timestep(u, v, p, dx, dy, dt, u, v, p, 0.0, MLOC, N)
+def run_forward(refresh_halos, u0, v0, p0, n_steps):
+    """u0, v0, p0: interior blocks. refresh_halos maps a halo-domain field to itself.
+    Returns fields on the halo domain."""
+    mloc, nloc = u0.shape
+    dom = halo_domain(mloc, nloc)
+    u, v, p = (refresh_halos(jax_field(dom, jnp.pad(a, 1))) for a in (u0, v0, p0))
+    state = timestep(u, v, p, dx, dy, dt, u, v, p, 0.0, mloc, nloc)
     for _ in range(n_steps - 1):
         u, v, p, uo, vo, po = state
         u, v, p = (refresh_halos(f) for f in (u, v, p))
-        state = timestep(u, v, p, dx, dy, 2.0 * dt, uo, vo, po, alpha, MLOC, N)
+        state = timestep(u, v, p, dx, dy, 2.0 * dt, uo, vo, po, alpha, mloc, nloc)
     return state[0], state[1], state[2]
 
 
 def run_forward_reference(u0, v0, p0, n_steps):
-    """nb01 forward model on the full global domain, single process."""
-    u, v, p = (make_periodic(fld(DOM_G_INT, a), M, N) for a in (u0, v0, p0))
-    state = timestep(u, v, p, dx, dy, dt, u, v, p, 0.0, M, N)
-    for _ in range(n_steps - 1):
-        u, v, p, uo, vo, po = state
-        state = timestep(u, v, p, dx, dy, 2.0 * dt, uo, vo, po, alpha, M, N)
-    return state[0], state[1], state[2]
+    """The whole domain in one process; the halo refresh is the local periodic copy."""
+    return run_forward(lambda f: halo_exchange(f, M, N), u0, v0, p0, n_steps)
 
 
-def gather_to_root(f):
-    """Interior of a DOM_L_HALO field -> global (M, N) numpy array on rank 0, None elsewhere."""
-    blocks = COMM.gather(np.asarray(f[DOM_L_INT].ndarray), root=0)
-    return np.concatenate(blocks, axis=0) if RANK == 0 else None
+def gather_to_root(comm, block, ry=1):
+    """Interior blocks, rank r at (r // ry, r % ry) -> global (M, N) array on rank 0, None elsewhere."""
+    blocks = comm.gather(np.asarray(block), root=0)
+    if comm.Get_rank() != 0:
+        return None
+    mloc, nloc = block.shape
+    out = np.empty((M, N))
+    for r, b in enumerate(blocks):
+        bx, by = divmod(r, ry)
+        out[bx * mloc : (bx + 1) * mloc, by * nloc : (by + 1) * nloc] = b
+    return out
+
+
+def report(layout, gathered, u_g, v_g, p_g):
+    ref = run_forward_reference(u_g, v_g, p_g, N_STEPS)
+    worst = 0.0
+    for name, got, r in zip("uvp", gathered, ref):
+        diff = float(np.max(np.abs(got - np.asarray(r[interior_domain(M, N)].ndarray))))
+        worst = max(worst, diff)
+        print(f"{name}: max |ghex - reference| = {diff:.3e}")
+    print(
+        f"{layout}, M={M} N={N}, {N_STEPS} steps: "
+        f"max abs diff {worst:.3e} -> {'PASS' if worst < 1e-9 else 'FAIL'}"
+    )
+    sys.stdout.flush()
 
 
 def main():
-    u_g, v_g, p_g = initialize_interior(np, M, N, dx, dy, radius)
-    loc = slice(I0, I0 + MLOC)
-    u, v, p = run_forward(u_g[loc], v_g[loc], p_g[loc], N_STEPS)
-    gathered = [gather_to_root(f) for f in (u, v, p)]
+    comm = MPI.COMM_WORLD
+    rank, size = comm.Get_rank(), comm.Get_size()
+    if M % size:
+        raise SystemExit(f"M={M} is not divisible by {size} ranks")
+    MLOC = M // size
+    I0 = rank * MLOC
 
-    if RANK == 0:
-        ref = run_forward_reference(u_g, v_g, p_g, N_STEPS)
-        worst = 0.0
-        for name, got, r in zip("uvp", gathered, ref):
-            diff = float(np.max(np.abs(got - np.asarray(r[DOM_G_INT].ndarray))))
-            worst = max(worst, diff)
-            print(f"{name}: max |ghex - reference| = {diff:.3e}")
-        print(f"ranks {SIZE}, M={M} N={N} MLOC={MLOC}, {N_STEPS} steps: "
-              f"max abs diff {worst:.3e} -> {'PASS' if worst < 1e-9 else 'FAIL'}")
-        sys.stdout.flush()
+    # The J halo columns ride along as ordinary columns of an M x (N+2) global grid.
+    exchange = make_exchange(comm, (M, N + 2), ((I0, I0 + MLOC), (0, N + 2)), (1, 0))
+    dom = halo_domain(MLOC, N)
+
+    def refresh_halos(f):
+        return periodic_j(jax_field(dom, exchange(f.ndarray)), N)
+
+    u_g, v_g, p_g = initialize_interior(np, M, N, dx, dy, radius)
+    rows = slice(I0, I0 + MLOC)
+    u, v, p = run_forward(refresh_halos, u_g[rows], v_g[rows], p_g[rows], N_STEPS)
+    gathered = [gather_to_root(comm, f[interior_domain(MLOC, N)].ndarray) for f in (u, v, p)]
+    if rank == 0:
+        report(f"ranks {size}, MLOC={MLOC}", gathered, u_g, v_g, p_g)
 
 
 if __name__ == "__main__":

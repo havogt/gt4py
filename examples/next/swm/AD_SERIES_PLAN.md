@@ -46,7 +46,7 @@ Notebooks land in `gt4py/examples/next/swm/`, next to the existing
   plan, on request: analytical -> finite differences -> Jacobians -> chain rule -> AD)
 - `nb01_halo_exchange_adjoint.ipynb` — the core teaching notebook
 - `nb02_distributed_ad.ipynb` — the two multi-rank routes
-- `adjoint_operators.py` — hand-written DSL adjoint of `make_periodic`, imported by both
+- `halo_operators.py` — hand-written DSL adjoint of `make_periodic`, imported by both
 - `mpi_halo_exchange.py` — mpi4py + `custom_vjp` script
 
 Existing notebooks (`example_4dvar.ipynb`, `operators.ipynb`) stay untouched this

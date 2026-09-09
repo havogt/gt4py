@@ -8,19 +8,12 @@
 
 """Reverse-mode AD of the GHEX-distributed shallow water model.
 
-    mpirun -n R python swm_ghex_ad.py        # R must divide M, MLOC >= 2
+    HWLOC_COMPONENTS=-gl mpirun -n R python swm_ghex_ad.py    # R must divide M, MLOC >= 2
 
-Installs the backward rule of ``swm_ghex.ghex_exchange``. On the 1-D ring the
-adjoint of the exchange reuses the *forward* GHEX pattern on a scratch buffer:
-the halo cotangents are placed in the two boundary interior rows, exchanged,
-and the halo rows that come back are accumulated into the owning interior
-rows. The incoming halo cotangent itself is dropped, since the forward
-exchange overwrote the halo.
-
-Checks, in order: a distributed dot-product test of the exchange alone; the
-gradient of ``J = sum over ranks of sum_interior p(N_STEPS)**2`` against
-``jax.grad`` of the single-process reference model; a distributed Taylor test
-on ``J``.
+The 1-D ring of ``swm_ghex.py`` with a backward rule for the exchange. Checks, in
+order: a distributed dot-product test of the exchange alone; the gradient of
+``J = sum over ranks of sum_interior p(N_STEPS)**2`` against ``jax.grad`` of the
+single-process reference; a distributed Taylor test on ``J``.
 """
 
 import sys
@@ -30,22 +23,16 @@ import jax.numpy as jnp
 import numpy as np
 from mpi4py import MPI
 
+from halo_operators import halo_domain, interior_domain
 from initial_conditions import initialize_interior
 from swm_ghex import (
-    COMM,
-    DOM_G_INT,
-    DOM_L_INT,
-    I0,
     M,
-    MLOC,
     N,
-    RANK,
-    SIZE,
-    _exchange_impl,
-    _fwd,
     dx,
     dy,
-    ghex_exchange,
+    jax_field,
+    make_exchange,
+    periodic_j,
     radius,
     run_forward,
     run_forward_reference,
@@ -53,108 +40,116 @@ from swm_ghex import (
 
 N_STEPS = 5
 
-if MLOC < 2:
-    raise SystemExit(f"MLOC={MLOC}: the scratch-buffer adjoint needs two distinct boundary rows")
+LO_HALO, LO_INT, HI_INT, HI_HALO = 0, 1, -2, -1  # rows of the (MLOC+2, N+2) exchange buffer
 
 
-def _exchange_adjoint_impl(g):
+def exchange_adjoint(exchange_np, g):
+    # On the ring the forward pattern is its own mirror: a halo cotangent placed on the
+    # boundary interior row arrives, after a forward exchange, in the halo row of the
+    # neighbour that owns it. Needs MLOC >= 2 so the two boundary rows are distinct.
     t = np.zeros_like(g)
-    t[1] = g[0]
-    t[-2] = g[-1]
-    t = _exchange_impl(t)
-    a_bar = np.zeros_like(g)
-    a_bar[1:-1] = g[1:-1]
-    a_bar[-2] += t[-1]
-    a_bar[1] += t[0]
+    t[LO_INT], t[HI_INT] = g[LO_HALO], g[HI_HALO]
+    t = exchange_np(t)
+    a_bar = np.zeros_like(g)  # the halo rows get nothing: the forward overwrote them
+    a_bar[LO_INT:HI_HALO] = g[LO_INT:HI_HALO]
+    a_bar[LO_INT] += t[LO_HALO]
+    a_bar[HI_INT] += t[HI_HALO]
     return a_bar
 
 
-def _bwd(_, g):
-    return (jax.pure_callback(_exchange_adjoint_impl, jax.ShapeDtypeStruct(g.shape, g.dtype), g),)
+def allsum(comm, x):
+    return comm.allreduce(float(x), op=MPI.SUM)
 
 
-ghex_exchange.defvjp(_fwd, _bwd)
-
-
-def allsum(x):
-    return COMM.allreduce(float(x), op=MPI.SUM)
-
-
-def dot_product_test(rng):
-    x = jnp.asarray(rng.standard_normal((MLOC + 2, N + 2)))
-    y = jnp.asarray(rng.standard_normal((MLOC + 2, N + 2)))
-    lx, vjp = jax.vjp(ghex_exchange, x)
+def dot_product_test(comm, exchange, shape, rng):
+    x = jnp.asarray(rng.standard_normal(shape))
+    y = jnp.asarray(rng.standard_normal(shape))
+    lx, vjp = jax.vjp(exchange, x)
     (x_bar,) = vjp(y)
-    lhs = allsum(jnp.sum(lx * y))
-    rhs = allsum(jnp.sum(x * x_bar))
-    return lhs, rhs, abs(lhs - rhs) / abs(lhs)
-
-
-def cost_local(u0, v0, p0):
-    _, _, p = run_forward(u0, v0, p0, N_STEPS)
-    return jnp.sum(p[DOM_L_INT].ndarray ** 2)
-
-
-def cost(u0, v0, p0):
-    return allsum(cost_local(u0, v0, p0))
+    return allsum(comm, jnp.sum(lx * y)), allsum(comm, jnp.sum(x * x_bar))
 
 
 def cost_reference(u0, v0, p0):
     _, _, p = run_forward_reference(u0, v0, p0, N_STEPS)
-    return jnp.sum(p[DOM_G_INT].ndarray ** 2)
+    return jnp.sum(p[interior_domain(M, N)].ndarray ** 2)
 
 
-def taylor_test(x, grad, direction):
+def compare_gradients(blocks, grad_ref):
+    worst = 0.0
+    for name, b, r in zip("uvp", blocks, grad_ref):
+        r = np.asarray(r)
+        diff = float(np.max(np.abs(np.concatenate(b) - r)))
+        rel = diff / float(np.max(np.abs(r)))
+        worst = max(worst, rel)
+        print(f"  dJ/d{name}0: max |ghex - reference| = {diff:.3e}, relative {rel:.3e}")
+    # Not roundoff: p_bar ~ 1e5 enters the stencil transpose as differences ~10, so the
+    # reordered accumulation at rank boundaries costs ~1e-12 relative.
+    print(f"  max relative diff {worst:.3e} -> {'PASS' if worst < 1e-10 else 'FAIL'}")
+
+
+def taylor_test(comm, cost, x, grad, direction):
     j0 = cost(*x)
-    dj = allsum(sum(jnp.sum(g * d) for g, d in zip(grad, direction)))
-    rows, h, prev = [], 1e-2, None
-    for _ in range(7):
-        jh = cost(*(xi + h * di for xi, di in zip(x, direction)))
-        r2 = abs(jh - j0 - h * dj)
-        rows.append((h, r2, np.log2(prev / r2) if prev else float("nan")))
-        prev, h = r2, h / 2
-    return j0, dj, rows
+    dj = allsum(comm, sum(jnp.sum(g * d) for g, d in zip(grad, direction)))
+    hs = 1e-2 / 2.0 ** np.arange(7)
+    remainders = [
+        abs(cost(*(xi + h * di for xi, di in zip(x, direction))) - j0 - h * dj) for h in hs
+    ]
+    return j0, dj, hs, remainders
 
 
 def main():
-    rng = np.random.default_rng(RANK)
+    comm = MPI.COMM_WORLD
+    rank, size = comm.Get_rank(), comm.Get_size()
+    if M % size or M // size < 2:
+        raise SystemExit(f"M={M} on {size} ranks: M must be divisible by the ranks with MLOC >= 2")
+    MLOC = M // size
+    I0 = rank * MLOC
 
-    lhs, rhs, rel = dot_product_test(rng)
-    if RANK == 0:
-        print(f"dot-product test of ghex_exchange on {SIZE} ranks")
+    exchange = make_exchange(
+        comm, (M, N + 2), ((I0, I0 + MLOC), (0, N + 2)), (1, 0), bwd=exchange_adjoint
+    )
+    dom = halo_domain(MLOC, N)
+
+    def refresh_halos(f):
+        return periodic_j(jax_field(dom, exchange(f.ndarray)), N)
+
+    def cost_local(u0, v0, p0):
+        _, _, p = run_forward(refresh_halos, u0, v0, p0, N_STEPS)
+        return jnp.sum(p[interior_domain(MLOC, N)].ndarray ** 2)
+
+    def cost(u0, v0, p0):
+        return allsum(comm, cost_local(u0, v0, p0))
+
+    rng = np.random.default_rng(rank)
+    lhs, rhs = dot_product_test(comm, exchange, (MLOC + 2, N + 2), rng)
+    if rank == 0:
+        rel = abs(lhs - rhs) / abs(lhs)
+        print(f"dot-product test of ghex_exchange on {size} ranks")
         print(f"  <Lx, y>    = {lhs:.16e}")
         print(f"  <x, L^T y> = {rhs:.16e}")
         print(f"  relative difference {rel:.2e} -> {'PASS' if rel < 1e-12 else 'FAIL'}")
 
     u_g, v_g, p_g = initialize_interior(np, M, N, dx, dy, radius)
-    loc = slice(I0, I0 + MLOC)
-    x = tuple(jnp.asarray(a[loc]) for a in (u_g, v_g, p_g))
+    x = tuple(jnp.asarray(a[I0 : I0 + MLOC]) for a in (u_g, v_g, p_g))
+    # jax.grad of cost_local, run on every rank at once, is the gradient of the global
+    # cost: the allreduce's adjoint only seeds every rank with the cotangent 1, and the
+    # other ranks' contributions dJ_s/dx_r arrive through the exchange adjoint, which all
+    # ranks execute in lockstep. cost itself ends in float() and cannot be traced.
     grad = jax.grad(cost_local, argnums=(0, 1, 2))(*x)
-    blocks = [COMM.gather(np.asarray(g), root=0) for g in grad]
-
-    if RANK == 0:
-        grad_ref = jax.grad(cost_reference, argnums=(0, 1, 2))(
-            *(jnp.asarray(a) for a in (u_g, v_g, p_g))
-        )
-        print(f"gradient of J = sum p({N_STEPS} steps)^2, {SIZE} ranks vs single-process reference")
-        # p_bar = 2p ~ 1e5 at the final step while the stencil transpose forms
-        # differences of it ~10, so the reordered accumulation at rank boundaries
-        # costs ~1e-12 relative, not 1e-16.
-        worst = 0.0
-        for name, b, r in zip("uvp", blocks, grad_ref):
-            r = np.asarray(r)
-            diff = float(np.max(np.abs(np.concatenate(b) - r)))
-            rel = diff / float(np.max(np.abs(r)))
-            worst = max(worst, rel)
-            print(f"  dJ/d{name}0: max |ghex - reference| = {diff:.3e}, relative {rel:.3e}")
-        print(f"  max relative diff {worst:.3e} -> {'PASS' if worst < 1e-10 else 'FAIL'}")
+    blocks = [comm.gather(np.asarray(g), root=0) for g in grad]
+    if rank == 0:
+        x_g = tuple(jnp.asarray(a) for a in (u_g, v_g, p_g))
+        grad_ref = jax.grad(cost_reference, argnums=(0, 1, 2))(*x_g)
+        print(f"gradient of J = sum p({N_STEPS} steps)^2, {size} ranks vs single-process reference")
+        compare_gradients(blocks, grad_ref)
 
     direction = tuple(jnp.asarray(rng.standard_normal(a.shape) * float(jnp.std(a))) for a in x)
-    j0, dj, rows = taylor_test(x, grad, direction)
-    if RANK == 0:
-        print(f"Taylor test on {SIZE} ranks: J(x) = {j0:.8e}, <grad J, d> = {dj:.8e}")
+    j0, dj, hs, remainders = taylor_test(comm, cost, x, grad, direction)
+    if rank == 0:
+        print(f"Taylor test on {size} ranks: J(x) = {j0:.8e}, <grad J, d> = {dj:.8e}")
         print(f"  {'h':>10} {'r2':>14} {'rate2':>7}")
-        for h, r2, rate in rows:
+        for k, (h, r2) in enumerate(zip(hs, remainders)):
+            rate = np.log2(remainders[k - 1] / r2) if k else float("nan")
             print(f"  {h:10.2e} {r2:14.6e} {rate:7.2f}")
         sys.stdout.flush()
 
