@@ -20,8 +20,9 @@
 per-device block edge, ``M = s*Rx``, ``N = s*Ry``. Modes: ``fwd`` is the jitted sharded
 forward, ``grad`` the ``jax.grad`` of ``cost`` through the same program, ``ref`` the
 single-device ``reference_program`` (1x1 only) and its gradient ``ref_grad``;
-``exch``/``exch_grad`` time one ``exchange_program`` call and its VJP, per call rather than
-per step (``--steps`` is irrelevant and the row reports ``n_steps`` 1).
+``grad_remat``/``ref_grad_remat`` are the same gradients through a ``jax.checkpoint``-ed
+scan step; ``exch``/``exch_grad`` time one ``exchange_program`` call and its VJP, per call
+rather than per step (``--steps`` is irrelevant and the row reports ``n_steps`` 1).
 
 Sizes are processed ascending; after an out-of-memory failure the larger sizes of that
 (layout, transport, mode) are skipped. ``--distributed`` as in ``bench_transports.py``.
@@ -53,7 +54,7 @@ from swm_sharded import (
     sharded_program,
 )
 
-MODES = ("fwd", "grad", "ref", "ref_grad", "exch", "exch_grad")
+MODES = ("fwd", "grad", "grad_remat", "ref", "ref_grad", "ref_grad_remat", "exch", "exch_grad")
 
 
 def _grad_of(program):
@@ -72,14 +73,15 @@ def _case(transport, layout, mode, n_steps):
     """``(jitted fn, device args)`` for one measurement."""
     if mode.startswith("exch"):
         return _exchange_case(transport, layout, mode)
+    remat = mode.endswith("_remat")
     fields = initialize_interior(np, layout.M, layout.N, dx, dy, radius)
     if mode.startswith("ref"):
-        prog = reference_program(n_steps, layout.M, layout.N)
+        prog = reference_program(n_steps, layout.M, layout.N, remat)
         args = tuple(jax.device_put(a) for a in fields)
     else:
-        prog = sharded_program(transport, layout, n_steps)
+        prog = sharded_program(transport, layout, n_steps, remat)
         args = tuple(put_global(block(a, layout), layout) for a in fields)
-    return (_grad_of(prog) if mode.endswith("grad") else prog), args
+    return (_grad_of(prog) if "grad" in mode else prog), args
 
 
 def _time(fn, args, repeats):
@@ -94,13 +96,13 @@ def _time(fn, args, repeats):
     return compile_s, samples
 
 
-def _peak_mem():
-    # process-lifetime peak: no API resets it, so it is monotone across rows
-    stats = jax.local_devices()[0].memory_stats()
-    return None if stats is None else stats.get("peak_bytes_in_use")
+def _mem():
+    stats = jax.local_devices()[0].memory_stats() or {}
+    return stats.get("bytes_in_use"), stats.get("peak_bytes_in_use")
 
 
 def measure(transport, layout, mode, n_steps, repeats):
+    in_use_before, peak_before = _mem()
     try:
         fn, args = _case(transport, layout, mode, n_steps)
         compile_s, samples = _time(fn, args, repeats)
@@ -108,6 +110,7 @@ def measure(transport, layout, mode, n_steps, repeats):
         if "RESOURCE_EXHAUSTED" not in str(e):
             raise
         return {"status": "oom"}
+    _, peak_after = _mem()
     cells = layout.M * layout.N
     best = min(samples)
     return {
@@ -117,7 +120,14 @@ def measure(transport, layout, mode, n_steps, repeats):
         "samples_step_ms": [1e3 * t / n_steps for t in samples],
         "cells": cells,
         "cell_updates_per_s": cells * n_steps / best,
-        "peak_mem_cumulative_bytes": _peak_mem(),
+        "mem_in_use_before_bytes": in_use_before,
+        # the peak is process-lifetime and never reset, so the delta bounds this case
+        # from above only while it exceeds every earlier case
+        "peak_mem_before_bytes": peak_before,
+        "peak_mem_cumulative_bytes": peak_after,
+        "peak_mem_bytes_delta": None
+        if peak_before is None or peak_after is None
+        else peak_after - peak_before,
     }
 
 

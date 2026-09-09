@@ -8,7 +8,7 @@
 
 """Sharded, differentiable shallow water model with a pluggable halo transport.
 
-One jitted program per (transport, layout, n_steps): a ``shard_map`` over the 1-D
+One jitted program per (transport, layout, n_steps, remat): a ``shard_map`` over the 1-D
 device axis ``"d"`` whose body zero-pads this device's interior blocks to the halo
 shape, refreshes the halos with the transport, and runs the nb01 leapfrog loop as a
 ``jax.lax.scan`` of GT4Py ``operators.timestep`` on JAX-backed local fields.
@@ -18,6 +18,9 @@ writes are wrong -- and never read: the next iteration's exchange overwrites the
 before anything touches them, and the ``old`` fields' halos never reach an interior
 cell (``uold_new = u + alpha*(unew - 2u + uold)`` is evaluated on the pre-periodic
 ``unew``, whose domain is the interior). Same argument as ``swm_ghex_2d.py``.
+
+With ``remat=True`` the scan step is wrapped in ``jax.checkpoint``: the reverse pass
+recomputes each step instead of storing its residuals. The forward is unchanged.
 
 The test battery and CLI live in ``swm_battery.py``.
 """
@@ -131,7 +134,7 @@ def exchange_program(transport, layout: Layout):
 
 
 @functools.lru_cache(maxsize=None)
-def sharded_program(transport, layout: Layout, n_steps: int):
+def sharded_program(transport, layout: Layout, n_steps: int, remat: bool = False):
     L = layout
     t = tables(transport, L)
     mloc, nloc = L.MLOC, L.NLOC
@@ -148,7 +151,8 @@ def sharded_program(transport, layout: Layout, n_steps: int):
             u, v, p = (exchange(a) for a in (u, v, p))
             return _gt_step((u, v, p, uo, vo, po), 2.0 * dt, alpha, mloc, nloc), None
 
-        final, _ = jax.lax.scan(scan_step, state, None, length=n_steps - 1)
+        step = jax.checkpoint(scan_step) if remat else scan_step
+        final, _ = jax.lax.scan(step, state, None, length=n_steps - 1)
         h = L.h
         return tuple(f[h:-h, h:-h] for f in final[:3])
 
@@ -172,7 +176,7 @@ def cost(fields):
 
 # --- single-device references on the global (M, N) grid -----------------------------------------
 @functools.lru_cache(maxsize=None)
-def reference_program(n_steps: int, M: int = M, N: int = N):
+def reference_program(n_steps: int, M: int = M, N: int = N, remat: bool = False):
     """The same GT4Py step and scan structure, halos from ``make_periodic``."""
     dom_int = gtx.domain({I: (0, M), J: (0, N)})
 
@@ -187,7 +191,8 @@ def reference_program(n_steps: int, M: int = M, N: int = N):
             u, v, p, uo, vo, po = carry
             return _gt_step((u, v, p, uo, vo, po), 2.0 * dt, alpha, M, N), None
 
-        final, _ = jax.lax.scan(scan_step, state, None, length=n_steps - 1)
+        step = jax.checkpoint(scan_step) if remat else scan_step
+        final, _ = jax.lax.scan(step, state, None, length=n_steps - 1)
         return tuple(f[1:-1, 1:-1] for f in final[:3])
 
     return jax.jit(run)
