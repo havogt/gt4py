@@ -81,6 +81,7 @@ def _time(fn, args, repeats):
 
 
 def _peak_mem():
+    # process-lifetime peak: no API resets it, so it is monotone across rows
     stats = jax.local_devices()[0].memory_stats()
     return None if stats is None else stats.get("peak_bytes_in_use")
 
@@ -100,7 +101,7 @@ def measure(transport, layout, mode, n_steps, repeats):
         "per_step_ms": 1e3 * best / n_steps,
         "cells": cells,
         "cell_updates_per_s": cells * n_steps / best,
-        "peak_mem_bytes": _peak_mem(),
+        "peak_mem_cumulative_bytes": _peak_mem(),
     }
 
 
@@ -175,7 +176,7 @@ COLUMNS = (
     "mode",
     "per_step_ms",
     "cell_updates_per_s",
-    "peak_mem_GB",
+    "peak_mem_cum_GB",
     "status",
 )
 
@@ -186,7 +187,7 @@ def table(path):
     for r in rows:
         ms = r.get("per_step_ms")
         cps = r.get("cell_updates_per_s")
-        mem = r.get("peak_mem_bytes")
+        mem = r.get("peak_mem_cumulative_bytes")
         out.append(
             f"| {r['M']}x{r['N']} | {r['layout']} | {r['transport'] or '-'} | {r['mode']} | "
             f"{'-' if ms is None else f'{ms:.4f}'} | {'-' if cps is None else f'{cps:.3e}'} | "

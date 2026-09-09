@@ -30,6 +30,7 @@ import os
 import sys
 from typing import Any, Protocol
 
+import jax.numpy as jnp
 import numpy as np
 
 # the transport_*.py siblings are imported by bare module name
@@ -165,6 +166,18 @@ def true_halo_cells(layout: Layout) -> int:
     """Cells in one local halo rim: ``2h(MLOC + NLOC) + 4h^2``."""
     h = layout.h
     return 2 * h * (layout.MLOC + layout.NLOC) + 4 * h * h
+
+
+def set_rim(a_flat, rim, halo_mask, vals):
+    """``a_flat`` with ``vals`` written at the flat indices ``rim``.
+
+    Writing only the rim makes the transpose a gather of ``n_rim`` cotangents instead of
+    a scatter-add of one per local cell. The select on top is redundant for the values,
+    but keeping the interior an XLA pass-through is what keeps the forward bit-identical
+    to the single-device model (nb05, section 7).
+    """
+    out = a_flat.at[rim].set(vals, indices_are_sorted=True, unique_indices=True)
+    return jnp.where(halo_mask, out, a_flat)
 
 
 class Transport(Protocol):

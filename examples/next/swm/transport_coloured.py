@@ -9,9 +9,11 @@
 """Coloured ``lax.ppermute`` transports: the halo arrives in K permutation rounds.
 
 On a torus each of the 8 directions is a full permutation of the ranks, so each is one
-legal ``ppermute``. The rounds of a phase are packed into one send buffer; the received
-rounds are concatenated and one gather reads every halo cell out of the result. All
-tables are rank-independent; only the perms carry the rank structure.
+legal ``ppermute``. The rounds of a phase are packed into one send buffer (``send_idx``);
+the received rounds are concatenated, ``recv_pos`` reads the cells the phase writes out
+of the result and they are set at ``rim`` (``halo_mask`` as a flat bool), that phase's
+flat cell indices. All tables are rank-independent; only the perms carry the rank
+structure.
 
 ``coloured8``
     One phase of 8 independent rounds on the original field: E/W carry ``NLOC*h``
@@ -36,7 +38,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax import lax
 
-from halo_transports import NEIGHBOUR_OFFSETS, Layout, register
+from halo_transports import NEIGHBOUR_OFFSETS, Layout, register, set_rim
 
 
 def _spans(off, n, h, full):
@@ -73,18 +75,20 @@ def _phase(layout: Layout, dirs, full_x=False):
     slots = tuple(send.size for _, send, _ in rounds)
     offs = tuple(int(o) for o in np.cumsum((0,) + slots[:-1]))
     ncell = layout.local_shape[0] * layout.local_shape[1]
-    recv_pos = np.zeros(ncell, dtype=np.int32)
-    halo_mask = np.zeros(ncell, dtype=bool)  # the cells this phase writes
+    pos = np.zeros(ncell, dtype=np.int32)
+    mask = np.zeros(ncell, dtype=bool)
     for (_, _, recv), o, s in zip(rounds, offs, slots):
-        recv_pos[recv] = o + np.arange(s, dtype=np.int32)
-        halo_mask[recv] = True
+        pos[recv] = o + np.arange(s, dtype=np.int32)
+        mask[recv] = True
+    rim = np.flatnonzero(mask).astype(np.int32)
     return {
         "perms": tuple(perm for perm, _, _ in rounds),
         "slots": slots,
         "offs": offs,
         "send_idx": np.concatenate([send for _, send, _ in rounds]),
-        "recv_pos": recv_pos,
-        "halo_mask": halo_mask,
+        "recv_pos": pos[rim],
+        "rim": rim,
+        "halo_mask": mask,
     }
 
 
@@ -94,7 +98,7 @@ def _exchange_phase(a_flat, ph, axis_name: str):
         lax.ppermute(buf[o : o + s], axis_name, perm=list(p))
         for p, s, o in zip(ph["perms"], ph["slots"], ph["offs"])
     ]
-    return jnp.where(ph["halo_mask"], jnp.concatenate(rounds)[ph["recv_pos"]], a_flat)
+    return set_rim(a_flat, ph["rim"], ph["halo_mask"], jnp.concatenate(rounds)[ph["recv_pos"]])
 
 
 class ColouredTransport:

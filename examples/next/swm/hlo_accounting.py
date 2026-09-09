@@ -17,6 +17,7 @@ _COLLECTIVE_NAMES = (
     "all-reduce",
     "all-gather",
     "all-to-all",
+    "ragged-all-to-all",
     "reduce-scatter",
     "collective-broadcast",
 )

@@ -13,7 +13,9 @@ Tables, per device ``d`` and peer ``e``, with ``chunk[d][e]`` from ``Layout.halo
 ``send_sizes[d, e] = len(chunk[d][e])`` and ``recv_sizes = send_sizes.T``;
 ``input_offsets`` is the exclusive row cumsum of ``send_sizes``, ``output_offsets`` the
 transpose of that of ``recv_sizes`` (where *my* slice for peer ``e`` lands in ``e``'s
-receive buffer); ``recv_pos[e]`` maps each local cell to its slot in that buffer.
+receive buffer); ``rim`` is the flat indices of the rim cells and ``halo_mask`` the same
+as a flat bool (both identical on every rank); ``recv_pos[e]`` the slot each rim cell of
+device ``e`` is read from.
 
 ``ragged``: ``lax.ragged_all_to_all`` ships exactly the cells the peers need, the minimal
 wire volume here. Not implemented on XLA:CPU, and its transpose rule is defective, so it
@@ -31,13 +33,14 @@ import jax.numpy as jnp
 import numpy as np
 from jax import lax
 
-from halo_transports import Layout, register
+from halo_transports import Layout, register, set_rim
 
 
 def _tables(layout: Layout):
     P = layout.P
     chunk = layout.halo_chunks()
-    halo_mask = layout.halo_mask()
+    mask = layout.halo_mask()
+    rim = np.flatnonzero(mask).astype(np.int32)
 
     send_sizes = np.array([[len(chunk[d][e]) for e in range(P)] for d in range(P)], dtype=np.int32)
     recv_sizes = send_sizes.T.copy()
@@ -47,18 +50,19 @@ def _tables(layout: Layout):
     send_idx = np.array(
         [[s for e in range(P) for s, _ in chunk[d][e]] for d in range(P)], dtype=np.int32
     )
-    recv_pos = np.zeros((P, halo_mask.size), dtype=np.int32)
+    pos = np.zeros((P, mask.size), dtype=np.int32)
     for e in range(P):
         recv = [r for d in range(P) for _, r in chunk[d][e]]
-        recv_pos[e, recv] = np.arange(len(recv), dtype=np.int32)
+        pos[e, recv] = np.arange(len(recv), dtype=np.int32)
     return {
         "send_idx": send_idx,
         "send_sizes": send_sizes,
         "input_offsets": input_offsets,
         "output_offsets": output_offsets,
         "recv_sizes": recv_sizes,
-        "recv_pos": recv_pos,
-        "halo_mask": halo_mask,
+        "recv_pos": pos[:, rim],
+        "rim": rim,
+        "halo_mask": mask,
         "recv_max": int(recv_sizes.sum(axis=1).max()),
     }
 
@@ -92,9 +96,8 @@ class RaggedTransport:
         a_flat = a_local.reshape(-1)
         operand = a_flat[jnp.asarray(tables["send_idx"])[r]]
         recv = self._move(operand, tables, axis_name, r)
-        gathered = recv[jnp.asarray(tables["recv_pos"])[r]]
-        out = jnp.where(jnp.asarray(tables["halo_mask"]), gathered, a_flat)
-        return out.reshape(a_local.shape)
+        vals = recv[jnp.asarray(tables["recv_pos"])[r]]
+        return set_rim(a_flat, tables["rim"], tables["halo_mask"], vals).reshape(a_local.shape)
 
 
 def _emul_tables(layout: Layout):
