@@ -199,7 +199,7 @@ def reference_program(n_steps: int, M: int = M, N: int = N, remat: bool = False)
 
 
 @functools.lru_cache(maxsize=None)
-def wrap_reference_program(n_steps: int):
+def wrap_reference_program(n_steps: int, M: int = M, N: int = N):
     """Halos from an explicit wrap-pad: forward bit-identical to ``reference_program``,
     adjoint accumulated in a different order."""
 

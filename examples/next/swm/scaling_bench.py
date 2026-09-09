@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import json
+import re
 import time
 
 import jax
@@ -55,6 +56,14 @@ from swm_sharded import (
 )
 
 MODES = ("fwd", "grad", "grad_remat", "ref", "ref_grad", "ref_grad_remat", "exch", "exch_grad")
+
+# one kernel launch per defining instruction of these opcodes, in any computation of the
+# module (a scan body is counted once, not per iteration)
+_KERNEL = re.compile(
+    r"^\s*(?:ROOT\s+)?%\S+ = .*? (?:fusion|custom-call|copy|dot|convolution|all-to-all|"
+    r"ragged-all-to-all|all-gather|all-reduce|reduce-scatter|collective-permute)(?:-start)?\(",
+    re.M,
+)
 
 
 def _grad_of(program):
@@ -96,6 +105,20 @@ def _time(fn, args, repeats):
     return compile_s, samples
 
 
+def _xla_stats(fn, args):
+    compiled = fn.lower(*args).compile()
+    try:
+        ca = compiled.cost_analysis()
+    except Exception:  # noqa: BLE001 - unsupported on some backends
+        ca = None
+    ca = (ca[0] if isinstance(ca, list) else ca) or {}
+    return {
+        "xla_bytes_accessed": None if "bytes accessed" not in ca else float(ca["bytes accessed"]),
+        "xla_flops": None if "flops" not in ca else float(ca["flops"]),
+        "xla_kernels": len(_KERNEL.findall(compiled.as_text())),
+    }
+
+
 def _mem():
     stats = jax.local_devices()[0].memory_stats() or {}
     return stats.get("bytes_in_use"), stats.get("peak_bytes_in_use")
@@ -106,6 +129,7 @@ def measure(transport, layout, mode, n_steps, repeats):
     try:
         fn, args = _case(transport, layout, mode, n_steps)
         compile_s, samples = _time(fn, args, repeats)
+        xla = _xla_stats(fn, args)
     except Exception as e:  # noqa: BLE001 - only OOM is recoverable
         if "RESOURCE_EXHAUSTED" not in str(e):
             raise
@@ -120,6 +144,10 @@ def measure(transport, layout, mode, n_steps, repeats):
         "samples_step_ms": [1e3 * t / n_steps for t in samples],
         "cells": cells,
         "cell_updates_per_s": cells * n_steps / best,
+        **xla,
+        "achieved_GBps": None
+        if xla["xla_bytes_accessed"] is None
+        else xla["xla_bytes_accessed"] / best / 1e9,
         "mem_in_use_before_bytes": in_use_before,
         # the peak is process-lifetime and never reset, so the delta bounds this case
         # from above only while it exceeds every earlier case
@@ -203,6 +231,7 @@ COLUMNS = (
     "mode",
     "per_step_ms",
     "cell_updates_per_s",
+    "GB/s",
     "peak_mem_cum_GB",
     "status",
 )
@@ -214,10 +243,12 @@ def table(path):
     for r in rows:
         ms = r.get("per_step_ms")
         cps = r.get("cell_updates_per_s")
+        gbs = r.get("achieved_GBps")
         mem = r.get("peak_mem_cumulative_bytes")
         out.append(
             f"| {r['M']}x{r['N']} | {r['layout']} | {r['transport'] or '-'} | {r['mode']} | "
             f"{'-' if ms is None else f'{ms:.4f}'} | {'-' if cps is None else f'{cps:.3e}'} | "
+            f"{'-' if gbs is None else f'{gbs:.2f}'} | "
             f"{'-' if mem is None else f'{mem / 1e9:.2f}'} | {r['status']} |"
         )
     return "\n".join(out)

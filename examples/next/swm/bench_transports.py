@@ -83,6 +83,7 @@ def _scalars(res, n_steps, vol):
         "T4_indep_max_rel_diff": g("T4", "indep_max_rel_diff"),
         "T5_max_abs_diff": g("T5", "max_abs_diff"),
         "T5_max_rel_diff": g("T5", "max_rel_diff"),
+        "T5_max_rel_diff_common": g("T5", "max_rel_diff_common"),
         "T5_noise_floor_rel": g("T5", "noise_floor_rel"),
         "T6_rate2_last": g("T6", "rate2_last"),
         **vol,
@@ -131,14 +132,14 @@ def _verdict(row):
     return "FAIL " + ",".join(bad)
 
 
-def run(transports, layout_specs, n_steps, out_path, distributed, repeats):
+def run(transports, layout_specs, size, n_steps, out_path, distributed, repeats):
     if transports == ["all"]:
         transports = available_transports()
     env = _environment(distributed)
     write = env["process_index"] == 0
     rows = []
     for spec in layout_specs:
-        layout = B.parse_layout(spec)
+        layout = B.parse_layout(spec, size)
         if distributed and layout.P != jax.device_count():
             raise SystemExit(
                 f"--distributed: layout {spec} uses {layout.P} of {jax.device_count()} devices; "
@@ -224,6 +225,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--transports", default="all", help="'all' or a comma-separated list")
     ap.add_argument("--layouts", default="1x1,2x1,1x2,2x2,4x2,2x4")
+    ap.add_argument("--size", type=int, default=B.M, help="global grid edge, M = N = size")
     ap.add_argument("--steps", type=int, default=N_STEPS)
     ap.add_argument(
         "--repeats",
@@ -242,6 +244,7 @@ def main(argv=None):
     rows = run(
         [t.strip() for t in a.transports.split(",")],
         [s.strip() for s in a.layouts.split(",")],
+        a.size,
         a.steps,
         a.out,
         distributed,

@@ -18,7 +18,7 @@ KIND=${KIND:-strong}
 LAYOUTS=${LAYOUTS:-2x2,4x1}
 TRANSPORTS=${TRANSPORTS:-padded,coloured8,coloured2ph,allgather,ragged}
 STEPS=${STEPS:-20}
-REPEATS=${REPEATS:-5}
+REPEATS=${REPEATS:-20}
 if [ "$KIND" = weak ]; then
     SIZES=${SIZES:-32,64,128,256,512,1024,2048,4096}; WEAK=--weak
 else

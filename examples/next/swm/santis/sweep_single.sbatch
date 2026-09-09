@@ -16,7 +16,7 @@ source "$SLURM_SUBMIT_DIR/common.sh"
 KIND=${KIND:-strong}
 TRANSPORTS=${TRANSPORTS:-padded,coloured8,coloured2ph,allgather,ragged}
 STEPS=${STEPS:-20}
-REPEATS=${REPEATS:-5}
+REPEATS=${REPEATS:-20}
 if [ "$KIND" = weak ]; then
     SIZES=${SIZES:-32,64,128,256,512,1024,2048,4096}; WEAK=--weak
 else

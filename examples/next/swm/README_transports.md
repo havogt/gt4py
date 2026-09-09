@@ -190,7 +190,7 @@ on scan carries, pass `check_rep=False`.
 | T2 `exchange_dotproduct` | `<Lx, y>` vs `<x, L^T y>` via `jax.vjp`; also vs `halo_lib.exchange_matrix(...).T` | rel <= 1e-14; dense <= 1e-12 |
 | T3 `bit_identity_P1` | T4 on `1x1` | exactly 0.0 (FESOM's invariant) |
 | T4 `forward_P` | sharded on the requested layout vs `reference_program`; also vs `roll_reference_program` | rel <= 1e-12 |
-| T5 `gradient` | `grad(cost o sharded)` vs `grad(cost o reference)` | rel <= 1e-10 |
+| T5 `gradient` | `grad(cost o sharded)` vs `grad(cost o reference)` | rel <= 1e-10, relative to the largest gradient component |
 | T6 `taylor` | `\|J(x+hd) - J(x) - h<g,d>\|` over 6 halvings from `h=1e-2` | rate -> 2.00 |
 | T7 `hlo` | `collectives_in` of 1 step, forward / cost / value_and_grad, plus the table-derived volume | reported |
 | T8 `timing` | wall time of forward and `value_and_grad`, min of `--repeats` after warm-up | reported |
@@ -199,7 +199,10 @@ Four deliberate choices, all visible in the printed table:
 
 - **T4/T5 use relative, not absolute, tolerances.** `p ~ 5e4`, so 1 ulp of `p` is 7e-12;
   an absolute 1e-12 on `p` is below the representable resolution of the field. The absolute
-  numbers are printed too.
+  numbers are printed too. T5 gates on `max_rel_diff_common`, the worst absolute error over
+  `u, v, p` divided by the largest component of the whole reference gradient (the `p`
+  adjoint, ~1e5); the per-field `max_rel_diff_*` are informational, since `max|du|`
+  shrinks with the grid while the absolute error is set by the `p` adjoint.
 - **T5 prints a noise floor.** `noise_floor_*` is the same comparison between
   `reference_program` and `wrap_reference_program`, which are forward bit-identical and
   differ only in the order the adjoint accumulates. It sits at 4.3e-9 absolute / 2.8e-12

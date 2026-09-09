@@ -771,8 +771,52 @@ without errors. Known cosmetic change: nb04's degenerate thin-ring scratch-trick
 now reports dot-product error 1e-1 instead of 3.8 (both wrong by design; slice mirroring
 is by name now instead of by value).
 
+## Round 5: Santis runs (2026-09-09, in progress)
+
+Setup: `$SCRATCH/tmp/gt4py_ad_2026_09_09/{gt4py,venv,jobs,results}` on santis; uenv
+`icon/26.7:v1` (Python 3.13.13, CUDA 13.1); venv from the uenv's python via `uv`, with
+`jax[cuda13]==0.11.1` and gt4py editable from the `ad_halo` clone; nodes are GH200 120GB
+(97871 MiB usable), driver 590.48. Scripts: `examples/next/swm/santis/` (`setup.sh`,
+`common.sh`, `smoke_{single,multi}.sbatch`, `sweep_{single,multi}.sbatch`). Account
+`csstaff`; debug partition for smoke, normal for sweeps.
+
+Smoke results (jobs 855906 single-process 4 GPUs, 855907 four processes over NCCL):
+- Batteries on 2x2 on GPU: padded, coloured8, coloured2ph, allgather, ragged_emul ALL PASS,
+  both single- and multi-process, T4 bit-identical.
+- **`ragged` (native `lax.ragged_all_to_all`) runs on GPU and its forward is bit-exact
+  (T1/T3/T4 pass), but its transpose is wrong**: T0 grad rel diff 1.05, T2 dot-product
+  21.53 vs 39.28, T5 rel diff 5e4, T6 Taylor rate 1.0. FESOM's finding confirmed on
+  jax 0.11.1 / CUDA 13, now against an exact rule (the Python `ragged_emul` rule passes).
+- **Performance bug found and fixed (commit f039b091b):** the grad of padded/coloured/ragged
+  was 6.2 ms/step at 1024^2 on one GPU vs 0.56 ms for allgather and 0.60 ms for the
+  non-sharded reference. Cause: the whole-box gather through `recv_pos` transposes into a
+  scatter-add of every local cell into the small receive buffer (atomics serialise on GPU).
+  Fix: gather n_rim values and write them with `.at[rim].set`; a trailing `where` keeps the
+  interior a pass-through, which is what keeps T4 bit-identical (without it XLA compiles
+  the scan body differently and T4 shows allgather's 6.8e-15).
+- Multi-process (4 x 1 GPU, NCCL) fwd at 1024^2: padded 0.097 ms/step vs 0.151 single-process
+  4 devices; exchange-only timings 0.06-0.19 ms.
+- `peak_bytes_in_use` is a process-lifetime peak: reported as `peak_mem_cumulative_bytes`.
+
+Additions during the run (all with 20 timed repeats per case, `samples_step_ms` in the rows):
+- exchange-only modes `exch`/`exch_grad` (one exchange call and its VJP) — jobs 855954-855956;
+- multi-node, 4 GPUs/node, NCCL over Slingshot via the uenv's aws-ofi-nccl plugin
+  (`NCCL_NET="AWS Libfabric"`, `NCCL_NET_PLUGIN=ofi`): 2/4/8 nodes = P 8/16/32, layouts
+  8x1+4x2, 16x1+4x4, 32x1+8x4, strong+weak+exch in one job each — 855960/855961/855962;
+- rematerialised gradient `grad_remat`/`ref_grad_remat` (`jax.checkpoint` on the scan step,
+  commit 8ccc247bb) because plain `grad` OOMs at 4096^2 per GPU (20 steps of stored
+  residuals): single 855972, P=2 855973, P=4 855974, 2/4/8 nodes 855975/855976/855977;
+  rows also carry `peak_mem_before_bytes`/`peak_mem_bytes_delta` for per-case peaks.
+Analysis: `santis/analyze.py RESULTS_DIR` (tables 2a-2h, 3a-3b, 4; PNGs), medians with IQR.
+
+First-round sweeps (min only, 5 repeats): 855938/855939 (single process, strong/weak),
+855940/855941 (4 processes, strong/weak, 2x2+4x1), 855942/855943 (2 processes, 2x1);
+smoke rerun 855937. Sizes strong 32..16384, weak 32..4096 per device; transports padded,
+coloured8, coloured2ph, allgather, ragged; modes fwd, grad, ref; 20 steps, 5 repeats.
+
 ## Log
 
+- **2026-09-09** — Santis: setup, smoke, ragged-GPU adjoint finding, rim-gather fix, sweeps submitted (Round 5).
 - **2026-09-09** — Readability pass over all round-1..3 code (see Round 4 above).
 - **2026-09-09** — Opened draft PR GridTools/gt4py#2867: register `jax.core.Tracer` for
   `common._field`/`_connectivity` (jax >= 0.11 `ArrayMeta` breaks singledispatch on

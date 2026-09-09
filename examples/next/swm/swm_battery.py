@@ -42,7 +42,6 @@ from jax_compat import shard_map_api
 from swm_sharded import (
     GT4PY_TRACER_DISPATCH,
     M,
-    N,
     N_STEPS,
     cost,
     dx,
@@ -62,7 +61,7 @@ from swm_sharded import (
 
 def _initial_state(layout: Layout):
     """``(host fields, sharded rank-major blocks)`` of the nb01 initial condition."""
-    fields = initialize_interior(np, M, N, dx, dy, radius)
+    fields = initialize_interior(np, layout.M, layout.N, dx, dy, radius)
     return fields, tuple(put_global(block(a, layout), layout) for a in fields)
 
 
@@ -146,32 +145,34 @@ def t2_exchange_dotproduct(transport, layout: Layout):
         for b in range(-1, L.Ry + 1)
     )
     res["halo_lib_order_matches"] = same_order
-    if same_order:
+    if not same_order:
+        res["dense_fwd_diff"] = float("nan")
+        res["dense_vjp_diff"] = float("nan")
+    elif x.size**2 > 1e8:
+        res["dense"] = "skipped (size)"
+    else:
         A = halo_lib.exchange_matrix(d, d.single_phase_pattern())
         fwd_dense = (A @ get_global(x).ravel()).reshape(x.shape)
         adj_dense = (A.T @ get_global(y).ravel()).reshape(x.shape)
         res["dense_fwd_diff"] = float(np.max(np.abs(get_global(val) - fwd_dense)))
         res["dense_vjp_diff"] = float(np.max(np.abs(get_global(xbar) - adj_dense)))
         res["pass"] = res["pass"] and res["dense_vjp_diff"] <= 1e-12
-    else:
-        res["dense_fwd_diff"] = float("nan")
-        res["dense_vjp_diff"] = float("nan")
     return res
 
 
-def t3_bit_identity_p1(transport, n_steps=N_STEPS):
+def t3_bit_identity_p1(transport, layout: Layout, n_steps=N_STEPS):
     if jax.process_count() > 1:
         return {
             "status": "skipped (multi-process): a P=1 mesh does not span the processes",
             "pass": True,
         }
-    return t4_forward_p(transport, Layout(M, N, 1, 1), n_steps, exact=True)
+    return t4_forward_p(transport, Layout(layout.M, layout.N, 1, 1), n_steps, exact=True)
 
 
 def t4_forward_p(transport, layout: Layout, n_steps=N_STEPS, exact=False):
     fields, args = _initial_state(layout)
     got = sharded_forward(transport, layout, *args, n_steps=n_steps)
-    ref = reference_program(n_steps)(*fields)
+    ref = reference_program(n_steps, layout.M, layout.N)(*fields)
     ind = roll_reference_program(n_steps)(*fields)
     out = {}
     ulps, ind_rels = [], []
@@ -192,10 +193,13 @@ def t4_forward_p(transport, layout: Layout, n_steps=N_STEPS, exact=False):
 def t5_gradient(transport, layout: Layout, n_steps=N_STEPS):
     fields, args = _initial_state(layout)
     grad_sharded = jax.grad(_sharded_cost(transport, layout, n_steps), argnums=(0, 1, 2))(*args)
-    grad_ref = jax.grad(_cost_of(reference_program(n_steps)), argnums=(0, 1, 2))(*fields)
-    grad_wrap = jax.grad(_cost_of(wrap_reference_program(n_steps)), argnums=(0, 1, 2))(*fields)
+    ref_prog = reference_program(n_steps, layout.M, layout.N)
+    wrap_prog = wrap_reference_program(n_steps, layout.M, layout.N)
+    grad_ref = jax.grad(_cost_of(ref_prog), argnums=(0, 1, 2))(*fields)
+    grad_wrap = jax.grad(_cost_of(wrap_prog), argnums=(0, 1, 2))(*fields)
     out = {}
     worst_abs = worst_rel = floor_abs = floor_rel = 0.0
+    common = max(float(np.max(np.abs(r))) for r in grad_ref)
     for name, s, r, w in zip("uvp", grad_sharded, grad_ref, grad_wrap):
         sharded, ref, wrap = unblock(get_global(s), layout), np.asarray(r), np.asarray(w)
         scale = float(np.max(np.abs(ref)))
@@ -209,7 +213,8 @@ def t5_gradient(transport, layout: Layout, n_steps=N_STEPS):
     out["max_rel_diff"] = worst_rel
     out["noise_floor_abs"] = floor_abs
     out["noise_floor_rel"] = floor_rel
-    out["pass"] = worst_rel <= 1e-10
+    out["max_rel_diff_common"] = worst_abs / common
+    out["pass"] = out["max_rel_diff_common"] <= 1e-10
     return out
 
 
@@ -360,7 +365,7 @@ def run_battery(transport_name: str, layout: Layout, n_steps=N_STEPS, repeats=5)
         "T0": _guarded(oracle_gate, tr, layout),
         "T1": _guarded(t1_exchange_forward, tr, layout),
         "T2": _guarded(t2_exchange_dotproduct, tr, layout),
-        "T3": _guarded(t3_bit_identity_p1, tr, n_steps),
+        "T3": _guarded(t3_bit_identity_p1, tr, layout, n_steps),
         "T4": _guarded(t4_forward_p, tr, layout, n_steps),
         "T5": _guarded(t5_gradient, tr, layout, n_steps),
         "T6": _guarded(t6_taylor, tr, layout, n_steps),
@@ -401,10 +406,10 @@ def print_battery(name, layout: Layout, n_steps, res):
     print("-" * 78)
 
 
-def parse_layout(spec: str) -> Layout:
-    """``"RxxRy"`` -> ``Layout(M, N, Rx, Ry)``."""
+def parse_layout(spec: str, size: int = M) -> Layout:
+    """``"RxxRy"`` -> ``Layout(size, size, Rx, Ry)``."""
     rx, ry = (int(v) for v in spec.lower().split("x"))
-    return Layout(M, N, rx, ry)
+    return Layout(size, size, rx, ry)
 
 
 def main(argv=None):
@@ -416,11 +421,12 @@ def main(argv=None):
         help="registered transport name",
     )
     ap.add_argument("--layout", default="2x2", help="RxxRy, Rx*Ry <= device count")
+    ap.add_argument("--size", type=int, default=M, help="global grid edge, M = N = size")
     ap.add_argument("--steps", type=int, default=N_STEPS)
     ap.add_argument("--repeats", type=int, default=5, help="timed repeats; min is reported")
     a = ap.parse_args(argv)
     try:
-        layout = parse_layout(a.layout)
+        layout = parse_layout(a.layout, a.size)
     except ValueError as e:
         raise SystemExit(e) from None
     if layout.P > jax.device_count():
