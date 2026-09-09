@@ -14,12 +14,18 @@ import inspect
 import pathlib
 import symtable
 import textwrap
+import types
+import weakref
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import Any, cast
 
 
 MISSING_FILENAME = "<string>"
+
+_GLOBAL_NAMES_BY_CODE: weakref.WeakKeyDictionary[types.CodeType, frozenset[str]] = (
+    weakref.WeakKeyDictionary()
+)
 
 
 def _global_names_from_source(source: str) -> set[str]:
@@ -43,20 +49,33 @@ def _global_names_from_source(source: str) -> set[str]:
     return set(walk(symtable.symtable(source, MISSING_FILENAME, "exec")))
 
 
+def _global_names_of_function(function: Callable) -> frozenset[str]:
+    # The names are a property of the code object and the toolchain collects the closure
+    # variables of one function many times over (every stage fingerprint does), so the
+    # source analysis is done once per code object. Values are looked up on every call.
+    code = function.__code__
+    if (names := _GLOBAL_NAMES_BY_CODE.get(code)) is None:
+        source = make_source_definition_from_function(function).source
+        names = _GLOBAL_NAMES_BY_CODE[code] = frozenset(_global_names_from_source(source))
+    return names
+
+
 def get_closure_vars_from_function(function: Callable) -> dict[str, Any]:
     # `inspect.getclosurevars` only sees the names of the function's own code object, which
     # misses names referenced only inside a nested scope such as a generator expression.
-    # Free variables are unaffected (they are cells of the function itself), so only the
-    # global names are taken from the source instead.
-    nonlocals = inspect.getclosurevars(function).nonlocals
+    # Free variables are unaffected (they are cells of the function itself), so they are read
+    # from the cells directly and only the global names are taken from the source.
+    code = function.__code__
+    nonlocals = dict(
+        zip(code.co_freevars, (cell.cell_contents for cell in function.__closure__ or ()))
+    )
     global_ns = function.__globals__
     builtin_ns = global_ns.get("__builtins__", builtins.__dict__)
     if inspect.ismodule(builtin_ns):
         builtin_ns = builtin_ns.__dict__
 
-    source = make_source_definition_from_function(function).source
     closure_vars: dict[str, Any] = {}
-    for name in _global_names_from_source(source):
+    for name in _global_names_of_function(function):
         if name in global_ns:
             closure_vars[name] = global_ns[name]
         elif name in builtin_ns:
