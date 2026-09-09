@@ -1815,13 +1815,13 @@ def test_jax_traced_array_dispatch():
         assert isinstance(field, nd_array_field.JaxArrayField)
         return jax.numpy.sum((field * field).ndarray)
 
-    np.testing.assert_allclose(jax.grad(loss)(x), 2.0 * x.__array__())
+    np.testing.assert_allclose(jax.grad(loss)(x), 2.0 * np.asarray(x))
     np.testing.assert_allclose(jax.jit(loss)(x), loss(x))
 
     offsets = jax.numpy.asarray([[2, 0], [1, 2]])
-    codomain = common.domain({D0: (0, 2), D1: (0, 2)})
+    offsets_domain = common.domain({D0: (0, 2), D1: (0, 2)})
 
     def make_connectivity(arr):
-        return common._connectivity(arr, codomain=D0, domain=codomain).ndarray
+        return common._connectivity(arr, codomain=D0, domain=offsets_domain).ndarray
 
     np.testing.assert_array_equal(jax.jit(make_connectivity)(offsets), offsets)
