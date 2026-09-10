@@ -771,7 +771,7 @@ without errors. Known cosmetic change: nb04's degenerate thin-ring scratch-trick
 now reports dot-product error 1e-1 instead of 3.8 (both wrong by design; slice mirroring
 is by name now instead of by value).
 
-## Round 5: Santis runs (2026-09-09, in progress)
+## Round 5: Santis runs (2026-09-09/10) — report published
 
 Setup: `$SCRATCH/tmp/gt4py_ad_2026_09_09/{gt4py,venv,jobs,results}` on santis; uenv
 `icon/26.7:v1` (Python 3.13.13, CUDA 13.1); venv from the uenv's python via `uv`, with
@@ -808,6 +808,48 @@ Additions during the run (all with 20 timed repeats per case, `samples_step_ms` 
   residuals): single 855972, P=2 855973, P=4 855974, 2/4/8 nodes 855975/855976/855977;
   rows also carry `peak_mem_before_bytes`/`peak_mem_bytes_delta` for per-case peaks.
 Analysis: `santis/analyze.py RESULTS_DIR` (tables 2a-2h, 3a-3b, 4; PNGs), medians with IQR.
+
+Sanity round (2026-09-10): `sanity_single.sbatch` (battery at 2048^2 on 2x2, step-count
+linearity at 64^2/4096^2, allocator sensitivity, roofline rerun with XLA cost analysis) and
+`sanity_nodes.sbatch` (NCCL plugin confirmation, battery at 2048^2 on 32 GPUs, repeat of the
+largest strong points) — 855980/855981. NCCL confirmed: "Loaded net plugin AWS Libfabric",
+provider cxi, 4 NICs. Battery at 2048^2 on 32x1: padded/coloured2ph/allgather ALL PASS
+(T5 1.4e-13, Taylor 2.00); ragged forward bit-exact, gradient wrong (same as on 4 GPUs).
+T5's gate now uses the error relative to the largest gradient component (commit 4ec1e80f2):
+the per-field metric was 16x16-calibrated and grew with grid size at constant absolute error.
+
+**Single-process 4-device gradient hangs** (not OOM) at 2x2 grad 8192^2 and grad_remat 16384^2
+(4096^2 per device and up): three independent jobs (855947, 855972, 855980) wrote all rows in
+their first 15 min and then sat in that case until the time limit; the identical case in
+4-process mode completes (grad) or reports OOM cleanly. Fill-in jobs 856057-856061 append the
+missing single-process 2x2/4x1 rows to the original files with sizes capped below the hang
+and `timeout -s KILL 45m` per step; analyze.py dedupes by case key (last row wins).
+
+Report: https://claude.ai/code/artifact/454c9a0f-8652-4c99-a853-8abba507914a (artifact
+"Halo-Exchange AD on Santis"; generator `<project>/tmp/report/{extract,charts,build_report,page}.py`;
+raw rows `<project>/tmp/santis_results/*.jsonl`, `analysis.md`, `profile/`). Headline numbers:
+forward 29.0x on 32 GPUs at 16384^2 with coloured2ph (91%), padded 21.2x (66%); rematerialised
+gradient at 8192^2: coloured2ph 22x, padded 9x; grad_remat is 0.76-0.81x the stored-residual
+gradient at >= 1024^2 per GPU; ncu: every kernel at 73-92% of HBM peak, ref step 17.4 ms kernel
+time at 16384^2 (~27 f64 accesses/cell/step); the 20-step lax.scan costs 1.6-1.7x per step vs an
+unrolled step (loop-carried copies of the six state fields; penalty appears at 5 steps when XLA
+stops unrolling); exchange <= 10% of a step at 4096^2/GPU on 4 GPUs, ~30% at 512 rows/GPU on 32;
+sharded formulation costs 1.36x vs the plain model at P=1 (pad/select kernels); plain grad OOM at
+4096^2/GPU is the non-preallocating allocator (with preallocation it runs at ~37 GB; 8192^2 is
+real); XLA cost_analysis bytes count the scan body once per module (not usable as per-step
+traffic). Two independent reviews (analysis tables; report) applied. Report review corrections worth
+remembering: the padded transport's loss at 32 GPUs is its slot-padded volume (P x largest
+chunk = 4.2 MB per GPU per field for a 0.26 MB halo at 16384^2 on 32x1), not latency, which is
+why the coloured transports and the 2-D layouts scale better; memory figures are GiB; the
+scan-loop mechanism (loop-carried copies) is an inference from CPU HLO. **Job-script bug:**
+`sbatch --export=ALL,LAYOUTS=8x1,4x2` splits on the comma, so every multi-process sweep ran
+only its first layout; the 2-D layouts (4x1 multi, 4x2, 4x4, 8x4) were re-run in jobs
+856095-856098 (`layouts2d.sbatch`, colon-separated LAYOUTS) and the loaders now merge all
+files per run.
+2-D layout results (all sweeps, 20 repeats): strip/block ratios at 16384^2 fwd and 8192^2
+grad_remat — padded 32x1/8x4 1.27 (fwd) and 1.97 (grad_remat), 16x1/4x4 1.04 / 1.31, P<=8 ~1.0;
+coloured2ph 0.98-1.03 everywhere. Confirms the padding-volume explanation.
+Report generator copied to `santis/report/` (extract.py RESULTS_DIR; page.py).
 
 First-round sweeps (min only, 5 repeats): 855938/855939 (single process, strong/weak),
 855940/855941 (4 processes, strong/weak, 2x2+4x1), 855942/855943 (2 processes, 2x1);

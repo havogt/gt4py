@@ -1,6 +1,6 @@
 #!/bin/bash -l
 # One process per GPU (jax.distributed, NCCL). P must equal the task count:
-#   sbatch --export=ALL,KIND=strong,LAYOUTS=2x2,4x1 --ntasks-per-node=4 sweep_multi.sbatch
+#   sbatch --export=ALL,KIND=strong,LAYOUTS=2x2:4x1 --ntasks-per-node=4 sweep_multi.sbatch
 #   sbatch --export=ALL,KIND=strong,LAYOUTS=2x1     --ntasks-per-node=2 sweep_multi.sbatch
 #SBATCH --job-name=swm-sweep-multi
 #SBATCH --account=csstaff
@@ -15,7 +15,7 @@
 set -u
 source "$SLURM_SUBMIT_DIR/common.sh"
 KIND=${KIND:-strong}
-LAYOUTS=${LAYOUTS:-2x2,4x1}
+LAYOUTS=${LAYOUTS:-2x2:4x1}; LAYOUTS=${LAYOUTS//:/,}  # colon-separated: sbatch --export splits on commas
 TRANSPORTS=${TRANSPORTS:-padded,coloured8,coloured2ph,allgather,ragged}
 STEPS=${STEPS:-20}
 REPEATS=${REPEATS:-20}

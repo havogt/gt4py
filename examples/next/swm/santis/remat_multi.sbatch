@@ -1,8 +1,8 @@
 #!/bin/bash -l
 # Rematerialised gradient, one process per GPU, any node count:
 #   sbatch --nodes=1 --ntasks-per-node=2 --export=ALL,LAYOUTS=2x1      remat_multi.sbatch
-#   sbatch --nodes=1 --ntasks-per-node=4 --export=ALL,LAYOUTS=2x2,4x1  remat_multi.sbatch
-#   sbatch --nodes=2 --export=ALL,LAYOUTS=8x1,4x2   remat_multi.sbatch   (and 4/8 nodes)
+#   sbatch --nodes=1 --ntasks-per-node=4 --export=ALL,LAYOUTS=2x2:4x1  remat_multi.sbatch
+#   sbatch --nodes=2 --export=ALL,LAYOUTS=8x1:4x2   remat_multi.sbatch   (and 4/8 nodes)
 #SBATCH --job-name=swm-remat-multi
 #SBATCH --account=csstaff
 #SBATCH --nodes=1
@@ -15,7 +15,7 @@
 #SBATCH --view=default
 set -u
 source "$SLURM_SUBMIT_DIR/common.sh"
-LAYOUTS=${LAYOUTS:?}
+LAYOUTS=${LAYOUTS:?}; LAYOUTS=${LAYOUTS//:/,}  # colon-separated: sbatch --export splits on commas
 TRANSPORTS=${TRANSPORTS:-padded,coloured8,coloured2ph,allgather,ragged}
 export NCCL_NET_PLUGIN=ofi
 export NCCL_NET="AWS Libfabric"

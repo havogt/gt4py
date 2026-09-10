@@ -1,9 +1,9 @@
 #!/bin/bash -l
 # Multi-node: one process per GPU, 4 per node, NCCL over Slingshot through the uenv's
 # aws-ofi-nccl plugin. Strong, weak and exchange-only sweeps in one job:
-#   sbatch --nodes=2 --export=ALL,LAYOUTS=8x1,4x2   sweep_nodes.sbatch
-#   sbatch --nodes=4 --export=ALL,LAYOUTS=16x1,4x4  sweep_nodes.sbatch
-#   sbatch --nodes=8 --export=ALL,LAYOUTS=32x1,8x4  sweep_nodes.sbatch
+#   sbatch --nodes=2 --export=ALL,LAYOUTS=8x1:4x2   sweep_nodes.sbatch
+#   sbatch --nodes=4 --export=ALL,LAYOUTS=16x1:4x4  sweep_nodes.sbatch
+#   sbatch --nodes=8 --export=ALL,LAYOUTS=32x1:8x4  sweep_nodes.sbatch
 #SBATCH --job-name=swm-sweep-nodes
 #SBATCH --account=csstaff
 #SBATCH --nodes=2
@@ -16,7 +16,7 @@
 #SBATCH --view=default
 set -u
 source "$SLURM_SUBMIT_DIR/common.sh"
-LAYOUTS=${LAYOUTS:?}
+LAYOUTS=${LAYOUTS:?}; LAYOUTS=${LAYOUTS//:/,}  # colon-separated: sbatch --export splits on commas
 TRANSPORTS=${TRANSPORTS:-padded,coloured8,coloured2ph,allgather,ragged}
 STEPS=${STEPS:-20}
 REPEATS=${REPEATS:-20}
