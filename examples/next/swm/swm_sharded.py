@@ -57,12 +57,12 @@ N_STEPS = 10
 AXIS = "d"
 
 
-def _gt_step(arrays, dt_, alpha_, mloc, nloc):
-    """One ``operators.timestep`` on raw ``(mloc+2, nloc+2)`` jnp arrays."""
-    dom = gtx.domain({I: (-1, mloc + 1), J: (-1, nloc + 1)})
-    u, v, p, uo, vo, po = (gtx.as_field(dom, a, allocator=jnp) for a in arrays)
-    out = timestep(u, v, p, dx, dy, dt_, uo, vo, po, alpha_, mloc, nloc)
-    return tuple(o.ndarray for o in out)
+def _halo_domain(mloc, nloc):
+    return gtx.domain({I: (-1, mloc + 1), J: (-1, nloc + 1)})
+
+
+def _field(domain, a):
+    return gtx.as_field(domain, a, allocator=jnp)
 
 
 def make_mesh(p: int) -> Mesh:
@@ -139,22 +139,24 @@ def sharded_program(transport, layout: Layout, n_steps: int, remat: bool = False
     t = tables(transport, L)
     mloc, nloc = L.MLOC, L.NLOC
 
-    def exchange(a):
-        return transport.exchange(a, t, AXIS)
+    dom = _halo_domain(mloc, nloc)
+
+    def exchange(f):
+        return _field(f.domain, transport.exchange(f.ndarray, t, AXIS))
 
     def body(u0, v0, p0):
-        u, v, p = (exchange(jnp.pad(a, L.h)) for a in (u0, v0, p0))
-        state = _gt_step((u, v, p, u, v, p), dt, 0.0, mloc, nloc)
+        u, v, p = (exchange(_field(dom, jnp.pad(a, L.h))) for a in (u0, v0, p0))
+        state = timestep(u, v, p, dx, dy, dt, u, v, p, 0.0, mloc, nloc)
 
         def scan_step(carry, _):
             u, v, p, uo, vo, po = carry
-            u, v, p = (exchange(a) for a in (u, v, p))
-            return _gt_step((u, v, p, uo, vo, po), 2.0 * dt, alpha, mloc, nloc), None
+            u, v, p = (exchange(f) for f in (u, v, p))
+            return timestep(u, v, p, dx, dy, 2.0 * dt, uo, vo, po, alpha, mloc, nloc), None
 
         step = jax.checkpoint(scan_step) if remat else scan_step
         final, _ = jax.lax.scan(step, state, None, length=n_steps - 1)
         h = L.h
-        return tuple(f[h:-h, h:-h] for f in final[:3])
+        return tuple(f.ndarray[h:-h, h:-h] for f in final[:3])
 
     return jax.jit(
         shard_map(body, mesh=make_mesh(L.P), in_specs=(P(AXIS),) * 3, out_specs=(P(AXIS),) * 3)
@@ -181,19 +183,16 @@ def reference_program(n_steps: int, M: int = M, N: int = N, remat: bool = False)
     dom_int = gtx.domain({I: (0, M), J: (0, N)})
 
     def run(u0, v0, p0):
-        u, v, p = (
-            make_periodic(gtx.as_field(dom_int, a, allocator=jnp), M, N).ndarray
-            for a in (u0, v0, p0)
-        )
-        state = _gt_step((u, v, p, u, v, p), dt, 0.0, M, N)
+        u, v, p = (make_periodic(_field(dom_int, a), M, N) for a in (u0, v0, p0))
+        state = timestep(u, v, p, dx, dy, dt, u, v, p, 0.0, M, N)
 
         def scan_step(carry, _):
             u, v, p, uo, vo, po = carry
-            return _gt_step((u, v, p, uo, vo, po), 2.0 * dt, alpha, M, N), None
+            return timestep(u, v, p, dx, dy, 2.0 * dt, uo, vo, po, alpha, M, N), None
 
         step = jax.checkpoint(scan_step) if remat else scan_step
         final, _ = jax.lax.scan(step, state, None, length=n_steps - 1)
-        return tuple(f[1:-1, 1:-1] for f in final[:3])
+        return tuple(f.ndarray[1:-1, 1:-1] for f in final[:3])
 
     return jax.jit(run)
 
@@ -203,18 +202,22 @@ def wrap_reference_program(n_steps: int, M: int = M, N: int = N):
     """Halos from an explicit wrap-pad: forward bit-identical to ``reference_program``,
     adjoint accumulated in a different order."""
 
+    dom = _halo_domain(M, N)
+
+    def wrap(a):
+        return _field(dom, jnp.pad(a, 1, mode="wrap"))
+
     def run(u0, v0, p0):
-        wrap = lambda a: jnp.pad(a, 1, mode="wrap")  # noqa: E731
         u, v, p = (wrap(a) for a in (u0, v0, p0))
-        state = _gt_step((u, v, p, u, v, p), dt, 0.0, M, N)
+        state = timestep(u, v, p, dx, dy, dt, u, v, p, 0.0, M, N)
 
         def scan_step(carry, _):
             u, v, p, uo, vo, po = carry
-            u, v, p = (wrap(a[1:-1, 1:-1]) for a in (u, v, p))
-            return _gt_step((u, v, p, uo, vo, po), 2.0 * dt, alpha, M, N), None
+            u, v, p = (wrap(f.ndarray[1:-1, 1:-1]) for f in (u, v, p))
+            return timestep(u, v, p, dx, dy, 2.0 * dt, uo, vo, po, alpha, M, N), None
 
         final, _ = jax.lax.scan(scan_step, state, None, length=n_steps - 1)
-        return tuple(f[1:-1, 1:-1] for f in final[:3])
+        return tuple(f.ndarray[1:-1, 1:-1] for f in final[:3])
 
     return jax.jit(run)
 

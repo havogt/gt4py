@@ -856,6 +856,20 @@ First-round sweeps (min only, 5 repeats): 855938/855939 (single process, strong/
 smoke rerun 855937. Sizes strong 32..16384, weak 32..4096 per device; transports padded,
 coloured8, coloured2ph, allgather, ragged; modes fwd, grad, ref; 20 steps, 5 repeats.
 
+## Field boundary moved to the exchange (2026-09-10)
+
+`swm_sharded.py` no longer re-wraps raw arrays into gt4py fields inside every step
+(`_gt_step` is gone): the `shard_map` in/out specs still carry raw arrays (a field's domain is
+pytree aux data and does not shard), the scan carries `JaxArrayField`s, `timestep` is called
+on fields directly, and the transport is wrapped once as field -> field
+(`_field(f.domain, transport.exchange(f.ndarray, ...))`). The reference and wrap-reference
+programs carry fields the same way. Forward outputs are bit-identical to before for all
+layouts/transports; gradients differ in the last bits (max 9e-15 relative, same for the
+reference), i.e. XLA reassociates the reverse pass slightly differently; battery ALL PASS,
+T3/T4 max_ulp 0, T5 1.29e-13 as before. Follow-up worth measuring: `operators.timestep` ends
+with `make_periodic` on the three new fields, which in the sharded step fills local halos that
+the next exchange overwrites (dead concat_where copies; likely part of the 1.36x P=1 overhead).
+
 ## Log
 
 - **2026-09-09** — Santis: setup, smoke, ragged-GPU adjoint finding, rim-gather fix, sweeps submitted (Round 5).
