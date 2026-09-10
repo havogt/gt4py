@@ -592,12 +592,11 @@ class NdArrayConnectivityField(
 
     @property
     def _index_table(self) -> core_defs.NDArrayObject:
-        """The table whose contents `inverse_image` inspects."""
         return self._ndarray
 
     @functools.cached_property
     def _image_bounds(self) -> Optional[tuple[int, int, tuple[slice, ...]]]:
-        """`(min, max, support)` of the non-skip entries, `None` if there are none."""
+        """Smallest value, largest value and bounding hyperslice of the non-skip entries."""
         xp = self.array_ns
         table = self._index_table
         if self.skip_value is None:

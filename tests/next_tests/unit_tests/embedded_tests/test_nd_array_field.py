@@ -1886,7 +1886,17 @@ def _skip_value_e2v_table(num_vertices: int) -> np.ndarray:
 
 
 @pytest.mark.parametrize("skip_value", [None, -1])
-def test_inverse_image_bounds_shortcut_matches_hyperslice(skip_value):
+def test_inverse_image_bounds_shortcut_matches_hyperslice(skip_value, monkeypatch):
+    hyperslice = nd_array_field._hyperslice
+    hyperslice_calls = 0
+
+    def counting_hyperslice(*args, **kwargs):
+        nonlocal hyperslice_calls
+        hyperslice_calls += 1
+        return hyperslice(*args, **kwargs)
+
+    monkeypatch.setattr(nd_array_field, "_hyperslice", counting_hyperslice)
+
     rng = np.random.default_rng(0)
     high = 6
     covering_cases = 0
@@ -1901,14 +1911,19 @@ def test_inverse_image_bounds_shortcut_matches_hyperslice(skip_value):
         for start in range(-1, high):
             for stop in range(start + 1, high + 1):
                 image_range = UnitRange(start, stop)
-                expected = nd_array_field._hyperslice(table, image_range, np, skip_value)
+                expected = hyperslice(table, image_range, np, skip_value)
+                valid = table[table != skip_value] if skip_value is not None else table
+                covering = valid.size > 0 and bool(np.all((valid >= start) & (valid < stop)))
+                covering &= skip_value is None or skip_value not in image_range
+                calls_before = hyperslice_calls
                 if expected is None:
                     with pytest.raises(ValueError, match="non-contiguous or empty"):
                         conn.inverse_image(image_range)
                 else:
                     assert conn.inverse_image(image_range) == conn.domain.slice_at[expected]
-                    valid = table[table != skip_value] if skip_value is not None else table
-                    covering_cases += bool(np.all((valid >= start) & (valid < stop)))
+                # the shortcut answers exactly the covering cases without scanning the table
+                assert (hyperslice_calls == calls_before) == covering
+                covering_cases += covering
     assert covering_cases > 0
 
 
