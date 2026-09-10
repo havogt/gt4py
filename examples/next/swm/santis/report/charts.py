@@ -182,19 +182,24 @@ class Chart:
                 f"{'M' if i == 0 else 'L'}{fx(p[0]):.1f},{fy(p[1]):.1f}" for i, p in enumerate(pts)
             )
             dash = f' stroke-dasharray="{s["dash"]}"' if s["dash"] else ""
-            o.append(
-                f'<path d="{d}" fill="none" stroke="{s["color"]}" stroke-width="{s["width"]}"{dash} stroke-linejoin="round"/>'
-            )
+            if s["width"]:
+                o.append(
+                    f'<path d="{d}" fill="none" stroke="{s["color"]}" stroke-width="{s["width"]}"{dash} stroke-linejoin="round"/>'
+                )
             for p in pts:
                 x, y = fx(p[0]), fy(p[1])
                 if p[2] is not None and p[3] is not None and p[3] > p[2]:
                     o.append(
                         f'<line x1="{x:.1f}" x2="{x:.1f}" y1="{fy(p[3]):.1f}" y2="{fy(p[2]):.1f}" stroke="{s["color"]}" stroke-width="1.5"/><line x1="{x - 3:.1f}" x2="{x + 3:.1f}" y1="{fy(p[3]):.1f}" y2="{fy(p[3]):.1f}" stroke="{s["color"]}" stroke-width="1.5"/><line x1="{x - 3:.1f}" x2="{x + 3:.1f}" y1="{fy(p[2]):.1f}" y2="{fy(p[2]):.1f}" stroke="{s["color"]}" stroke-width="1.5"/>'
                     )
+                if s["marker"] == "none":
+                    continue
+                big = s["name"].endswith("(whole step)")
+                r_ = 7 if big else 4
                 shape = (
-                    f'<circle cx="{x:.1f}" cy="{y:.1f}" r="4" fill="{s["color"]}" stroke="var(--paper)" stroke-width="1.5"/>'
+                    f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{r_}" fill="{s["color"]}" stroke="var(--paper)" stroke-width="1.5"/>'
                     if s["marker"] == "circle"
-                    else f'<rect x="{x - 4:.1f}" y="{y - 4:.1f}" width="8" height="8" fill="{s["color"]}" stroke="var(--paper)" stroke-width="1.5"/>'
+                    else f'<rect x="{x - r_:.1f}" y="{y - r_:.1f}" width="{2 * r_}" height="{2 * r_}" fill="{s["color"]}" stroke="var(--paper)" stroke-width="1.5"/>'
                 )
                 tip = f"{s['name']}: x={self.xtickfmt(p[0])}, {_fmt(p[1])}" + (
                     f" [IQR {_fmt(p[2])}–{_fmt(p[3])}]" if p[2] is not None else ""

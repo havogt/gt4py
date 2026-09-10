@@ -363,6 +363,82 @@ def ncu_bars():
     )
 
 
+HBM_TBPS, FP64_TFLOPS = (
+    4.0,
+    34.0,
+)  # GH200 96 GB HBM3 datasheet; FP64 vector peak (67 with tensor cores)
+
+
+def roofline_chart():
+    import os
+
+    path = "/home/vogtha/claude/gt4py_autodiff/tmp/santis_results/profile/roofline.json"
+    if not os.path.exists(path):
+        return "", {}
+    R = json.load(open(path))
+    c = C.Chart(
+        "Roofline, one GPU: kernels of one model step",
+        "arithmetic intensity, FP64 flop per DRAM byte",
+        "attained FP64 TFLOP/s",
+        xlog=True,
+        ylog=True,
+        w=760,
+        h=440,
+    )
+    # roof: bandwidth slope up to the ridge point, then flat
+    ridge = FP64_TFLOPS / HBM_TBPS
+    xs = [0.01, 0.03, 0.1, 0.3, 1, 3, ridge, 30, 100]
+    c.add(
+        "roof: 4 TB/s HBM3 and 34 TFLOP/s FP64",
+        [(x, min(FP64_TFLOPS, HBM_TBPS * x)) for x in xs],
+        "var(--ink-3)",
+        dash="6 4",
+        marker="none",
+        label=False,
+        width=1.5,
+    )
+    sets = [
+        ("ref|16384", "reference step, 16384²", "var(--s3)", "square"),
+        ("fwd|16384", "sharded padded step, 16384²", "var(--s1)", "circle"),
+        ("ref_grad_remat|16384", "reference gradient step (remat), 16384²", "var(--s2)", "square"),
+        ("ref|2048", "reference step, 2048²", "var(--s3)", "square"),
+    ]
+    summary = {}
+    for key, lab, col, mk in sets:
+        if key not in R:
+            continue
+        pts = []
+        for k in R[key]["kernels"]:
+            if k["bytes_per_step"] <= 0 or k["flops_per_step"] <= 0 or k["s_per_step"] < 2e-6:
+                continue
+            pts.append(
+                (
+                    k["flops_per_step"] / k["bytes_per_step"],
+                    k["flops_per_step"] / k["s_per_step"] / 1e12,
+                )
+            )
+        t = R[key]["total"]
+        summary[key] = {
+            "ms": 1e3 * t["s"],
+            "GB": t["bytes"] / 1e9,
+            "GF": t["flops"] / 1e9,
+            "ai": t["flops"] / t["bytes"],
+            "tbps": t["bytes"] / t["s"] / 1e12,
+            "tflops": t["flops"] / t["s"] / 1e12,
+            "nk": len(R[key]["kernels"]),
+        }
+        c.add(lab, pts, col, marker=mk, label=False, width=0)
+        c.add(
+            lab + " (whole step)",
+            [(summary[key]["ai"], summary[key]["tflops"])],
+            col,
+            marker=mk,
+            label=True,
+            width=0,
+        )
+    return c.svg(), summary
+
+
 # ---------- tables ----------
 def node_table(mode, size):
     rows = []

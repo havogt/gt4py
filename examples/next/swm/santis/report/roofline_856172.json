@@ -1,0 +1,776 @@
+{
+ "fwd|16384": {
+  "kernels": [
+   {
+    "kernel": "loop_subtract_fusion",
+    "launches_per_step": 1.0,
+    "s_per_step": 0.006677781333333334,
+    "bytes_per_step": 22097749418.666668,
+    "l2_bytes_per_step": 59207001429.333336,
+    "flops_per_step": 8724152320.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_pad_fusion",
+    "launches_per_step": 3.0,
+    "s_per_step": 0.005543104,
+    "bytes_per_step": 12870901077.333334,
+    "l2_bytes_per_step": 39242358869.333336,
+    "flops_per_step": 0.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_select_fusion_2",
+    "launches_per_step": 3.0,
+    "s_per_step": 0.005509664000000001,
+    "bytes_per_step": 20115304789.333332,
+    "l2_bytes_per_step": 41035879744.0,
+    "flops_per_step": 0.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_multiply_fusion",
+    "launches_per_step": 1.0,
+    "s_per_step": 0.004642410666666667,
+    "bytes_per_step": 12880228096.0,
+    "l2_bytes_per_step": 35475688693.333336,
+    "flops_per_step": 1610907660.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_add_divide_fusion",
+    "launches_per_step": 1.0,
+    "s_per_step": 0.0034918080000000003,
+    "bytes_per_step": 12873866325.333334,
+    "l2_bytes_per_step": 27322254144.0,
+    "flops_per_step": 8859451425.0,
+    "f32_per_step": 536936450.0
+   },
+   {
+    "kernel": "input_scatter_fusion",
+    "launches_per_step": 3.0,
+    "s_per_step": 1.6042666666666668e-05,
+    "bytes_per_step": 9500416.0,
+    "l2_bytes_per_step": 19791050.666666668,
+    "flops_per_step": 0.0,
+    "f32_per_step": 0.0
+   }
+  ],
+  "total": {
+   "s": 0.025880810666666667,
+   "bytes": 80847550122.66667,
+   "flops": 19194511405.0
+  }
+ },
+ "fwd|2048": {
+  "kernels": [
+   {
+    "kernel": "loop_subtract_fusion",
+    "launches_per_step": 1.0,
+    "s_per_step": 0.00010734933333333334,
+    "bytes_per_step": 329926570.6666667,
+    "l2_bytes_per_step": 932390282.6666666,
+    "flops_per_step": 136314880.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_pad_fusion",
+    "launches_per_step": 3.0,
+    "s_per_step": 0.000106848,
+    "bytes_per_step": 139542698.66666666,
+    "l2_bytes_per_step": 649179253.3333334,
+    "flops_per_step": 0.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_select_fusion_2",
+    "launches_per_step": 3.0,
+    "s_per_step": 0.00010110933333333336,
+    "bytes_per_step": 272171434.6666667,
+    "l2_bytes_per_step": 624770357.3333334,
+    "flops_per_step": 0.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_add_divide_fusion",
+    "launches_per_step": 1.0,
+    "s_per_step": 4.8426666666666675e-05,
+    "bytes_per_step": 152253781.33333334,
+    "l2_bytes_per_step": 380607392.0,
+    "flops_per_step": 155340837.0,
+    "f32_per_step": 8396802.0
+   },
+   {
+    "kernel": "loop_multiply_fusion",
+    "launches_per_step": 1.0,
+    "s_per_step": 4.4896e-05,
+    "bytes_per_step": 147980970.66666666,
+    "l2_bytes_per_step": 323325397.3333333,
+    "flops_per_step": 25202700.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "input_scatter_fusion",
+    "launches_per_step": 3.0,
+    "s_per_step": 1.2106666666666665e-05,
+    "bytes_per_step": 1189376.0,
+    "l2_bytes_per_step": 3067338.6666666665,
+    "flops_per_step": 0.0,
+    "f32_per_step": 0.0
+   }
+  ],
+  "total": {
+   "s": 0.000420736,
+   "bytes": 1043064832.0,
+   "flops": 316858417.0
+  }
+ },
+ "grad_remat|16384": {
+  "kernels": [
+   {
+    "kernel": "loop_add_select_fusion",
+    "launches_per_step": 1.0,
+    "s_per_step": 0.05842928,
+    "bytes_per_step": 191012983552.0,
+    "l2_bytes_per_step": 340547273600.0,
+    "flops_per_step": 17719771274.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_pad_fusion",
+    "launches_per_step": 3.0,
+    "s_per_step": 0.005545237333333334,
+    "bytes_per_step": 12870923861.333334,
+    "l2_bytes_per_step": 39263585632.0,
+    "flops_per_step": 0.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_select_fusion",
+    "launches_per_step": 3.0,
+    "s_per_step": 0.005499424,
+    "bytes_per_step": 20112826965.333332,
+    "l2_bytes_per_step": 41069759146.666664,
+    "flops_per_step": 0.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_add_fusion_2",
+    "launches_per_step": 3.0,
+    "s_per_step": 0.005400864000000001,
+    "bytes_per_step": 20093656320.0,
+    "l2_bytes_per_step": 39114353621.333336,
+    "flops_per_step": 805502988.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_divide_multiply_fusion",
+    "launches_per_step": 1.0,
+    "s_per_step": 0.004671594666666667,
+    "bytes_per_step": 17165411925.333334,
+    "l2_bytes_per_step": 33856171040.0,
+    "flops_per_step": 19061243975.0,
+    "f32_per_step": 1073872900.0
+   },
+   {
+    "kernel": "loop_multiply_fusion_3",
+    "launches_per_step": 1.0,
+    "s_per_step": 0.004652192,
+    "bytes_per_step": 12877968213.333334,
+    "l2_bytes_per_step": 35474535765.333336,
+    "flops_per_step": 1610907660.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_add_fusion_4",
+    "launches_per_step": 1.0,
+    "s_per_step": 0.004229429333333334,
+    "bytes_per_step": 11189959168.0,
+    "l2_bytes_per_step": 43704664032.0,
+    "flops_per_step": 5369331732.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_slice_fusion_2",
+    "launches_per_step": 3.0,
+    "s_per_step": 0.0038110293333333332,
+    "bytes_per_step": 12840220672.0,
+    "l2_bytes_per_step": 27375461226.666668,
+    "flops_per_step": 0.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_multiply_fusion_1",
+    "launches_per_step": 1.0,
+    "s_per_step": 0.0023498986666666668,
+    "bytes_per_step": 6420707157.333333,
+    "l2_bytes_per_step": 20709682880.0,
+    "flops_per_step": 2147614720.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_add_fusion_3",
+    "launches_per_step": 1.0,
+    "s_per_step": 0.0023092480000000003,
+    "bytes_per_step": 8587584170.666667,
+    "l2_bytes_per_step": 19917315594.666668,
+    "flops_per_step": 1879048192.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_multiply_fusion",
+    "launches_per_step": 1.0,
+    "s_per_step": 0.0018964053333333335,
+    "bytes_per_step": 4371500117.333333,
+    "l2_bytes_per_step": 13587677322.666666,
+    "flops_per_step": 2147614720.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_multiply_fusion_2",
+    "launches_per_step": 1.0,
+    "s_per_step": 0.001417216,
+    "bytes_per_step": 4275506688.0,
+    "l2_bytes_per_step": 10846046837.333334,
+    "flops_per_step": 1744936960.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "input_scatter_fusion_8",
+    "launches_per_step": 3.0,
+    "s_per_step": 4.2784e-05,
+    "bytes_per_step": 9588309.333333334,
+    "l2_bytes_per_step": 20032682.666666668,
+    "flops_per_step": 0.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "input_scatter_fusion_9",
+    "launches_per_step": 3.0,
+    "s_per_step": 2.9056e-05,
+    "bytes_per_step": 11262805.333333334,
+    "l2_bytes_per_step": 16547712.0,
+    "flops_per_step": 0.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "input_scatter_fusion_2",
+    "launches_per_step": 3.0,
+    "s_per_step": 2.6431999999999997e-05,
+    "bytes_per_step": 6347776.0,
+    "l2_bytes_per_step": 10499221.333333334,
+    "flops_per_step": 0.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "input_scatter_fusion_3",
+    "launches_per_step": 3.0,
+    "s_per_step": 2.4672e-05,
+    "bytes_per_step": 890624.0,
+    "l2_bytes_per_step": 8301536.0,
+    "flops_per_step": 0.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_broadcast_fusion",
+    "launches_per_step": 1.0,
+    "s_per_step": 3.1253333333333334e-06,
+    "bytes_per_step": 4266.666666666667,
+    "l2_bytes_per_step": 2668906.6666666665,
+    "flops_per_step": 0.0,
+    "f32_per_step": 0.0
+   }
+  ],
+  "total": {
+   "s": 0.10033788800000001,
+   "bytes": 321847342592.0,
+   "flops": 52485972221.0
+  }
+ },
+ "grad_remat|2048": {
+  "kernels": [
+   {
+    "kernel": "loop_add_select_fusion",
+    "launches_per_step": 1.0,
+    "s_per_step": 0.0008017706666666667,
+    "bytes_per_step": 2867117909.3333335,
+    "l2_bytes_per_step": 5038265866.666667,
+    "flops_per_step": 159641704.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_pad_fusion",
+    "launches_per_step": 3.0,
+    "s_per_step": 0.00010638933333333335,
+    "bytes_per_step": 139775829.33333334,
+    "l2_bytes_per_step": 645339658.6666666,
+    "flops_per_step": 0.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_select_fusion",
+    "launches_per_step": 3.0,
+    "s_per_step": 0.00010084266666666666,
+    "bytes_per_step": 271558826.6666667,
+    "l2_bytes_per_step": 625717472.0,
+    "flops_per_step": 0.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_add_fusion_2",
+    "launches_per_step": 3.0,
+    "s_per_step": 9.4656e-05,
+    "bytes_per_step": 270152533.3333333,
+    "l2_bytes_per_step": 586144426.6666666,
+    "flops_per_step": 12607500.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_multiply_fusion_2",
+    "launches_per_step": 1.0,
+    "s_per_step": 7.579733333333333e-05,
+    "bytes_per_step": 181118293.33333334,
+    "l2_bytes_per_step": 532402858.6666667,
+    "flops_per_step": 25202700.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_add_fusion_4",
+    "launches_per_step": 1.0,
+    "s_per_step": 7.512533333333333e-05,
+    "bytes_per_step": 116586325.33333333,
+    "l2_bytes_per_step": 479463946.6666667,
+    "flops_per_step": 151105556.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_divide_multiply_fusion",
+    "launches_per_step": 1.0,
+    "s_per_step": 7.421866666666667e-05,
+    "bytes_per_step": 251656106.66666666,
+    "l2_bytes_per_step": 532584544.0,
+    "flops_per_step": 298086471.0,
+    "f32_per_step": 16793604.0
+   },
+   {
+    "kernel": "loop_slice_fusion_2",
+    "launches_per_step": 3.0,
+    "s_per_step": 6.921600000000001e-05,
+    "bytes_per_step": 137471317.33333334,
+    "l2_bytes_per_step": 423184469.3333333,
+    "flops_per_step": 0.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_add_fusion_3",
+    "launches_per_step": 1.0,
+    "s_per_step": 3.92e-05,
+    "bytes_per_step": 123071061.33333333,
+    "l2_bytes_per_step": 303904202.6666667,
+    "flops_per_step": 29360128.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_multiply_fusion",
+    "launches_per_step": 1.0,
+    "s_per_step": 3.1360000000000005e-05,
+    "bytes_per_step": 47888469.333333336,
+    "l2_bytes_per_step": 161491925.33333334,
+    "flops_per_step": 33570816.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_multiply_fusion_1",
+    "launches_per_step": 1.0,
+    "s_per_step": 2.3690666666666667e-05,
+    "bytes_per_step": 47151189.333333336,
+    "l2_bytes_per_step": 160766784.0,
+    "flops_per_step": 27276288.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "input_scatter_fusion_8",
+    "launches_per_step": 3.0,
+    "s_per_step": 1.2032000000000001e-05,
+    "bytes_per_step": 1189973.3333333333,
+    "l2_bytes_per_step": 3083818.6666666665,
+    "flops_per_step": 0.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "input_scatter_fusion_9",
+    "launches_per_step": 3.0,
+    "s_per_step": 1.0624e-05,
+    "bytes_per_step": 1411242.6666666667,
+    "l2_bytes_per_step": 2646432.0,
+    "flops_per_step": 0.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "input_scatter_fusion_2",
+    "launches_per_step": 3.0,
+    "s_per_step": 8.597333333333335e-06,
+    "bytes_per_step": 795648.0,
+    "l2_bytes_per_step": 1827893.3333333333,
+    "flops_per_step": 0.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "input_scatter_fusion_3",
+    "launches_per_step": 3.0,
+    "s_per_step": 7.445333333333334e-06,
+    "bytes_per_step": 107093.33333333333,
+    "l2_bytes_per_step": 1483648.0,
+    "flops_per_step": 0.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_broadcast_fusion",
+    "launches_per_step": 1.0,
+    "s_per_step": 2.0266666666666666e-06,
+    "bytes_per_step": 2730.6666666666665,
+    "l2_bytes_per_step": 455541.3333333333,
+    "flops_per_step": 0.0,
+    "f32_per_step": 0.0
+   }
+  ],
+  "total": {
+   "s": 0.0015329920000000004,
+   "bytes": 4457054549.333334,
+   "flops": 736851163.0
+  }
+ },
+ "ref|16384": {
+  "kernels": [
+   {
+    "kernel": "loop_subtract_fusion",
+    "launches_per_step": 1.0,
+    "s_per_step": 0.006158688,
+    "bytes_per_step": 21462631509.333332,
+    "l2_bytes_per_step": 46278274474.666664,
+    "flops_per_step": 8724152320.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_add_divide_fusion",
+    "launches_per_step": 1.0,
+    "s_per_step": 0.003756266666666666,
+    "bytes_per_step": 12873759402.666666,
+    "l2_bytes_per_step": 28086302410.666668,
+    "flops_per_step": 8859451425.0,
+    "f32_per_step": 536936450.0
+   },
+   {
+    "kernel": "input_concatenate_fusion_2",
+    "launches_per_step": 2.0,
+    "s_per_step": 0.002596096,
+    "bytes_per_step": 8551776853.333333,
+    "l2_bytes_per_step": 13711168128.0,
+    "flops_per_step": 0.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_multiply_fusion_1",
+    "launches_per_step": 1.0,
+    "s_per_step": 0.0017505173333333334,
+    "bytes_per_step": 6430268160.0,
+    "l2_bytes_per_step": 12544703648.0,
+    "flops_per_step": 805453830.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "input_concatenate_fusion",
+    "launches_per_step": 1.0,
+    "s_per_step": 0.0017396586666666668,
+    "bytes_per_step": 6430294784.0,
+    "l2_bytes_per_step": 10007275658.666666,
+    "flops_per_step": 268484610.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_multiply_fusion",
+    "launches_per_step": 1.0,
+    "s_per_step": 0.0014480533333333335,
+    "bytes_per_step": 4277878016.0,
+    "l2_bytes_per_step": 10204831349.333334,
+    "flops_per_step": 536969220.0,
+    "f32_per_step": 0.0
+   }
+  ],
+  "total": {
+   "s": 0.01744928,
+   "bytes": 60026608725.33333,
+   "flops": 19194511405.0
+  }
+ },
+ "ref|2048": {
+  "kernels": [
+   {
+    "kernel": "loop_subtract_fusion",
+    "launches_per_step": 1.0,
+    "s_per_step": 9.566933333333336e-05,
+    "bytes_per_step": 321910869.3333333,
+    "l2_bytes_per_step": 714932917.3333334,
+    "flops_per_step": 136314880.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_add_divide_fusion",
+    "launches_per_step": 1.0,
+    "s_per_step": 6.0544e-05,
+    "bytes_per_step": 189676117.33333334,
+    "l2_bytes_per_step": 440717290.6666667,
+    "flops_per_step": 138547233.0,
+    "f32_per_step": 8396802.0
+   },
+   {
+    "kernel": "input_concatenate_fusion_2",
+    "launches_per_step": 2.0,
+    "s_per_step": 4.7456e-05,
+    "bytes_per_step": 95469824.0,
+    "l2_bytes_per_step": 216436000.0,
+    "flops_per_step": 0.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_multiply_fusion_1",
+    "launches_per_step": 1.0,
+    "s_per_step": 2.8618666666666668e-05,
+    "bytes_per_step": 87340970.66666667,
+    "l2_bytes_per_step": 194869994.66666666,
+    "flops_per_step": 12601350.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "input_concatenate_fusion",
+    "launches_per_step": 1.0,
+    "s_per_step": 2.740266666666667e-05,
+    "bytes_per_step": 87017642.66666667,
+    "l2_bytes_per_step": 158193344.0,
+    "flops_per_step": 4200450.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_multiply_fusion",
+    "launches_per_step": 1.0,
+    "s_per_step": 2.6165333333333335e-05,
+    "bytes_per_step": 46979157.333333336,
+    "l2_bytes_per_step": 154171765.33333334,
+    "flops_per_step": 8400900.0,
+    "f32_per_step": 0.0
+   }
+  ],
+  "total": {
+   "s": 0.000285856,
+   "bytes": 828394581.3333333,
+   "flops": 300064813.0
+  }
+ },
+ "ref_grad_remat|16384": {
+  "kernels": [
+   {
+    "kernel": "loop_add_fusion_2",
+    "launches_per_step": 1.0,
+    "s_per_step": 0.008449397333333332,
+    "bytes_per_step": 27965299712.0,
+    "l2_bytes_per_step": 62653878965.333336,
+    "flops_per_step": 10873495620.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_divide_multiply_fusion",
+    "launches_per_step": 1.0,
+    "s_per_step": 0.004858261333333333,
+    "bytes_per_step": 17165931178.666666,
+    "l2_bytes_per_step": 33746717312.0,
+    "flops_per_step": 19061243975.0,
+    "f32_per_step": 1073872900.0
+   },
+   {
+    "kernel": "loop_add_fusion_1",
+    "launches_per_step": 1.0,
+    "s_per_step": 0.004191189333333334,
+    "bytes_per_step": 11093697706.666666,
+    "l2_bytes_per_step": 43697481269.333336,
+    "flops_per_step": 5369331732.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "input_concatenate_fusion",
+    "launches_per_step": 2.0,
+    "s_per_step": 0.003478922666666667,
+    "bytes_per_step": 12859748352.0,
+    "l2_bytes_per_step": 20031388341.333332,
+    "flops_per_step": 536969220.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "input_concatenate_fusion_2",
+    "launches_per_step": 2.0,
+    "s_per_step": 0.002589664,
+    "bytes_per_step": 8551523413.333333,
+    "l2_bytes_per_step": 13714005440.0,
+    "flops_per_step": 0.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_multiply_fusion_2",
+    "launches_per_step": 1.0,
+    "s_per_step": 0.002316096,
+    "bytes_per_step": 6420407722.666667,
+    "l2_bytes_per_step": 20544725824.0,
+    "flops_per_step": 2147614720.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_add_fusion",
+    "launches_per_step": 1.0,
+    "s_per_step": 0.002309237333333333,
+    "bytes_per_step": 8586387456.0,
+    "l2_bytes_per_step": 19993468736.0,
+    "flops_per_step": 1879048192.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_multiply_fusion_1",
+    "launches_per_step": 1.0,
+    "s_per_step": 0.0019475733333333333,
+    "bytes_per_step": 4380926378.666667,
+    "l2_bytes_per_step": 13588695637.333334,
+    "flops_per_step": 2147614720.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_multiply_fusion_4",
+    "launches_per_step": 1.0,
+    "s_per_step": 0.0017508586666666666,
+    "bytes_per_step": 6430877952.0,
+    "l2_bytes_per_step": 12552198154.666666,
+    "flops_per_step": 805453830.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_multiply_fusion",
+    "launches_per_step": 1.0,
+    "s_per_step": 0.0014509653333333334,
+    "bytes_per_step": 4277665194.6666665,
+    "l2_bytes_per_step": 10187633205.333334,
+    "flops_per_step": 536969220.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_multiply_fusion_3",
+    "launches_per_step": 1.0,
+    "s_per_step": 0.001413482666666667,
+    "bytes_per_step": 4275248896.0,
+    "l2_bytes_per_step": 10744848960.0,
+    "flops_per_step": 1744936960.0,
+    "f32_per_step": 0.0
+   }
+  ],
+  "total": {
+   "s": 0.034755648,
+   "bytes": 112007713962.66667,
+   "flops": 45102678189.0
+  }
+ },
+ "ref_grad_remat|2048": {
+  "kernels": [
+   {
+    "kernel": "loop_add_fusion_1",
+    "launches_per_step": 1.0,
+    "s_per_step": 0.00015504000000000003,
+    "bytes_per_step": 462602069.3333333,
+    "l2_bytes_per_step": 1083321237.3333333,
+    "flops_per_step": 161697852.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_add_multiply_fusion",
+    "launches_per_step": 1.0,
+    "s_per_step": 9.096533333333334e-05,
+    "bytes_per_step": 183139157.33333334,
+    "l2_bytes_per_step": 625458229.3333334,
+    "flops_per_step": 159506456.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_divide_multiply_fusion",
+    "launches_per_step": 1.0,
+    "s_per_step": 7.513600000000001e-05,
+    "bytes_per_step": 250858496.0,
+    "l2_bytes_per_step": 532676362.6666667,
+    "flops_per_step": 298086471.0,
+    "f32_per_step": 16793604.0
+   },
+   {
+    "kernel": "input_concatenate_fusion_1",
+    "launches_per_step": 2.0,
+    "s_per_step": 4.961066666666667e-05,
+    "bytes_per_step": 95476736.0,
+    "l2_bytes_per_step": 216622389.33333334,
+    "flops_per_step": 0.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_add_fusion",
+    "launches_per_step": 1.0,
+    "s_per_step": 4.049066666666667e-05,
+    "bytes_per_step": 123156650.66666667,
+    "l2_bytes_per_step": 304473973.3333333,
+    "flops_per_step": 29360128.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_multiply_fusion_1",
+    "launches_per_step": 1.0,
+    "s_per_step": 3.2714666666666674e-05,
+    "bytes_per_step": 47573674.666666664,
+    "l2_bytes_per_step": 159808405.33333334,
+    "flops_per_step": 33570816.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_multiply_fusion_3",
+    "launches_per_step": 1.0,
+    "s_per_step": 2.954666666666667e-05,
+    "bytes_per_step": 88323242.66666667,
+    "l2_bytes_per_step": 195714912.0,
+    "flops_per_step": 12601350.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "input_concatenate_fusion",
+    "launches_per_step": 1.0,
+    "s_per_step": 2.7904e-05,
+    "bytes_per_step": 87979349.33333333,
+    "l2_bytes_per_step": 158829365.33333334,
+    "flops_per_step": 4200450.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_multiply_fusion",
+    "launches_per_step": 1.0,
+    "s_per_step": 2.6677333333333336e-05,
+    "bytes_per_step": 47351722.666666664,
+    "l2_bytes_per_step": 153967690.66666666,
+    "flops_per_step": 8400900.0,
+    "f32_per_step": 0.0
+   },
+   {
+    "kernel": "loop_multiply_fusion_2",
+    "launches_per_step": 1.0,
+    "s_per_step": 2.493866666666667e-05,
+    "bytes_per_step": 47319978.666666664,
+    "l2_bytes_per_step": 162079082.66666666,
+    "flops_per_step": 27276288.0,
+    "f32_per_step": 0.0
+   }
+  ],
+  "total": {
+   "s": 0.000553024,
+   "bytes": 1433781077.3333333,
+   "flops": 734700711.0
+  }
+ }
+}

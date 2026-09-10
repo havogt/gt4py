@@ -4,6 +4,30 @@ from build_report import *
 N = json.load(open("prose_numbers.json"))
 today = "10 September 2026"
 ncu_ref, ncu_fwd = ncu_bars()
+ROOF_SVG, ROOF = roofline_chart()
+
+
+def _roof_block():
+    if not ROOF:
+        return ""
+    r, f, g = ROOF.get("ref|16384"), ROOF.get("fwd|16384"), ROOF.get("ref_grad_remat|16384")
+    small = ROOF.get("ref|2048")
+    cap = (
+        "Roofline of one GPU (Nsight Compute, one model step per call). Small marks are individual kernels, large marks the whole step: flop count over DRAM bytes on the x axis, attained double-precision rate on the y axis. "
+        "The dashed roof is 4 TB/s of HBM3 up to the ridge at 8.5 flop per byte, then the 34 TFLOP/s FP64 peak. Every kernel sits on the bandwidth slope at 0.1–1 flop per byte; nothing is near the compute roof."
+    )
+    txt = (
+        f"""<p>The roofline places every kernel where the per-kernel throughput numbers said it would be: on the memory slope, one to two orders of magnitude in intensity below the ridge point. The reference step at 16384² performs {r["GF"]:.1f} GFLOP over {r["GB"]:.1f} GB of DRAM traffic, {r["ai"]:.2f} flop per byte, and attains {r["tflops"]:.2f} TFLOP/s, which is {100 * r["tbps"] / HBM_TBPS:.0f}% of HBM peak and {100 * r["tflops"] / FP64_TFLOPS:.1f}% of FP64 peak. The sharded padded step moves {f["GB"]:.1f} GB for the same {f["GF"]:.1f} GFLOP ({f["ai"]:.2f} flop per byte), the pad and select kernels being pure traffic, and the reference gradient step {g["GB"]:.1f} GB for {g["GF"]:.1f} GFLOP ({g["ai"]:.2f} flop per byte). Per cell and step the reference step moves {r["GB"] * 1e9 / 16384**2:.0f} bytes, {r["GB"] * 1e9 / 16384**2 / 8:.0f} double-precision accesses, for {r["GF"] * 1e9 / 16384**2:.0f} flops."""
+        + (
+            f""" At 2048² the same reference step reaches only {100 * small["tbps"] / HBM_TBPS:.0f}% of HBM peak: the kernels are too short to fill the machine, which is the launch-floor regime of the scaling tables.</p>"""
+            if small
+            else "</p>"
+        )
+    )
+    return fig(ROOF_SVG, cap) + txt
+
+
+ROOF_BLOCK = _roof_block()
 
 
 def sec(id_, title, body, eyebrow=None):
@@ -125,6 +149,7 @@ single = f"""
 <p>On one GPU the reference model takes {fmt(ref["ref"]["16384"]["med"])} ms per step at 16384² and {fmt(ref["ref"]["4096"]["med"])} ms at 4096², a clean quadrupling per size doubling from 2048² upward. Below about 512² every configuration sits on a floor of 0.03–0.07 ms per forward step and about 0.1 ms per gradient step: a step is a fixed number of kernels, and the fit of one-call time against step count gives a fixed cost of about 0.16 ms per call plus 0.03 ms per step at 64², so the small-size points measure launch latency, not compute.</p>
 {baseline_table()}
 <figure>{ncu_ref}{ncu_fwd}<figcaption>Per-kernel profile of one step at 16384² (Nsight Compute, one GPU). Every fusion of the reference step moves data at 73–92% of the 4 TB/s HBM3 peak; the sharded padded step adds three pad and three select fusions for the halo bookkeeping and three scatter launches that are negligible. Kernel time per step: reference 17.4 ms, sharded forward 25.9 ms.</figcaption></figure>
+{ROOF_BLOCK}
 <p><b>The step is memory-bound and close to the roofline per kernel, but it moves several times more data than a fused stencil would.</b> The kernel time of a reference step at 16384² is 17.4 ms; at 85% of 4 TB/s that is about 59 GB, roughly 220 bytes or 28 double-precision accesses per cell per step, against an estimated 100 bytes (read six fields, write six) for a fully fused update, so about twice the traffic of the ideal. That is the price of executing the field-view program operator by operator: every <code>concat_where</code> halo fill and every intermediate is materialised. The sharded version pays a further {N["overhead16"]:.2f}× at P=1 for its pad and select kernels ({fmt(base16)} versus {fmt(ref16)} ms per step), which is the cost of formulating the exchange on a halo-extended array rather than on the periodic field. XLA's own cost analysis is not usable for this comparison: it counts the scan body once per compiled module, so its byte totals understate per-step traffic by up to the step count.</p>
 <h3>The time loop itself costs 1.4–1.7× per step</h3>
 <p>All sweep timings run the 20 steps inside one <code>lax.scan</code>. Timing the same programs with one, two, five and twenty steps per call shows a step change, not a gradual one: one and two steps per call, which XLA unrolls, cost 25.6 and 28.1 ms per step for the padded forward at 16384²; five and twenty steps, which compile to a real while loop, cost 40.6 and 41.1 ms. For the reference model the unrolled step is 17.5 ms, exactly the kernel time the profiler sees, against 30.1 ms in the loop. The compiled HLO of the same program on CPU points at the mechanism: the while-loop body carries the six state fields through copies every iteration, and the unrolled program has none. Six extra read-and-write passes over 2 GB fields account for roughly half of the 13 ms gap at 16384² by a bandwidth estimate, so lost fusion across the step boundary likely contributes the rest; this attribution is an inference from the CPU HLO and the step-count experiment, not a GPU-side measurement. The sweep numbers describe the model as written; a time loop without this penalty would move every curve below by up to this factor without changing any ratio between configurations.</p>
@@ -215,6 +240,7 @@ limits = f"""
 <li>Single-process 2×2 and 4×1 gradients are capped at 4096² (stored) and 8192² (rematerialised) because of the hang; the multi-process rows are complete.</li>
 <li>Per-case peak memory is a process-lifetime maximum and is attributable only to the cases that raised it (the padded 1×1 and 2×2 columns); the plain-gradient peaks come from the separate preallocated runs.</li>
 <li>Exchange-only timings include a dispatch floor and are upper bounds on the fused cost.</li>
+<li>The roofline profiles one unrolled step per call. For the forward steps that program matches the scan body kernel for kernel; for the sharded gradient it does not: the one-step sharded gradient at 16384² spends 58 of its 100 ms of kernel time in a single select fusion that the 20-step scan version does not have (in the scan, the sharded and reference gradient steps cost the same per step), so the sharded gradient is left off the roofline figure. Why XLA compiles the unrolled sharded gradient this way is open.</li>
 <li>The halo width is 1 throughout; wider halos would raise the exchange volume without changing its latency, and would favour the 2-D layouts.</li>
 </ul>
 <h3>Reproducibility</h3>
