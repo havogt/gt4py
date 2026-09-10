@@ -320,11 +320,6 @@ class NdArrayField(
                 connectivity = connectivity.as_connectivity_field()
             assert isinstance(connectivity, common.Connectivity)
 
-            # Current implementation relies on skip_value == -1:
-            # if we assume the indexed array has at least one element,
-            # we wrap around without out of bounds access
-            assert connectivity.skip_value is None or connectivity.skip_value == -1
-
             conn_fields.append(connectivity)
             codomains_counter[connectivity.codomain] += 1
 
@@ -988,18 +983,27 @@ def _make_reduction(
         assert common.is_neighbor_table(offset_definition)
         new_domain = common.Domain(*[nr for nr in field.domain if nr.dim != axis])
 
-        broadcast_slice = tuple(
-            slice(None) if d in [axis, offset_definition.domain.dims[0]] else xp.newaxis
-            for d in field.domain.dims
-        )
-        masked_array = xp.where(
-            xp.asarray(offset_definition.ndarray[broadcast_slice]) != common._DEFAULT_SKIP_VALUE,
-            field.ndarray,
-            initial_value_op(field),
-        )
+        if offset_definition.skip_value is None:
+            values = field.ndarray
+        else:
+            table_domain = common.Domain(*(field.domain[d] for d in offset_definition.domain.dims))
+            table = (
+                offset_definition
+                if table_domain == offset_definition.domain
+                else offset_definition.restrict(table_domain)
+            ).ndarray
+            broadcast_slice = tuple(
+                slice(None) if d in offset_definition.domain.dims else xp.newaxis
+                for d in field.domain.dims
+            )
+            values = xp.where(
+                xp.asarray(table[broadcast_slice]) != offset_definition.skip_value,
+                field.ndarray,
+                initial_value_op(field),
+            )
 
         return field.__class__.from_array(
-            getattr(xp, array_builtin_name)(masked_array, axis=reduce_dim_index), domain=new_domain
+            getattr(xp, array_builtin_name)(values, axis=reduce_dim_index), domain=new_domain
         )
 
     _builtin_op.__name__ = builtin_name

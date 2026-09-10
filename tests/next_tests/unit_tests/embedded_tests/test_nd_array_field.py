@@ -1764,6 +1764,25 @@ def test_concat(fields_data, dim, expected_data, expect_error):
         np.testing.assert_allclose(result.asnumpy(), expected_array)
 
 
+def test_neighbor_sum_after_narrowing_premap():
+    V = Dimension("V")
+    E = Dimension("E")
+    E2VDim = Dimension("E2V", kind=DimensionKind.LOCAL)
+    e2v = common._connectivity(
+        np.asarray([[0, 1], [2, -1], [4, 5], [6, 7]]),
+        codomain=V,
+        domain=common.domain({E: (0, 4), E2VDim: (0, 2)}),
+        skip_value=-1,
+    )
+    v_field = common._field(np.arange(1.0, 5.0), domain=common.domain({V: (0, 4)}))
+
+    with embedded_context.update(offset_provider={"E2V": e2v}):
+        result = fbuiltins.neighbor_sum(v_field.premap(e2v), axis=E2VDim)
+
+    assert result.domain == common.domain({E: (0, 2)})
+    np.testing.assert_array_equal(result.asnumpy(), [3.0, 3.0])
+
+
 @pytest.mark.requires_jax
 def test_jax_jit_field_arguments():
     import jax
