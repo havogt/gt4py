@@ -581,8 +581,7 @@ class NdArrayConnectivityField(
             assert isinstance(image_range, common.UnitRange)
             assert common.UnitRange.is_finite(image_range)
 
-            xp = self.array_ns
-            slices = _hyperslice(self._ndarray, image_range, xp, self.skip_value)
+            slices = self._image_slices(image_range)
             if slices is None:
                 raise ValueError("Restriction generates non-contiguous or empty dimensions.")
 
@@ -590,6 +589,37 @@ class NdArrayConnectivityField(
             self._cache[cache_key] = new_domain
 
         return new_domain
+
+    @property
+    def _index_table(self) -> core_defs.NDArrayObject:
+        """The table whose contents `inverse_image` inspects."""
+        return self._ndarray
+
+    @functools.cached_property
+    def _image_bounds(self) -> Optional[tuple[int, int, tuple[slice, ...]]]:
+        """`(min, max, support)` of the non-skip entries, `None` if there are none."""
+        xp = self.array_ns
+        table = self._index_table
+        if self.skip_value is None:
+            return int(xp.min(table)), int(xp.max(table)), tuple(slice(0, n) for n in table.shape)
+        valid = table != self.skip_value
+        if not xp.any(valid):
+            return None
+        support = tuple(slice(int(xp.min(i)), int(xp.max(i)) + 1) for i in xp.nonzero(valid))
+        return int(xp.min(table[valid])), int(xp.max(table[valid])), support
+
+    def _image_slices(self, image_range: common.UnitRange) -> Optional[tuple[slice, ...]]:
+        if (bounds := self._image_bounds) is not None:
+            value_min, value_max, support = bounds
+            # with the skip value inside the range, skip-only rows would be selected as well
+            skip_selected = self.skip_value is not None and self.skip_value in image_range
+            if (
+                image_range.start <= value_min
+                and value_max < image_range.stop
+                and not skip_selected
+            ):
+                return support
+        return _hyperslice(self._index_table, image_range, self.array_ns, self.skip_value)
 
     def restrict(self, index: common.AnyIndexSpec) -> NdArrayConnectivityField:
         cache_key = (id(self.ndarray), self.domain, index)
@@ -1089,9 +1119,38 @@ if jnp:
 
             object.__setattr__(self, "_ndarray", self._ndarray.at[target_slice].set(value))  # type: ignore[attr-defined] # `NDArrayObject` typing is not complete
 
+    class _TableHandle:
+        """Trace-time reference to a connectivity table, compared by buffer identity."""
+
+        __slots__ = ("table",)
+
+        def __init__(self, table: core_defs.NDArrayObject) -> None:
+            self.table = table
+
+        def __eq__(self, other: object) -> bool:
+            return isinstance(other, _TableHandle) and self.table is other.table
+
+        def __hash__(self) -> int:
+            return id(self.table)
+
+    _JaxConnectivityAuxData: TypeAlias = tuple[
+        common.Domain, common.Dimension, Optional[core_defs.IntegralScalar], Optional[_TableHandle]
+    ]
+
     @dataclasses.dataclass(frozen=True, eq=False)
     class JaxArrayConnectivityField(NdArrayConnectivityField):
         array_ns: ClassVar[ModuleType] = jnp
+        _table_handle: Optional[_TableHandle] = None
+
+        @property
+        def _index_table(self) -> core_defs.NDArrayObject:
+            if self._table_handle is not None and isinstance(self._ndarray, jax.core.Tracer):
+                return self._table_handle.table
+            return self._ndarray
+
+        def _image_slices(self, image_range: common.UnitRange) -> Optional[tuple[slice, ...]]:
+            with jax.ensure_compile_time_eval():
+                return super()._image_slices(image_range)
 
     common._field.register(jnp.ndarray, JaxArrayField.from_array)
     common._connectivity.register(jnp.ndarray, JaxArrayConnectivityField.from_array)
@@ -1114,6 +1173,34 @@ if jnp:
         JaxArrayField,  # type: ignore[type-abstract, unused-ignore] # only reported when 'jax' is installed, see '_unflatten_jax_field'
         _flatten_jax_field,
         _unflatten_jax_field,
+    )
+
+    def _flatten_jax_connectivity(
+        connectivity: JaxArrayConnectivityField,
+    ) -> tuple[tuple[core_defs.NDArrayObject], _JaxConnectivityAuxData]:
+        table = connectivity._ndarray
+        handle = (
+            connectivity._table_handle
+            if isinstance(table, jax.core.Tracer)
+            else _TableHandle(table)
+        )
+        return (table,), (
+            connectivity.domain,
+            connectivity.codomain,
+            connectivity.skip_value,
+            handle,
+        )
+
+    def _unflatten_jax_connectivity(
+        aux_data: _JaxConnectivityAuxData, children: tuple[core_defs.NDArrayObject]
+    ) -> JaxArrayConnectivityField:
+        domain, codomain, skip_value, handle = aux_data
+        return JaxArrayConnectivityField(domain, children[0], codomain, skip_value, handle)
+
+    jax.tree_util.register_pytree_node(
+        JaxArrayConnectivityField,  # type: ignore[type-abstract, unused-ignore] # see '_unflatten_jax_field'
+        _flatten_jax_connectivity,
+        _unflatten_jax_connectivity,
     )
 
 

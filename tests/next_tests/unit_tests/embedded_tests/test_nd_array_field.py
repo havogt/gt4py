@@ -9,6 +9,7 @@
 import math
 import operator
 import pickle
+import re
 from typing import Callable, Iterable, Optional
 
 import numpy as np
@@ -1874,3 +1875,171 @@ def test_jax_grad_through_premap_with_skip_values():
 
     np.testing.assert_allclose(loss(x), 9.0)
     np.testing.assert_allclose(jax.grad(loss)(x), [0.25, 1.0 / 6.0, 0.125, 0.0])
+
+
+def _skip_value_e2v_table(num_vertices: int) -> np.ndarray:
+    """Two edges per vertex, both entries equal, every seventh second entry a skip value."""
+    vertex = np.arange(4 * num_vertices) // 2
+    table = np.stack([vertex, vertex], axis=1).astype(np.int32)
+    table[::7, 1] = -1
+    return table
+
+
+@pytest.mark.parametrize("skip_value", [None, -1])
+def test_inverse_image_bounds_shortcut_matches_hyperslice(skip_value):
+    rng = np.random.default_rng(0)
+    high = 6
+    covering_cases = 0
+    for _ in range(150):
+        table = rng.integers(-1 if skip_value is not None else 0, high, size=(4, 3))
+        conn = common._connectivity(
+            table,
+            codomain=D0,
+            domain=common.domain({D1: (0, 4), D2: (0, 3)}),
+            skip_value=skip_value,
+        )
+        for start in range(-1, high):
+            for stop in range(start + 1, high + 1):
+                image_range = UnitRange(start, stop)
+                expected = nd_array_field._hyperslice(table, image_range, np, skip_value)
+                if expected is None:
+                    with pytest.raises(ValueError, match="non-contiguous or empty"):
+                        conn.inverse_image(image_range)
+                else:
+                    assert conn.inverse_image(image_range) == conn.domain.slice_at[expected]
+                    valid = table[table != skip_value] if skip_value is not None else table
+                    covering_cases += bool(np.all((valid >= start) & (valid < stop)))
+    assert covering_cases > 0
+
+
+def test_inverse_image_range_containing_skip_value_selects_skip_only_rows():
+    conn = common._connectivity(
+        np.asarray([[0, 1], [-1, -1]]),
+        codomain=D0,
+        domain=common.domain({D1: (0, 2), D2: (0, 2)}),
+        skip_value=-1,
+    )
+
+    assert conn.inverse_image(UnitRange(0, 2)) == common.domain({D1: (0, 1), D2: (0, 2)})
+    assert conn.inverse_image(UnitRange(-1, 2)) == common.domain({D1: (0, 2), D2: (0, 2)})
+
+
+@pytest.mark.requires_jax
+def test_jax_connectivity_pytree_roundtrip():
+    import jax
+
+    V = Dimension("V")
+    E = Dimension("E")
+    E2VDim = Dimension("E2V", kind=DimensionKind.LOCAL)
+    domain = common.domain({E: (0, 2), E2VDim: (0, 2)})
+    table = jax.numpy.asarray([[0, 1], [2, -1]], dtype=np.int32)
+    conn = common._connectivity(table, codomain=V, domain=domain, skip_value=-1)
+
+    children, treedef = jax.tree_util.tree_flatten(conn)
+    assert len(children) == 1
+    assert children[0] is table
+
+    restored = jax.tree_util.tree_unflatten(treedef, children)
+    assert isinstance(restored, nd_array_field.JaxArrayConnectivityField)
+    assert restored.domain == domain
+    assert restored.codomain == V
+    assert restored.skip_value == -1
+    assert restored.inverse_image(UnitRange(0, 2)) == common.domain({E: (0, 1), E2VDim: (0, 2)})
+
+    same_table = common._connectivity(table, codomain=V, domain=domain, skip_value=-1)
+    assert jax.tree_util.tree_structure(same_table) == treedef
+    copied_table = common._connectivity(
+        jax.numpy.array(table, copy=True), codomain=V, domain=domain, skip_value=-1
+    )
+    assert jax.tree_util.tree_structure(copied_table) != treedef
+
+
+@pytest.mark.requires_jax
+@pytest.mark.parametrize("num_field_vertices", [300, 600], ids=["narrowing", "covering"])
+def test_jax_jit_premap_with_connectivity_argument(num_field_vertices):
+    import jax
+
+    V = Dimension("V")
+    E = Dimension("E")
+    E2VDim = Dimension("E2V", kind=DimensionKind.LOCAL)
+    table = _skip_value_e2v_table(300)
+    conn_domain = common.domain({E: (0, table.shape[0]), E2VDim: (0, 2)})
+    field_domain = common.domain({V: (0, num_field_vertices)})
+
+    def premap_and_reduce(field, conn):
+        with embedded_context.update(offset_provider={"E2V": conn}):
+            return fbuiltins.neighbor_sum(field.premap(conn), axis=E2VDim)
+
+    expected = premap_and_reduce(
+        common._field(np.arange(num_field_vertices, dtype=np.float64), domain=field_domain),
+        common._connectivity(table, codomain=V, domain=conn_domain, skip_value=-1),
+    )
+
+    jitted = jax.jit(premap_and_reduce)
+    field = common._field(
+        jax.numpy.arange(num_field_vertices, dtype=np.float64), domain=field_domain
+    )
+    conn = common._connectivity(
+        jax.numpy.asarray(table), codomain=V, domain=conn_domain, skip_value=-1
+    )
+    result = jitted(field, conn)
+
+    assert result.domain == expected.domain
+    np.testing.assert_allclose(result.asnumpy(), expected.asnumpy())
+
+    stablehlo = jitted.lower(field, conn).as_text()
+    main_arguments = re.search(r"@main\(([^)]*)\)", stablehlo).group(1)
+    assert f"tensor<{table.shape[0]}x2xi32>" in main_arguments
+    assert "dense<[" not in stablehlo  # the table is not inlined as a constant
+
+
+@pytest.mark.requires_jax
+def test_jax_jit_retraces_per_connectivity_buffer():
+    import jax
+
+    V = Dimension("V")
+    E = Dimension("E")
+    E2VDim = Dimension("E2V", kind=DimensionKind.LOCAL)
+    table = jax.numpy.asarray(_skip_value_e2v_table(8))
+    conn_domain = common.domain({E: (0, table.shape[0]), E2VDim: (0, 2)})
+    field = common._field(jax.numpy.arange(8, dtype=np.float64), domain=common.domain({V: (0, 8)}))
+    traces = 0
+
+    @jax.jit
+    def premap(field, conn):
+        nonlocal traces
+        traces += 1
+        return field.premap(conn)
+
+    conn = common._connectivity(table, codomain=V, domain=conn_domain, skip_value=-1)
+    premap(field, conn)
+    premap(field, conn)
+    assert traces == 1
+
+    premap(field, common._connectivity(table, codomain=V, domain=conn_domain, skip_value=-1))
+    assert traces == 1
+
+    premap(
+        field,
+        common._connectivity(
+            jax.numpy.array(table, copy=True), codomain=V, domain=conn_domain, skip_value=-1
+        ),
+    )
+    assert traces == 2
+
+
+@pytest.mark.requires_jax
+def test_jax_jit_premap_non_contiguous_inverse_image_raises():
+    import jax
+
+    V = Dimension("V")
+    E = Dimension("E")
+    conn = common._connectivity(
+        jax.numpy.asarray([0, 5, 1], dtype=np.int32),
+        codomain=V,
+        domain=common.domain({E: (0, 3)}),
+    )
+    field = common._field(jax.numpy.arange(3, dtype=np.float64), domain=common.domain({V: (0, 3)}))
+
+    with pytest.raises(ValueError, match="non-contiguous"):
+        jax.jit(lambda field, conn: field.premap(conn))(field, conn)
