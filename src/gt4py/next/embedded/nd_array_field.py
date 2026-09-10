@@ -669,16 +669,18 @@ def _gather_premap(data: NdArrayField, *connectivities: common.GatherConnectivit
 
     # one index array per original field dimension (the connectivity's, or identity), broadcast over
     # the output domain and shifted to 0-based buffer indices, then a single advanced-index gather
-    take_indices = tuple(
-        (
-            _connectivity_index_array(conn_by_codomain[dim], new_domain, xp)
-            if dim in conn_by_codomain
-            else _identity_index_array(new_domain, dim, xp)
-        )
-        - data.domain[dim].unit_range.start
-        for dim in data.domain.dims
-    )
-    new_buffer = data._ndarray[take_indices]
+    def take_index(dim: common.Dimension) -> core_defs.NDArrayObject:
+        start = data.domain[dim].unit_range.start
+        if (conn := conn_by_codomain.get(dim)) is None:
+            return _identity_index_array(new_domain, dim, xp) - start
+        indices = _connectivity_index_array(conn, new_domain, xp)
+        if conn.skip_value is not None:
+            # a wrapped-around skip index is harmless for the primal, but under autodiff its
+            # cotangent would flow into whichever element it happens to hit
+            indices = xp.where(indices == conn.skip_value, start, indices)
+        return indices - start
+
+    new_buffer = data._ndarray[tuple(take_index(dim) for dim in data.domain.dims)]
     return data.__class__.from_array(new_buffer, domain=new_domain, dtype=data.dtype)
 
 

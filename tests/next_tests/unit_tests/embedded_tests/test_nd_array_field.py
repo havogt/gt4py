@@ -25,7 +25,11 @@ from gt4py.next.common import (
     NamedRange,
     UnitRange,
 )
-from gt4py.next.embedded import exceptions as embedded_exceptions, nd_array_field
+from gt4py.next.embedded import (
+    context as embedded_context,
+    exceptions as embedded_exceptions,
+    nd_array_field,
+)
 from gt4py.next.embedded.nd_array_field import _get_slices_from_domain_slice
 from gt4py.next.ffront import fbuiltins
 from gt4py.next.ffront.experimental import as_offset
@@ -1825,3 +1829,29 @@ def test_jax_traced_array_dispatch():
         return common._connectivity(arr, codomain=D0, domain=codomain).ndarray
 
     np.testing.assert_array_equal(jax.jit(make_connectivity)(offsets), offsets)
+
+
+@pytest.mark.requires_jax
+def test_jax_grad_through_premap_with_skip_values():
+    import jax
+
+    V = Dimension("V")
+    E = Dimension("E")
+    E2VDim = Dimension("E2V", kind=DimensionKind.LOCAL)
+    e2v = common._connectivity(
+        jax.numpy.asarray([[0, 1], [2, -1]], dtype=np.int32),
+        codomain=V,
+        domain=common.domain({E: (0, 2), E2VDim: (0, 2)}),
+        skip_value=-1,
+    )
+
+    def loss(x):
+        field = common._field(x, domain=common.domain({V: (0, 4)}))
+        with embedded_context.update(offset_provider={"E2V": e2v}):
+            result = fbuiltins.neighbor_sum(fbuiltins.sqrt(field.premap(e2v)), axis=E2VDim)
+        return jax.numpy.sum(result.ndarray)
+
+    x = jax.numpy.asarray([4.0, 9.0, 16.0, -1.0])
+
+    np.testing.assert_allclose(loss(x), 9.0)
+    np.testing.assert_allclose(jax.grad(loss)(x), [0.25, 1.0 / 6.0, 0.125, 0.0])
