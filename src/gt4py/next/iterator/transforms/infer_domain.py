@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import functools
 import typing
 
 from gt4py import eve
@@ -108,9 +109,60 @@ def _domain_union(
     return domain_utils.domain_union(*filtered_domains)
 
 
+def _concat_where_branches_domain_union(
+    mask: domain_utils.SymbolicDomain,
+    true_domain: NonTupleDomainAccess,
+    false_domain: NonTupleDomainAccess,
+) -> NonTupleDomainAccess:
+    """
+    Union of the domains a symbol is accessed at from the two branches of a `concat_where`.
+
+    The branches are selected below and above the mask boundary, and with symbolic bounds either
+    side may turn out empty only at runtime. An empty range of the lower side lies at the start
+    of the domain and one of the upper side at its end, so the convex hull would reach from the
+    other side's range to there, e.g. across the masked region for the false branch of a finite
+    mask, which is selected on both sides of it. The start of the union is therefore taken from
+    the upper side if the lower one is empty, and the stop from the lower side if the upper one
+    is empty.
+    """
+    if (
+        not isinstance(true_domain, domain_utils.SymbolicDomain)
+        or not isinstance(false_domain, domain_utils.SymbolicDomain)
+        or len(mask.ranges) != 1
+    ):
+        return _domain_union(true_domain, false_domain)
+    ((dim, mask_range),) = mask.ranges.items()
+    if dim not in true_domain.ranges:
+        return _domain_union(true_domain, false_domain)
+    lower, upper = true_domain.ranges[dim], false_domain.ranges[dim]
+    if mask_range.start != itir.InfinityLiteral.NEGATIVE:
+        lower, upper = upper, lower
+    if lower.empty() is not None and upper.empty() is not None:
+        return _domain_union(true_domain, false_domain)
+
+    hull = domain_utils.domain_union(true_domain, false_domain)
+    hull_range = hull.ranges[dim]
+    start, stop = (
+        constant_folding.ConstantFolding.apply(
+            im.if_(im.greater_equal(side.start, side.stop), other_bound, hull_bound)
+        )
+        for side, other_bound, hull_bound in (
+            (lower, upper.start, hull_range.start),
+            (upper, lower.stop, hull_range.stop),
+        )
+    )
+    return domain_utils.SymbolicDomain(
+        hull.grid_type,
+        {**hull.ranges, dim: domain_utils.SymbolicRange(start, stop)},  # type: ignore[arg-type]  # always an itir.Expr
+    )
+
+
 def _merge_domains(
     original_domains: AccessedDomains,
     additional_domains: AccessedDomains,
+    union: Callable[
+        [NonTupleDomainAccess, NonTupleDomainAccess], NonTupleDomainAccess
+    ] = _domain_union,
 ) -> AccessedDomains:
     new_domains = {**original_domains}
 
@@ -120,7 +172,7 @@ def _merge_domains(
             domain,
             fill_value=DomainAccessDescriptor.NEVER,
         )
-        new_domains[key] = tree_map(_domain_union)(original_domain, domain)
+        new_domains[key] = tree_map(union)(original_domain, domain)
 
     return new_domains
 
@@ -367,7 +419,7 @@ def _infer_concat_where(
 ) -> tuple[itir.Expr, AccessedDomains]:
     assert cpm.is_call_to(expr, "concat_where")
     infered_args_expr = []
-    actual_domains: AccessedDomains = {}
+    branches_accessed_domains: list[AccessedDomains] = []
     cond, true_field, false_field = expr.args
     symbolic_cond = domain_utils.SymbolicDomain.from_expr(cond)
     cond_complement = domain_utils.domain_complement(symbolic_cond)
@@ -388,8 +440,14 @@ def _infer_concat_where(
 
         infered_arg_expr, actual_domains_arg = infer_expr(arg, domain_, **kwargs)
         infered_args_expr.append(infered_arg_expr)
-        actual_domains = _merge_domains(actual_domains, actual_domains_arg)
+        branches_accessed_domains.append(actual_domains_arg)
 
+    true_accessed_domains, false_accessed_domains = branches_accessed_domains
+    actual_domains = _merge_domains(
+        true_accessed_domains,
+        false_accessed_domains,
+        union=functools.partial(_concat_where_branches_domain_union, symbolic_cond),
+    )
     result_expr = im.call(expr.fun)(cond, *infered_args_expr)
     return result_expr, actual_domains
 

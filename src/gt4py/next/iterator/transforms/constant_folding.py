@@ -49,6 +49,12 @@ class UndoCanonicalizeMinus(eve.NodeTranslator):
 _COMMUTATIVE_OPS = ("plus", "multiplies", "minimum", "maximum")
 
 
+def _flatten_op_chain(node: ir.Expr, op: str) -> list[ir.Expr]:
+    if cpm.is_call_to(node, op):
+        return [arg for arg_ in node.args for arg in _flatten_op_chain(arg_, op)]
+    return [node]
+
+
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class ConstantFolding(
     fixed_point_transformation.CombinedFixedPointTransform, eve.PreserveLocationVisitor
@@ -152,12 +158,16 @@ class ConstantFolding(
     def transform_fold_min_max(self, node: ir.FunCall, **kwargs) -> Optional[ir.Node]:
         # `maximum(maximum(a, 1), a)` -> `maximum(a, 1)`
         # `maximum(maximum(a, 1), 1)` -> `maximum(a, 1)`
+        # `minimum(maximum(maximum(a, 0), 1), a)` -> `a`
         if cpm.is_call_to(node, ("minimum", "maximum")):
             op = node.fun.id
-            if cpm.is_call_to(node.args[0], op):
-                fun_call, arg1 = node.args
-                if arg1 in fun_call.args:  # type: ignore[attr-defined] # assured by if above
+            fun_call, arg1 = node.args
+            if cpm.is_call_to(fun_call, op):
+                if arg1 in fun_call.args:
                     return fun_call
+            dual_op = "maximum" if op == "minimum" else "minimum"
+            if cpm.is_call_to(fun_call, dual_op) and arg1 in _flatten_op_chain(fun_call, dual_op):
+                return arg1
         return None
 
     def transform_fold_min_max_plus(self, node: ir.FunCall, **kwargs) -> Optional[ir.Node]:
@@ -229,12 +239,16 @@ class ConstantFolding(
 
     def transform_fold_if(self, node: ir.FunCall, **kwargs) -> Optional[ir.Node]:
         # `if_(True, true_branch, false_branch)` -> `true_branch`
-        if cpm.is_call_to(node, "if_") and isinstance(node.args[0], ir.Literal):
-            if node.args[0].value == "True":
+        # `if_(cond, a, a)` -> `a`
+        if cpm.is_call_to(node, "if_"):
+            if isinstance(node.args[0], ir.Literal):
+                if node.args[0].value == "True":
+                    return node.args[1]
+                else:
+                    assert node.args[0].value == "False"
+                    return node.args[2]
+            if node.args[1] == node.args[2]:
                 return node.args[1]
-            else:
-                assert node.args[0].value == "False"
-                return node.args[2]
         return None
 
     def transform_fold_infinity_arithmetic(self, node: ir.FunCall) -> Optional[ir.Node]:

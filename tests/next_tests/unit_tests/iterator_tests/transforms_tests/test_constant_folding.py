@@ -22,6 +22,7 @@ from gt4py.next.iterator.transforms import constant_folding
         (im.not_(False), True),
         (im.plus(4, im.plus(7, im.minus(7, 5))), 13),
         (im.if_(True, im.plus(im.ref("a"), 2), im.minus(9, 5)), im.plus("a", 2)),
+        (im.if_("c", im.plus("a", 2), im.plus("a", 2)), im.plus("a", 2)),
         (im.minimum("a", "a"), "a"),
         (im.maximum(1, 2), 2),
         # canonicalization
@@ -36,7 +37,10 @@ from gt4py.next.iterator.transforms import constant_folding
         (im.maximum("a", im.maximum(1, "a")), im.maximum("a", 1)),
         (im.maximum(im.maximum(1, "a"), im.maximum(1, "a")), im.maximum("a", 1)),
         (im.maximum(im.maximum(1, "a"), im.maximum("a", 1)), im.maximum("a", 1)),
-        (im.maximum(im.minimum("a", 1), "a"), im.maximum(im.minimum("a", 1), "a")),
+        # absorption
+        (im.maximum(im.minimum("a", 1), "a"), im.ref("a")),
+        (im.minimum(im.maximum(im.maximum("a", 0), 1), "a"), im.ref("a")),
+        (im.minimum(im.maximum("b", 1), "a"), im.minimum(im.maximum("b", 1), "a")),
         # maximum & plus
         (im.maximum(im.plus("a", 1), im.plus("a", 0)), im.plus("a", 1)),
         (

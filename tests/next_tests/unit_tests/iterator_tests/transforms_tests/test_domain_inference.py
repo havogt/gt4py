@@ -22,8 +22,9 @@ from gt4py.next.iterator.ir_utils import (
     domain_utils,
     ir_makers as im,
 )
-from gt4py.next.iterator.transforms import infer_domain
+from gt4py.next.iterator.transforms import concat_where, infer_domain
 from gt4py.next.iterator.transforms.constant_folding import ConstantFolding
+from gt4py.next.iterator.transforms.inline_lambdas import InlineLambdas
 from gt4py.next.type_system import type_specifications as ts
 
 
@@ -1436,6 +1437,51 @@ def test_concat_where_unstructured_shift_in_never_selected_branch(unstructured_o
     folded_call = constant_fold_domain_exprs(actual_call)
     assert expected == folded_call
     assert expected_domains == constant_fold_accessed_domains(actual_domains)
+
+
+@pytest.mark.parametrize(
+    "mask, shift, k_bounds, expected_fb, expected_a",
+    [
+        ((0, 1), -1, (0, 10), (1, 10), (0, 9)),
+        ((9, 10), 1, (0, 10), (0, 9), (1, 10)),
+        ((0, 1), -1, (3, 10), (3, 10), (2, 9)),
+        ((0, 1), -1, (-2, 10), (-2, 10), (-3, 9)),
+    ],
+)
+def test_concat_where_finite_mask_symbolic_domain(mask, shift, k_bounds, expected_fb, expected_a):
+    # The false branch of a finite mask is selected on the two sides of the mask. With symbolic
+    # bounds one side may turn out empty at runtime (`k0 == 0` for `K == 0`), and the false branch
+    # must then not be evaluated on the masked level, where its shifted read leaves the domain.
+    domain = im.domain(common.GridType.CARTESIAN, {KDim: ("k0", "k1")})
+    fb = im.as_fieldop(im.lambda_("it")(im.deref(im.shift(Koff, shift)("it"))))("a")
+    testee = concat_where.canonicalize_domain_argument(
+        im.concat_where(
+            im.domain(common.GridType.CARTESIAN, {KDim: mask}),
+            im.as_fieldop("deref")("b"),
+            fb,
+        )
+    )
+
+    actual_call, actual_domains = infer_domain.infer_expr(
+        testee, domain_utils.SymbolicDomain.from_expr(domain), offset_provider={}
+    )
+
+    def evaluate(domain_expr: itir.Expr) -> itir.Expr:
+        bindings = {
+            "k0": im.literal_from_value(k_bounds[0]),
+            "k1": im.literal_from_value(k_bounds[1]),
+        }
+        return ConstantFolding.apply(InlineLambdas.apply(im.let(*bindings.items())(domain_expr)))
+
+    (fb_domain,) = (
+        node.fun.args[1]
+        for node in actual_call.pre_walk_values().if_isinstance(itir.FunCall)
+        if cpm.is_applied_as_fieldop(node) and node.args[0] == im.ref("a")
+    )
+    assert evaluate(fb_domain) == im.domain(common.GridType.CARTESIAN, {KDim: expected_fb})
+    assert evaluate(actual_domains["a"].as_expr()) == im.domain(
+        common.GridType.CARTESIAN, {KDim: expected_a}
+    )
 
 
 def test_broadcast():

@@ -283,9 +283,14 @@ def _transform_stmt(
         functools.partial(
             _transform_by_pattern, predicate=lambda expr, _: cpm.is_applied_as_fieldop(expr)
         ),
-        # extract if_ call to the top-level
+        # extract if_ call on fields to the top-level, not a scalar one, e.g. in a domain bound
         functools.partial(
-            _transform_by_pattern, predicate=lambda expr, _: cpm.is_call_to(expr, "if_")
+            _transform_by_pattern,
+            predicate=lambda expr, _: (
+                cpm.is_call_to(expr, "if_")
+                and isinstance(expr.type, ts.TypeSpec)
+                and type_info.is_type_or_tuple_of_type(expr.type, ts.FieldType)
+            ),
         ),
     ]
 

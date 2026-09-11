@@ -6,12 +6,20 @@
 # Please, refer to the LICENSE file in the root directory.
 # SPDX-License-Identifier: BSD-3-Clause
 
+import ctypes
+import importlib
+import mmap
+import os
+import subprocess
+import sys
+
 import numpy as np
 import pytest
 from next_tests.integration_tests.cases import IDim, JDim, KDim, cartesian_case
 from gt4py import next as gtx
-from gt4py.next import broadcast
+from gt4py.next import broadcast, common
 from gt4py.next.ffront.experimental import concat_where
+from next_tests import definitions as test_definitions
 from next_tests.integration_tests import cases
 from next_tests.integration_tests.cases_utils import (
     exec_alloc_descriptor,
@@ -251,6 +259,101 @@ def test_dimension_eq_in_middle_of_domain(cartesian_case, static_domains: bool):
     cases.verify_with_default_data(
         cartesian_case, testee, lambda interior, boundary: np.where(k == 2, interior, boundary)
     )
+
+
+def _guarded_array(values: np.ndarray, at_end: bool) -> np.ndarray:
+    """C-ordered copy of `values` flush against an inaccessible page, before it or after it."""
+    page = mmap.PAGESIZE
+    body = -(-values.nbytes // page) * page
+    buffer = mmap.mmap(-1, page + body + page, prot=mmap.PROT_READ | mmap.PROT_WRITE)
+    address = ctypes.addressof(ctypes.c_char.from_buffer(buffer))
+    libc = ctypes.CDLL(None, use_errno=True)
+    for guard in (address, address + page + body):
+        assert libc.mprotect(ctypes.c_void_p(guard), ctypes.c_size_t(page), 0) == 0
+    offset = page + body - values.nbytes if at_end else page
+    result = np.frombuffer(buffer, dtype=values.dtype, count=values.size, offset=offset)
+    result = result.reshape(values.shape)
+    result[...] = values
+    return result
+
+
+@gtx.field_operator
+def _eq_at_bottom(a: cases.IJKField, b: cases.IJKField, nlev: np.int32) -> cases.IJKField:
+    return concat_where(KDim == 0, b, a(KDim - 1))
+
+
+@gtx.field_operator
+def _eq_at_top(a: cases.IJKField, b: cases.IJKField, nlev: np.int32) -> cases.IJKField:
+    return concat_where(KDim == nlev - 1, b, a(KDim + 1))
+
+
+@gtx.field_operator
+def _eq_at_top_shifted_temporary(
+    a: cases.IJKField, b: cases.IJKField, nlev: np.int32
+) -> cases.IJKField:
+    tmp = a + b
+    return concat_where(KDim == nlev - 1, tmp, tmp - tmp(KDim + 1))
+
+
+def _run_eq_at_boundary(backend_id: str, form: str, shape: tuple[int, int, int]) -> None:
+    module, _, name = backend_id.rpartition(".")
+    backend = getattr(importlib.import_module(module), name)
+    if isinstance(backend, test_definitions.EmbeddedDummyBackend):
+        backend = None
+    testee = {
+        "bottom": _eq_at_bottom,
+        "top": _eq_at_top,
+        "temporary": _eq_at_top_shifted_temporary,
+    }[form]
+
+    a_np = np.arange(1, np.prod(shape) + 1, dtype=np.int32).reshape(shape)
+    b_np = -a_np
+    if form == "bottom":
+        ref = np.concatenate((b_np[..., :1], a_np[..., :-1]), axis=2)
+    elif form == "top":
+        ref = np.concatenate((a_np[..., 1:], b_np[..., -1:]), axis=2)
+    else:
+        tmp = a_np + b_np
+        ref = np.concatenate((tmp[..., :-1] - tmp[..., 1:], tmp[..., -1:]), axis=2)
+
+    dims = [IDim, JDim, KDim]
+    guarded_a_np = _guarded_array(a_np, at_end=form != "bottom")
+    a = common._field(guarded_a_np, domain=gtx.domain(dict(zip(dims, shape))))
+    assert np.shares_memory(a.ndarray, guarded_a_np)
+    out = gtx.as_field(dims, np.full_like(ref, np.iinfo(ref.dtype).min))
+    testee.with_backend(backend)(
+        a, gtx.as_field(dims, b_np), np.int32(shape[2]), out=out, offset_provider={}
+    )
+    np.testing.assert_array_equal(out.asnumpy(), ref)
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Guard pages need 'mprotect'.")
+@pytest.mark.parametrize("form", ["bottom", "top", "temporary"])
+def test_dimension_eq_at_boundary_reads_only_selected_levels(cartesian_case, request, form):
+    # The false branch is evaluated only where it is selected, so it never reads the level beyond
+    # the domain of `a`. Such a read faults on the page next to `a`, so the program runs in a
+    # separate interpreter, where the fault fails this test instead of the test session. Serial
+    # compilation keeps a crashing child from leaving compile workers behind.
+    if not isinstance(cases.allocate(cartesian_case, _eq_at_bottom, "a")().ndarray, np.ndarray):
+        pytest.skip("Guard pages need host memory.")
+    backend_id = str(request.node.callspec.params["exec_alloc_descriptor"])
+    shape = tuple(cartesian_case.default_sizes[dim] for dim in (IDim, JDim, KDim))
+
+    child = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            f"import {__name__} as m; m._run_eq_at_boundary({backend_id!r}, {form!r}, {shape})",
+        ],
+        env={
+            **os.environ,
+            "PYTHONPATH": os.pathsep.join(path for path in sys.path if path),
+            "GT4PY_BUILD_JOBS_MODE": "serial",
+        },
+        capture_output=True,
+        text=True,
+    )
+    assert child.returncode == 0, child.stderr
 
 
 @pytest.mark.embedded_concat_where_non_contiguous_domain

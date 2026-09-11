@@ -93,6 +93,43 @@ def test_trivial(uids: utils.IDGeneratorPool):
     assert actual == expected
 
 
+def test_scalar_if_in_domain_bound(uids: utils.IDGeneratorPool):
+    domain = im.domain(
+        "cartesian_domain",
+        {IDim: (im.if_(im.greater_equal(im.ref("n", index_type), 0), 1, 0), 10)},
+    )
+    offset_provider = {}
+    params = [im.sym("inp", i_field_type), im.sym("out", i_field_type), im.sym("n", index_type)]
+    testee = program_factory(
+        params=params,
+        body=[
+            itir.SetAt(
+                target=im.ref("out"),
+                expr=im.as_fieldop("deref", domain)(im.as_fieldop("deref", domain)("inp")),
+                domain=domain,
+            )
+        ],
+    )
+    testee = type_inference.infer(testee, offset_provider_type=offset_provider)
+    testee = infer_domain.infer_program(testee, offset_provider=offset_provider)
+
+    expected = program_factory(
+        params=params,
+        declarations=[itir.Temporary(id="__tmp_0", domain=domain, dtype=float_type)],
+        body=[
+            itir.SetAt(
+                target=im.ref("__tmp_0"), expr=im.as_fieldop("deref", domain)("inp"), domain=domain
+            ),
+            itir.SetAt(
+                target=im.ref("out"), expr=im.as_fieldop("deref", domain)("__tmp_0"), domain=domain
+            ),
+        ],
+    )
+
+    actual = global_tmps.create_global_tmps(testee, offset_provider, uids=uids)
+    assert actual == expected
+
+
 def test_trivial_let(uids: utils.IDGeneratorPool):
     domain = im.domain("cartesian_domain", {IDim: (0, 1)})
     offset_provider = {}
