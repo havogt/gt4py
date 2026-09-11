@@ -18,7 +18,11 @@ from gt4py import eve
 from gt4py.eve.extended_typing import MaybeNestedInTuple
 from gt4py.next import common as gtx_common
 from gt4py.next.iterator import ir as gtir
-from gt4py.next.iterator.ir_utils import common_pattern_matcher as cpm, domain_utils
+from gt4py.next.iterator.ir_utils import (
+    common_pattern_matcher as cpm,
+    domain_utils,
+    ir_makers as im,
+)
 from gt4py.next.program_processors.runners.dace.lowering import gtir_to_sdfg_utils
 
 
@@ -42,6 +46,27 @@ FieldopDomain: TypeAlias = list[FieldopDomainRange]
 """Domain of a field operator represented as a list of `FieldopDomainRange` for each dimension."""
 
 
+class _IndexSelectToArithmetic(eve.NodeTranslator):
+    def visit_FunCall(self, node: gtir.FunCall) -> gtir.Expr:
+        node = self.generic_visit(node)
+        if cpm.is_call_to(node, "if_") and cpm.is_call_to(node.args[0], "greater_equal"):
+            (lhs, rhs), true_val, false_val = node.args[0].args, node.args[1], node.args[2]
+            selector = im.minimum(1, im.maximum(0, im.plus(im.minus(lhs, rhs), 1)))
+            return im.plus(false_val, im.multiplies_(selector, im.minus(true_val, false_val)))
+        return node
+
+
+def get_symbolic_bound(bound: gtir.Expr) -> dace.symbolic.SymbolicType:
+    """
+    Return the dace symbolic expression of a domain bound.
+
+    A choice between two integer bounds by `if_(a >= b, ...)` is expressed with a selector that is
+    1 if `a >= b` and 0 otherwise, because dace fails to propagate memlets over a range that
+    contains an `IfExpr`: sympy cannot differentiate its relational condition.
+    """
+    return gtir_to_sdfg_utils.get_symbolic(_IndexSelectToArithmetic().visit(bound))
+
+
 def get_field_domain(domain: domain_utils.SymbolicDomain) -> FieldopDomain:
     """
     Visits the domain of a field operator and returns a list of dimensions and
@@ -53,8 +78,8 @@ def get_field_domain(domain: domain_utils.SymbolicDomain) -> FieldopDomain:
     return [
         FieldopDomainRange(
             dim,
-            gtir_to_sdfg_utils.get_symbolic(domain.ranges[dim].start),
-            gtir_to_sdfg_utils.get_symbolic(domain.ranges[dim].stop),
+            get_symbolic_bound(domain.ranges[dim].start),
+            get_symbolic_bound(domain.ranges[dim].stop),
         )
         for dim in gtx_common.order_dimensions(domain.ranges.keys())
     ]

@@ -25,6 +25,13 @@ from next_tests.integration_tests.cases_utils import (
 )
 
 
+@pytest.mark.parametrize("x, expected", [(-1, 5), (0, 1), (3, 1)])
+def test_symbolic_bound_select(x, expected):
+    bound = gtx_dace_domain.get_symbolic_bound(im.if_(im.greater_equal("x", 0), 1, 5))
+    assert not bound.has(dace.symbolic.IfExpr)
+    assert bound.subs({"x": x}) == expected
+
+
 def test_symbolic_domain():
     domain = domain_utils.SymbolicDomain.from_expr(
         im.get_field_domain(gtx_common.GridType.UNSTRUCTURED, "arg", [Vertex, KDim])

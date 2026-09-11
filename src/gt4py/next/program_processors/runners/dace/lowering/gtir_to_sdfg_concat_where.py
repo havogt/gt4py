@@ -31,7 +31,6 @@ from gt4py.next.program_processors.runners.dace.lowering import (
     gtir_domain,
     gtir_to_sdfg,
     gtir_to_sdfg_types,
-    gtir_to_sdfg_utils,
 )
 from gt4py.next.type_system import type_specifications as ts
 
@@ -134,8 +133,8 @@ def _translate_concat_where_branch(
 
     assert source.gt_type == output_type
     source_domain_range = source_domain.ranges[concat_dim]
-    source_range_0 = gtir_to_sdfg_utils.get_symbolic(source_domain_range.start)
-    source_range_1 = gtir_to_sdfg_utils.get_symbolic(
+    source_range_0 = gtir_domain.get_symbolic_bound(source_domain_range.start)
+    source_range_1 = gtir_domain.get_symbolic_bound(
         im.maximum(source_domain_range.start, source_domain_range.stop)
     )
     source_range_size = source_range_1 - source_range_0
