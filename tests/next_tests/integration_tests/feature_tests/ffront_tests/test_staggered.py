@@ -132,6 +132,26 @@ def test_cartesian_half_shift_vertical(cartesian_case):
 
 
 @pytest.mark.uses_cartesian_shift
+def test_half_shift_vertical_only_on_unstructured_grid(unstructured_case_3d):
+    @gtx.field_operator
+    def testee(a: gtx.Field[[KHalfDim], np.float64]) -> gtx.Field[[KDim], np.float64]:
+        return 0.5 * (a(KDim - 0.5) + a(KDim + 0.5))
+
+    size = unstructured_case_3d.default_sizes[KDim]
+    a = unstructured_case_3d.as_field([KHalfDim], np.arange(size + 1, dtype=np.float64) ** 2)
+    out = unstructured_case_3d.as_field([KDim], np.zeros(size))
+
+    cases.verify(
+        unstructured_case_3d,
+        testee,
+        a,
+        out=out,
+        ref=0.5 * (a.asnumpy()[:-1] + a.asnumpy()[1:]),
+        offset_provider={},
+    )
+
+
+@pytest.mark.uses_cartesian_shift
 def test_cartesian_half_shift_multi_dim(cartesian_case):
     # staggering one axis of a multi-dimensional field leaves the other axis untouched.
     @gtx.field_operator

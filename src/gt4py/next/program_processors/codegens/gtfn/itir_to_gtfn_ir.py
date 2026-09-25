@@ -242,13 +242,24 @@ class _CannonicalizeUnstructuredDomain(eve.NodeTranslator):
             assert isinstance(node.args[0], itir.FunCall)
             first_axis_literal = node.args[0].args[0]
             assert isinstance(first_axis_literal, itir.AxisLiteral)
-            if first_axis_literal.kind == itir.DimensionKind.VERTICAL and len(node.args) > 1:
+            if first_axis_literal.kind == itir.DimensionKind.VERTICAL:
+                if len(node.args) == 1:
+                    # gtfn takes a single range as the horizontal one
+                    return itir.FunCall(
+                        fun=node.fun, args=[self._unit_horizontal_range(), node.args[0]]
+                    )
                 assert len(node.args) == 2
                 assert isinstance(node.args[1], itir.FunCall)
                 assert isinstance(node.args[1].args[0], itir.AxisLiteral)
                 assert node.args[1].args[0].kind == itir.DimensionKind.HORIZONTAL
                 return itir.FunCall(fun=node.fun, args=[node.args[1], node.args[0]])
         return node
+
+    @staticmethod
+    def _unit_horizontal_range() -> itir.FunCall:
+        dim = common.Dimension("_UnitHorizontal", kind=common.DimensionKind.HORIZONTAL)
+        axis = itir.AxisLiteral(value=dim.value, kind=dim.kind, type=ts.DimensionType(dim=dim))
+        return im.named_range(axis, im.literal_from_value(0), im.literal_from_value(1))
 
     @classmethod
     def apply(
