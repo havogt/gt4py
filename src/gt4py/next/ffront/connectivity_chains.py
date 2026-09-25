@@ -113,7 +113,7 @@ def required_indices(
     operator: decorator.FieldOperator,
     offset_provider: common.OffsetProvider,
     owned: Mapping[common.Dimension, np.ndarray],
-) -> dict[str, np.ndarray]:
+) -> dict[str, dict[common.Dimension, np.ndarray]]:
     """
     Compute the horizontal indices of each input field needed to compute the outputs on `owned`.
 
@@ -124,8 +124,8 @@ def required_indices(
         owned: The indices at which the outputs are computed, per horizontal dimension.
 
     Returns:
-        A mapping from each field parameter with a horizontal dimension to the sorted, unique
-        indices of that dimension that are read.
+        A mapping from each field parameter with a horizontal dimension to a mapping from that
+        dimension to the sorted, unique indices that are read.
     """
     params, return_type = _signature(operator)
     horizontal_dim_of = {name: _horizontal_dim(type_) for name, type_ in params.items()}
@@ -157,7 +157,10 @@ def required_indices(
                 continue
             for access in chains_analysis.flatten(accesses):
                 needed.setdefault(name, []).append(follow(output_dim, access.chain))
-    return {name: np.unique(np.concatenate(indices)) for name, indices in needed.items()}
+    return {
+        name: {horizontal_dim_of[name]: np.unique(np.concatenate(indices))}  # type: ignore[dict-item]  # only params with a horizontal dim are in `needed`
+        for name, indices in needed.items()
+    }
 
 
 def _horizontal_dim(type_: ts.TypeSpec) -> common.Dimension | None:

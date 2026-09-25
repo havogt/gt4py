@@ -141,5 +141,6 @@ def test_required_indices_follow_tables_and_skip_missing_neighbors():
 
     # cell 0 -> edges {3, 0} -> cells {3, 0, 1}; edge 3 -> cell 3 (the skip value is dropped)
     assert result.keys() == {"c", "e"}
-    np.testing.assert_array_equal(result["c"], [0, 1, 3])
-    np.testing.assert_array_equal(result["e"], [0, 3])
+    assert result["c"].keys() == {Cell} and result["e"].keys() == {Edge}
+    np.testing.assert_array_equal(result["c"][Cell], [0, 1, 3])
+    np.testing.assert_array_equal(result["e"][Edge], [0, 3])
