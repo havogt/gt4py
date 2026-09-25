@@ -29,9 +29,11 @@ from gt4py.eve.extended_typing import Self, Unpack, override
 from gt4py.next import (
     backend as next_backend,
     common,
+    constructors,
     custom_layout_allocators as next_allocators,
     embedded as next_embedded,
     errors,
+    named_collections,
     utils,
 )
 from gt4py.next.embedded import operators as embedded_operators
@@ -656,16 +658,30 @@ class FieldOperator(_CompilableGTEntryPointMixin[ffront_stages.DSLFieldOperatorD
         if not next_embedded.context.within_valid_context() and self.backend is not None:
             # non embedded execution
             offset_provider = {**kwargs.pop("offset_provider", {})}
-            if "out" not in kwargs:
+            result = None
+            if "out" in kwargs:
+                out = kwargs.pop("out")
+            elif "domain" in kwargs:
+                operator_type = self.__gt_type__()
+                assert isinstance(
+                    operator_type,
+                    ts_ffront.FieldOperatorType | ts_ffront.ScanOperatorType,
+                )
+                result = _allocate_from_type(
+                    operator_type.definition.returns,
+                    utils.tree_map(common.domain)(kwargs.pop("domain")),
+                    self.backend,
+                )
+                out = arguments.extract(result)
+            else:
                 raise errors.MissingArgumentError(None, "out", True)
-            out = kwargs.pop("out")
             if "domain" in kwargs:
                 domain = utils.tree_map(common.domain)(kwargs.pop("domain"))
                 if not isinstance(domain, tuple):
                     domain = utils.tree_map(lambda _: domain)(out)
                 out = utils.tree_map(lambda f, dom: f[dom])(out, domain)
 
-            return self._compiled_programs(
+            self._compiled_programs(
                 *args,
                 **kwargs,
                 out=out,
@@ -674,6 +690,7 @@ class FieldOperator(_CompilableGTEntryPointMixin[ffront_stages.DSLFieldOperatorD
                 if enable_jit is None
                 else enable_jit,
             )
+            return result
         else:
             if not next_embedded.context.within_valid_context():
                 # field_operator as program
@@ -698,6 +715,30 @@ class FieldOperator(_CompilableGTEntryPointMixin[ffront_stages.DSLFieldOperatorD
             else:
                 op = embedded_operators.EmbeddedOperator(self.definition_stage.definition)
             return embedded_operators.field_operator_call(op, args, kwargs)
+
+
+def _allocate_from_type(
+    type_: ts.TypeSpec,
+    domain: common.Domain | tuple[common.Domain | tuple, ...],
+    allocator: next_allocators.FieldBufferAllocationUtil,
+) -> Any:
+    if isinstance(type_, ts.FieldType | ts.ScalarType):
+        assert isinstance(domain, common.Domain)
+        dtype = type_info.extract_dtype(type_)
+        assert isinstance(dtype, ts.ScalarType)
+        return constructors.empty(
+            domain,
+            dtype=type_translation.as_dtype(dtype),
+            allocator=allocator,
+        )
+    assert isinstance(type_, ts.COLLECTION_TYPE_SPECS)
+    domains = domain if isinstance(domain, tuple) else (domain,) * len(type_.types)
+    elems = tuple(
+        _allocate_from_type(t, d, allocator) for t, d in zip(type_.types, domains, strict=True)
+    )
+    if isinstance(type_, ts.NamedCollectionType):
+        return named_collections.make_named_collection_constructor_from_type_spec(type_)(elems)
+    return elems
 
 
 GTEntryPoint: TypeAlias = Program | FieldOperator

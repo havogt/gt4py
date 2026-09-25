@@ -131,6 +131,29 @@ def field_operator_call(op: EmbeddedOperator[_R, _P], args: Any, kwargs: Any) ->
         container_extracted_res = arguments.extract(res)  # type: ignore[arg-type] # TODO(havogt): see notes above
         _tuple_assign_field(container_extracted_out, container_extracted_res, domain=out_domain)  # type: ignore[arg-type]
         return None
+    elif "domain" in kwargs and not embedded_context.within_valid_context():
+        # direct field_operator call returning the result on `domain`
+        if "offset_provider" not in kwargs:
+            raise errors.MissingArgumentError(None, "offset_provider", True)
+        offset_provider = kwargs.pop("offset_provider")
+        domain = utils.tree_map(common.domain)(kwargs.pop("domain"))
+
+        with embedded_context.update(
+            offset_provider=offset_provider,
+            closure_column_range=_get_vertical_range(domain),  # type: ignore[arg-type]
+        ):
+            full_res: Any = op(*args, **kwargs)
+
+        xp = get_array_ns(*(arguments.extract(arg) for arg in [*args, *kwargs.values()]))
+        container_extracted_res = arguments.extract(full_res)
+        if not isinstance(domain, tuple):
+            domain = utils.tree_map(lambda _: domain)(container_extracted_res)
+        result: Any = utils.tree_map(lambda source, dom: _field_on_domain(source, dom, xp))(
+            container_extracted_res, domain
+        )
+        if named_collections.is_named_collection_type(type(full_res)):
+            return named_collections.make_named_collection_constructor(type(full_res))(result)  # type: ignore[arg-type]
+        return result
     else:
         # called from other field_operator or missing `out` argument
         if "offset_provider" in kwargs:
@@ -144,6 +167,17 @@ def _get_vertical_range(domain: common.Domain) -> common.NamedRange | eve.Nothin
     vertical_dim_filtered = [nr for nr in domain if nr.dim.kind == common.DimensionKind.VERTICAL]
     assert len(vertical_dim_filtered) <= 1
     return vertical_dim_filtered[0] if vertical_dim_filtered else eve.NOTHING
+
+
+def _field_on_domain(
+    source: common.Field | core_defs.Scalar, domain: common.Domain, xp: Any
+) -> common.Field:
+    if isinstance(source, common.Field):
+        xp = source.array_ns  # type: ignore[attr-defined]
+        values = source[domain].ndarray
+    else:
+        values = xp.asarray(source)
+    return common._field(xp.array(xp.broadcast_to(values, domain.shape)), domain=domain)
 
 
 def _tuple_assign_field(
