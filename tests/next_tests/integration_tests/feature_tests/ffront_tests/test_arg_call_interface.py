@@ -17,7 +17,14 @@ from gt4py.next import errors
 from gt4py.next.ffront.decorator import field_operator, program, scan_operator
 
 from next_tests.integration_tests import cases
-from next_tests.integration_tests.cases import IDim, IField, IJKFloatField, KDim, cartesian_case
+from next_tests.integration_tests.cases import (
+    IDim,
+    IField,
+    IJKFloatField,
+    JDim,
+    KDim,
+    cartesian_case,
+)
 from next_tests.integration_tests.cases_utils import (
     exec_alloc_descriptor,
 )
@@ -240,6 +247,79 @@ def test_direct_fo_call_with_domain_arg_tuple_return(cartesian_case):
     ref[1:-1] = inp.asnumpy()[1:-1]
 
     cases.verify(cartesian_case, testee, inp, out=out, domain={IDim: (1, size - 1)}, ref=(ref, ref))
+
+
+@pytest.mark.uses_origin
+def test_direct_fo_call_returning_result_on_domain(cartesian_case):
+    @field_operator
+    def testee(inp: IField) -> IField:
+        return inp
+
+    size = cartesian_case.default_sizes[IDim]
+    inp = cases.allocate(cartesian_case, testee, "inp").unique()()
+
+    result = testee.with_backend(cartesian_case.backend)(
+        inp, domain={IDim: (1, size - 1)}, offset_provider={}
+    )
+
+    assert result.domain == gtx.domain({IDim: (1, size - 1)})
+    np.testing.assert_array_equal(result.asnumpy(), inp.asnumpy()[1:-1])
+
+
+@pytest.mark.uses_origin
+@pytest.mark.uses_tuple_returns
+def test_direct_fo_call_returning_tuple_result_on_domain(cartesian_case):
+    @field_operator
+    def testee(inp: IField) -> tuple[IField, IField]:
+        return (inp, inp + 1)
+
+    size = cartesian_case.default_sizes[IDim]
+    inp = cases.allocate(cartesian_case, testee, "inp").unique()()
+
+    result = testee.with_backend(cartesian_case.backend)(
+        inp, domain=({IDim: (1, size - 1)}, {IDim: (0, size - 2)}), offset_provider={}
+    )
+
+    assert isinstance(result, tuple)
+    np.testing.assert_array_equal(result[0].asnumpy(), inp.asnumpy()[1:-1])
+    np.testing.assert_array_equal(result[1].asnumpy(), inp.asnumpy()[:-2] + 1)
+
+
+@pytest.mark.uses_scan
+def test_direct_scan_call_returning_result_on_domain(cartesian_case):
+    @scan_operator(axis=KDim, forward=True, init=0.0)
+    def testee(state: float, x: float) -> float:
+        return state + x
+
+    a = cartesian_case.as_field([IDim, JDim, KDim], np.random.default_rng(0).random((3, 4, 5)))
+    domain = gtx.domain({IDim: (0, 2), JDim: (1, 3), KDim: (1, 4)})
+
+    result = testee.with_backend(cartesian_case.backend)(a, domain=domain, offset_provider={})
+
+    assert result.domain == domain
+    np.testing.assert_allclose(
+        result.asnumpy(), np.add.accumulate(a.asnumpy()[0:2, 1:3, 1:4], axis=2)
+    )
+
+
+@pytest.mark.requires_jax
+def test_direct_fo_call_returning_result_on_domain_under_jax_jit():
+    jax = pytest.importorskip("jax")
+    jnp = jax.numpy
+
+    @field_operator
+    def testee(inp: IField) -> IField:
+        return inp * 2
+
+    def f(inp):
+        return testee(inp, domain={IDim: (1, 4)}, offset_provider={})
+
+    inp = gtx.as_field([IDim], jnp.arange(5, dtype=jnp.int32), allocator=jnp)
+
+    result = jax.jit(f)(inp)
+
+    assert result.domain == gtx.domain({IDim: (1, 4)})
+    np.testing.assert_array_equal(result.asnumpy(), np.array([2, 4, 6], dtype=np.int32))
 
 
 def test_missing_arg_field_operator(cartesian_case):
