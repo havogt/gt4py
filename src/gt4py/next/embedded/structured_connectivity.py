@@ -35,13 +35,13 @@ class StructuredConnectivity:
     Example — C2E on a parallelogram patch where ``X`` encodes element color::
 
         StructuredConnectivity(
-            source_dim=C,                           # unstructured target dim
-            codomain=E,                             # unstructured source dim
-            color_dim=X,                            # target dim encoding color
-            local_dim=C2EDim,                       # LOCAL dim for neighbor_sum
+            source_dim=C,  # unstructured target dim
+            codomain=E,  # unstructured source dim
+            color_dim=X,  # target dim encoding color
+            local_dim=C2EDim,  # LOCAL dim for neighbor_sum
             offsets={
-                0: [{J: 1}, {X: 1}, {X: 2}],        # △: edges at J+1, X+1, X+2
-                1: [{X: -1}, {I: 1}, {X: 1}],       # ▽: edges at X-1, I+1, X+1
+                0: [{J: 1}, {X: 1}, {X: 2}],  # △: edges at J+1, X+1, X+2
+                1: [{X: -1}, {I: 1}, {X: 1}],  # ▽: edges at X-1, I+1, X+1
             },
         )
 
