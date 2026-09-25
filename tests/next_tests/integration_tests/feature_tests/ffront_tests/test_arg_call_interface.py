@@ -23,10 +23,14 @@ from next_tests.integration_tests.cases import (
     IJKFloatField,
     JDim,
     KDim,
+    KField,
     cartesian_case,
+    unstructured_case,
+    unstructured_case_3d,
 )
 from next_tests.integration_tests.cases_utils import (
     exec_alloc_descriptor,
+    mesh_descriptor,
 )
 
 
@@ -320,6 +324,14 @@ def test_direct_fo_call_returning_result_on_domain_under_jax_jit():
 
     assert result.domain == gtx.domain({IDim: (1, 4)})
     np.testing.assert_array_equal(result.asnumpy(), np.array([2, 4, 6], dtype=np.int32))
+
+
+def test_vertical_only_fo_call_on_unstructured_grid(unstructured_case_3d):
+    @field_operator
+    def testee(a: KField) -> KField:
+        return a + 1
+
+    cases.verify_with_default_data(unstructured_case_3d, testee, ref=lambda a: a + 1)
 
 
 def test_missing_arg_field_operator(cartesian_case):

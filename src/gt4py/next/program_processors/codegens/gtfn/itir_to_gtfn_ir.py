@@ -242,7 +242,7 @@ class _CannonicalizeUnstructuredDomain(eve.NodeTranslator):
             assert isinstance(node.args[0], itir.FunCall)
             first_axis_literal = node.args[0].args[0]
             assert isinstance(first_axis_literal, itir.AxisLiteral)
-            if first_axis_literal.kind == itir.DimensionKind.VERTICAL:
+            if first_axis_literal.kind == itir.DimensionKind.VERTICAL and len(node.args) > 1:
                 assert len(node.args) == 2
                 assert isinstance(node.args[1], itir.FunCall)
                 assert isinstance(node.args[1].args[0], itir.AxisLiteral)
