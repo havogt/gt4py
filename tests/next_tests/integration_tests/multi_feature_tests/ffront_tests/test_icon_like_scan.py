@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 import gt4py.next as gtx
-from gt4py.next import common
+from gt4py.next import common, scan
 
 from next_tests import definitions as test_definitions
 from next_tests.integration_tests import cases
@@ -26,7 +26,6 @@ from next_tests.integration_tests.cases_utils import (
 pytestmark = [
     pytest.mark.uses_scan,
     pytest.mark.uses_cartesian_shift,
-    pytest.mark.uses_scan_in_field_operator,
 ]
 
 
@@ -40,8 +39,8 @@ class State(NamedTuple):
     first_level: bool
 
 
-@gtx.scan_operator(axis=KDim, forward=True, init=State(z_q_new=0.0, w_new=0.0, first_level=True))
-def _scan(state: State, w: float, z_q: float, z_a: float, z_b: float, z_c: float) -> State:
+@gtx.field_operator
+def _scan_pass(state: State, w: float, z_q: float, z_a: float, z_b: float, z_c: float) -> State:
     z_g = z_b + z_a * state.z_q_new
     z_q_new = (0.0 - z_c) * z_g
     w_new = z_a * state.w_new * z_g
@@ -50,6 +49,25 @@ def _scan(state: State, w: float, z_q: float, z_a: float, z_b: float, z_c: float
         if state.first_level
         else State(z_q_new=z_q_new, w_new=w_new, first_level=False)
     )
+
+
+@gtx.field_operator
+def _scan(
+    w: gtx.Field[[Cell, KDim], float],
+    z_q: gtx.Field[[Cell, KDim], float],
+    z_a: gtx.Field[[Cell, KDim], float],
+    z_b: gtx.Field[[Cell, KDim], float],
+    z_c: gtx.Field[[Cell, KDim], float],
+) -> tuple[
+    gtx.Field[[Cell, KDim], float], gtx.Field[[Cell, KDim], float], gtx.Field[[Cell, KDim], bool]
+]:
+    z_q_new, w_new, first_level = scan(
+        _scan_pass,
+        range=(KDim, 1, 10),
+        forward=True,
+        init=State(z_q_new=0.0, w_new=0.0, first_level=True),
+    )(w, z_q, z_a, z_b, z_c)
+    return z_q_new, w_new, first_level
 
 
 @gtx.field_operator

@@ -13,8 +13,8 @@ import numpy as np
 import pytest
 
 from gt4py import next as gtx
-from gt4py.next import errors
-from gt4py.next.ffront.decorator import field_operator, program, scan_operator
+from gt4py.next import errors, scan
+from gt4py.next.ffront.decorator import field_operator, program
 
 from next_tests.integration_tests import cases
 from next_tests.integration_tests.cases import (
@@ -153,19 +153,18 @@ def test_call_field_operator_from_program(cartesian_case):
 
 
 @pytest.mark.uses_scan
-@pytest.mark.uses_scan_in_field_operator
 def test_call_scan_operator_from_field_operator(cartesian_case):
-    @scan_operator(axis=KDim, forward=True, init=0.0)
-    def testee_scan(state: float, x: float, y: float) -> float:
+    @field_operator
+    def testee_pass(state: float, x: float, y: float) -> float:
         return state + x + 2.0 * y
 
     @field_operator
     def testee(a: IJKFloatField, b: IJKFloatField) -> IJKFloatField:
         return (
-            testee_scan(a, b)
-            + 3.0 * testee_scan(a, y=b)
-            + 5.0 * testee_scan(x=a, y=b)
-            + 7.0 * testee_scan(y=b, x=a)
+            scan(testee_pass, range=(KDim, 0, 9), forward=True, init=0.0)(a, b)
+            + 3.0 * scan(testee_pass, range=(KDim, 0, 9), forward=True, init=0.0)(a, y=b)
+            + 5.0 * scan(testee_pass, range=(KDim, 0, 9), forward=True, init=0.0)(x=a, y=b)
+            + 7.0 * scan(testee_pass, range=(KDim, 0, 9), forward=True, init=0.0)(y=b, x=a)
         )
 
     a, b, out = (
@@ -174,46 +173,6 @@ def test_call_scan_operator_from_field_operator(cartesian_case):
     expected = (1.0 + 3.0 + 5.0 + 7.0) * np.add.accumulate(a.asnumpy() + 2.0 * b.asnumpy(), axis=2)
 
     cases.verify(cartesian_case, testee, a, b, out=out, ref=expected)
-
-
-@pytest.mark.uses_scan
-def test_call_scan_operator_from_program(cartesian_case):
-    @scan_operator(axis=KDim, forward=True, init=0.0)
-    def testee_scan(state: float, x: float, y: float) -> float:
-        return state + x + 2.0 * y
-
-    @program
-    def testee(
-        a: IJKFloatField,
-        b: IJKFloatField,
-        out1: IJKFloatField,
-        out2: IJKFloatField,
-        out3: IJKFloatField,
-        out4: IJKFloatField,
-    ):
-        testee_scan(a, b, out=out1)
-        testee_scan(a, y=b, out=out2)
-        testee_scan(x=a, y=b, out=out3)
-        testee_scan(y=b, x=a, out=out4)
-
-    a, b = (cases.allocate(cartesian_case, testee, name)() for name in ("a", "b"))
-    out = (
-        cases.allocate(cartesian_case, testee, name, strategy=cases.ZeroInitializer())()
-        for name in ("out1", "out2", "out3", "out4")
-    )
-
-    ref = np.add.accumulate(a.asnumpy() + 2 * b.asnumpy(), axis=2)
-
-    cases.verify(
-        cartesian_case,
-        testee,
-        a,
-        b,
-        *out,
-        inout=out,
-        ref=(ref, ref, ref, ref),
-        comparison=lambda out, ref: all(map(np.allclose, zip(out, ref))),
-    )
 
 
 @pytest.mark.uses_origin
@@ -291,9 +250,13 @@ def test_direct_fo_call_returning_tuple_result_on_domain(cartesian_case):
 
 @pytest.mark.uses_scan
 def test_direct_scan_call_returning_result_on_domain(cartesian_case):
-    @scan_operator(axis=KDim, forward=True, init=0.0)
-    def testee(state: float, x: float) -> float:
+    @field_operator
+    def testee_pass(state: float, x: float) -> float:
         return state + x
+
+    @field_operator
+    def testee(x: IJKFloatField) -> IJKFloatField:
+        return scan(testee_pass, range=(KDim, 1, 4), forward=True, init=0.0)(x)
 
     a = cartesian_case.as_field([IDim, JDim, KDim], np.random.default_rng(0).random((3, 4, 5)))
     domain = gtx.domain({IDim: (0, 2), JDim: (1, 3), KDim: (1, 4)})
@@ -345,19 +308,6 @@ def test_missing_arg_field_operator(cartesian_case):
 
     with pytest.raises(errors.MissingArgumentError, match="'out'"):
         _ = copy(a, offset_provider={})
-
-
-def test_missing_arg_scan_operator(cartesian_case):
-    """Test that calling a scan_operator without required args raises an error."""
-
-    @gtx.scan_operator(backend=cartesian_case.backend, axis=KDim, init=0.0, forward=True)
-    def sum(state: float, a: float) -> float:
-        return state + a
-
-    a = cases.allocate(cartesian_case, sum, "a")()
-
-    with pytest.raises(errors.MissingArgumentError, match="'out'"):
-        _ = sum(a, offset_provider={})
 
 
 def test_missing_arg_program(cartesian_case):

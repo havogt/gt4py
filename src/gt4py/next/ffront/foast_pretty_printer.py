@@ -188,10 +188,6 @@ class _PrettyPrinter(TemplatedGenerator):
 
     FieldOperator = as_fmt("@field_operator\n{definition}")
 
-    ScanOperator = as_fmt(
-        "@scan_operator(axis={axis}, forward={forward}, init={init})\n{definition}"
-    )
-
     def _precedence(self, node: foast.LocatedNode) -> int:
         prop_id = _property_identifier(node)
         if prop_id in PRECEDENCE:

@@ -498,7 +498,7 @@ def infer_expr(
         bidirectional=False if not isinstance(expr.type, ts.DeferredType) else True,
     )
 
-    if cpm.is_applied_as_fieldop(expr) and cpm.is_call_to(expr.fun.args[0], "scan"):
+    if cpm.is_applied_scan(expr):
         additional_dims = gtx_utils.tree_map(
             lambda d: (
                 _extract_vertical_dims(d) if isinstance(d, domain_utils.SymbolicDomain) else {}
@@ -518,6 +518,22 @@ def infer_expr(
             else d
         )
     )(domain, el_types, additional_dims)
+
+    # A scan is computed on the vertical range of its domain argument, independent of the
+    # domain it is accessed on.
+    if (
+        cpm.is_applied_scan(expr)
+        and len(expr.fun.args) == 2
+        and cpm.is_call_to(expr.fun.args[1], ("cartesian_domain", "unstructured_domain"))
+    ):
+        scan_range = _extract_vertical_dims(SymbolicDomain.from_expr(expr.fun.args[1]))
+        domain = gtx_utils.tree_map(
+            lambda d: (
+                SymbolicDomain(d.grid_type, {**d.ranges, **scan_range})
+                if isinstance(d, SymbolicDomain)
+                else d
+            )
+        )(domain)
 
     inferred_expr, accessed_domains = _infer_expr(
         expr,

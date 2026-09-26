@@ -13,11 +13,7 @@ from collections.abc import Mapping
 import numpy as np
 
 from gt4py.next import common
-from gt4py.next.ffront import (
-    decorator,
-    field_operator_ast as foast,
-    type_specifications as ts_ffront,
-)
+from gt4py.next.ffront import decorator
 from gt4py.next.iterator.transforms import connectivity_chains as chains_analysis
 from gt4py.next.iterator.transforms.connectivity_chains import (
     Access,
@@ -39,16 +35,6 @@ def _signature(
     params = {str(param.id): param.type for param in node.definition.params}
     assert isinstance(node.definition.type, ts.FunctionType)
     return_type = node.definition.type.returns
-    if isinstance(node, foast.ScanOperator):
-        assert isinstance(node.type, ts_ffront.ScanOperatorType)
-        axis = node.type.axis
-
-        def as_column_type(type_: ts.TypeSpec) -> ts.TypeSpec:
-            return type_info.tree_map_type(lambda t: ts.FieldType(dims=[axis], dtype=t))(type_)
-
-        state_param = next(iter(params))
-        params = {name: as_column_type(t) for name, t in params.items() if name != state_param}
-        return_type = as_column_type(return_type)
     return params, return_type
 
 
@@ -57,7 +43,7 @@ def connectivity_chains(
     offset_provider: common.OffsetProvider | common.OffsetProviderType,
 ) -> dict[tuple[int, ...], AccessesBySymbol]:
     """
-    Trace how each output point of a field (or scan) operator reaches its inputs.
+    Trace how each output point of a field operator reaches its inputs.
 
     Nested field operators are followed. Every read of a parameter is reported as an `Access`:
     the sequence of neighbor connectivities applied from the output point outwards, and the total
@@ -66,7 +52,7 @@ def connectivity_chains(
     scan as `Unbounded.COLUMN`.
 
     Args:
-        operator: The field or scan operator.
+        operator: The field operator.
         offset_provider: The offset provider (or its type) the operator is called with.
 
     Returns:
@@ -118,7 +104,7 @@ def required_indices(
     Compute the horizontal indices of each input field needed to compute the outputs on `owned`.
 
     Args:
-        operator: The field or scan operator.
+        operator: The field operator.
         offset_provider: The offset provider the operator is called with; its neighbor tables
             are followed, skipping missing neighbors.
         owned: The indices at which the outputs are computed, per horizontal dimension.

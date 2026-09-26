@@ -8,7 +8,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Generic, TypeAlias, TypeVar, Union
+from typing import Any, Generic, TypeVar, Union
 
 from gt4py import eve
 from gt4py.eve import Coerced, Node, SourceLocation, SymbolName, SymbolRef, datamodels
@@ -209,17 +209,3 @@ class FieldOperator(LocatedNode, SymbolTableTrait):
     type: Union[ts_ffront.FieldOperatorType, ts.DeferredType] = ts.DeferredType(
         constraint=ts_ffront.FieldOperatorType
     )
-
-
-class ScanOperator(LocatedNode, SymbolTableTrait):
-    id: Coerced[SymbolName]
-    axis: Constant
-    forward: Constant
-    init: Constant
-    definition: FunctionDefinition  # scan pass
-    type: Union[ts_ffront.ScanOperatorType, ts.DeferredType] = ts.DeferredType(
-        constraint=ts_ffront.ScanOperatorType
-    )
-
-
-OperatorNode: TypeAlias = FieldOperator | ScanOperator

@@ -7,6 +7,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 from gt4py.next.ffront import dialect_ast_enums, field_operator_ast as foast
+from gt4py.next.type_system import type_specifications as ts
 
 
 def compute_assign_indices(
@@ -80,3 +81,17 @@ def expr_to_index(expr: foast.Expr) -> int:
             return expr.operand.value
 
     raise ValueError(f"Not an index: '{expr}'.")
+
+
+def is_literal(expr: foast.Expr) -> bool:
+    """Check if `expr` is a literal: a constant, possibly negated, type-converted or in a tuple."""
+    match expr:
+        case foast.Constant():
+            return True
+        case foast.TupleExpr():
+            return all(is_literal(el) for el in expr.elts)
+        case foast.UnaryOp():
+            return is_literal(expr.operand)
+        case foast.Call(func=foast.Name(type=ts.ConstructorType())):
+            return all(is_literal(arg) for arg in [*expr.args, *expr.kwargs.values()])
+    return False

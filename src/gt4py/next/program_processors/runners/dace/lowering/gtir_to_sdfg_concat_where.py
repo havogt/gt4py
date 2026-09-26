@@ -25,6 +25,7 @@ from gt4py.next.iterator.ir_utils import (
     common_pattern_matcher as cpm,
     domain_utils,
     ir_makers as im,
+    misc as gtir_misc,
 )
 from gt4py.next.program_processors.runners.dace import sdfg_args as gtx_dace_args
 from gt4py.next.program_processors.runners.dace.lowering import (
@@ -134,6 +135,18 @@ def _translate_concat_where_branch(
 
     assert source.gt_type == output_type
     source_domain_range = source_domain.ranges[concat_dim]
+    if cpm.is_applied_scan(gtir_misc.extract_projector(source_expr)[1]):
+        # A scan is computed on its own range, which can exceed the region of this branch.
+        output_range = output_domain.ranges[concat_dim]
+        branch_start, branch_stop = (
+            (output_range.start, concat_dim_bound_expr)
+            if is_lower
+            else (concat_dim_bound_expr, output_range.stop)
+        )
+        source_domain_range = domain_utils.SymbolicRange(
+            start=im.maximum(source_domain_range.start, branch_start),
+            stop=im.minimum(source_domain_range.stop, branch_stop),
+        )
     source_range_0 = gtir_to_sdfg_utils.get_symbolic(source_domain_range.start)
     source_range_1 = gtir_to_sdfg_utils.get_symbolic(
         im.maximum(source_domain_range.start, source_domain_range.stop)

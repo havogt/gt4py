@@ -284,6 +284,25 @@ def function_signature_incompatibilities_scanop(
 
 
 @type_info.function_signature_incompatibilities.register
+def function_signature_incompatibilities_reduceop(
+    reduceop_type: ts_ffront.ReduceOperatorType,
+    args: list[ts.TypeSpec],
+    kwargs: dict[str, ts.TypeSpec],
+) -> Iterator[str]:
+    if not all(
+        isinstance(el, ts.FieldType) and reduceop_type.axis in el.dims
+        for arg in [*args, *kwargs.values()]
+        for el in type_info.primitive_constituents(arg)
+    ):
+        yield (
+            f"Arguments to 'reduce' must be fields over the reduced dimension "
+            f"'{reduceop_type.axis.value}', or tuples thereof."
+        )
+        return
+    yield from function_signature_incompatibilities_scanop(reduceop_type, args, kwargs)
+
+
+@type_info.function_signature_incompatibilities.register
 def function_signature_incompatibilities_program(
     program_type: ts_ffront.ProgramType, args: tuple[ts.TypeSpec], kwargs: dict[str, ts.TypeSpec]
 ) -> Iterator[str]:
@@ -332,11 +351,37 @@ def return_type_scanop(
     )
 
 
+@type_info.return_type.register
+def return_type_reduceop(
+    callable_type: ts_ffront.ReduceOperatorType,
+    *,
+    with_args: list[ts.TypeSpec],
+    with_kwargs: dict[str, ts.TypeSpec],
+) -> ts.TypeSpec:
+    dims = [
+        dim
+        for dim in common.promote_dims(
+            *(
+                type_info.extract_dims(el)
+                for arg in with_args + list(with_kwargs.values())
+                for el in type_info.primitive_constituents(arg)
+            )
+        )
+        if dim != callable_type.axis
+    ]
+    return cast(
+        ts.TypeSpec,
+        type_info.tree_map_type(lambda arg: ts.FieldType(dims=dims, dtype=arg))(
+            callable_type.definition.returns
+        ),
+    )
+
+
 def type_in_program_context(callable_type: ts.CallableType) -> ProgramType | ts.FunctionType:
     """
     Return the type of a callable when encountered in context of a program.
 
-    A callable can be a field-, scan-operator or a simple function (though the latter is not
+    A callable can be a field operator or a simple function (though the latter is not
     implemented in the frontent). The program context is either inside of a program or even
     outside the GT4Py where all callables behave as if they were called from inside a program.
 
@@ -364,29 +409,6 @@ def type_in_program_context(callable_type: ts.CallableType) -> ProgramType | ts.
                 returns=ts.VoidType(),
             )
         )
-    elif isinstance(callable_type, ts_ffront.ScanOperatorType):
-        as_deferred_type_with_same_structure = type_info.tree_map_type(
-            lambda _: ts.DeferredType(constraint=None)
-        )
-        scan_pass_type = callable_type.definition
-        _, *non_carry_args = scan_pass_type.pos_or_kw_args.items()
-        pos_or_kw_args = dict(non_carry_args) | {"out": scan_pass_type.returns}
-        assert not scan_pass_type.pos_only_args
-        return ProgramType(
-            ts.FunctionType(
-                pos_only_args=[],
-                # TODO(tehrengruber): What we actually want is a generic type here, but we don't
-                #  have that concept yet.
-                pos_or_kw_args={
-                    k: as_deferred_type_with_same_structure(t) for k, t in pos_or_kw_args.items()
-                },
-                kw_only_args={
-                    k: as_deferred_type_with_same_structure(t)
-                    for k, t in scan_pass_type.kw_only_args.items()
-                },
-                returns=ts.VoidType(),
-            )
-        )
     assert isinstance(callable_type, (ts.FunctionType, ts_ffront.ProgramType))
     return callable_type
 
@@ -396,11 +418,9 @@ def _signature_from_callable_in_program_context(
 ) -> inspect.Signature:
     if isinstance(callable_type, ts_ffront.ProgramType):
         return _signature_from_callable_in_program_context(callable_type.definition)
-    elif isinstance(callable_type, ts_ffront.FieldOperatorType | ts_ffront.ScanOperatorType):
+    elif isinstance(callable_type, ts_ffront.FieldOperatorType):
         operator_signature = _signature_from_callable_in_program_context(callable_type.definition)
         params = list(operator_signature.parameters.values())
-        if isinstance(callable_type, ts_ffront.ScanOperatorType):
-            params = params[1:]  # Remove the carry state arg
         return inspect.Signature(
             parameters=[*params, inspect.Parameter("out", inspect.Parameter.KEYWORD_ONLY)],
             return_annotation=inspect.Signature.empty,

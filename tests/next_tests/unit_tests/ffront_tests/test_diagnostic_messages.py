@@ -78,7 +78,7 @@ def test_while_loop_names_construct_and_alternative():
 
     assert isinstance(err, errors.UnsupportedPythonFeatureError)
     assert err.message == "Unsupported Python syntax: 'while' loop."
-    assert any("scan_operator" in hint for hint in err.hints)
+    assert any("'scan'" in hint for hint in err.hints)
     rendered = str(err)
     assert "while True:" in rendered
     assert "Note: Only a subset of Python is valid inside GT4Py functions." in rendered

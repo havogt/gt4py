@@ -20,7 +20,7 @@ from gt4py.next.iterator.ir_utils import (
     misc as ir_utils_misc,
 )
 from gt4py.next.iterator.ir_utils.domain_utils import SymbolicDomain
-from gt4py.next.iterator.transforms import cse, infer_domain, inline_lambdas
+from gt4py.next.iterator.transforms import constant_folding, cse, infer_domain, inline_lambdas
 from gt4py.next.iterator.type_system import inference as type_inference
 from gt4py.next.type_system import type_info, type_specifications as ts
 
@@ -111,14 +111,6 @@ def _populate_and_homogenize_domains(stmts: list[itir.Stmt]) -> list[itir.Stmt]:
     return new_stmts
 
 
-def _is_as_fieldop_of_scan(expr: itir.Expr) -> bool:
-    return (
-        cpm.is_applied_as_fieldop(expr)
-        and isinstance(expr.fun, itir.FunCall)
-        and cpm.is_call_to(expr.fun.args[0], "scan")
-    )
-
-
 def _transform_if(
     stmt: itir.Stmt,
     declarations: list[itir.Temporary],
@@ -142,6 +134,160 @@ def _transform_if(
             )
         ]
     return None
+
+
+def _fold_tuple_get(expr: itir.Expr) -> itir.Expr:
+    if cpm.is_call_to(expr, "make_tuple"):
+        return im.make_tuple(*(_fold_tuple_get(arg) for arg in expr.args))
+    if cpm.is_call_to(expr, "tuple_get"):
+        idx, tuple_expr = expr.args
+        assert isinstance(idx, itir.Literal)
+        tuple_expr = _fold_tuple_get(tuple_expr)
+        if cpm.is_call_to(tuple_expr, "make_tuple"):
+            return tuple_expr.args[int(idx.value)]
+        return im.tuple_get(idx, tuple_expr)
+    return expr
+
+
+def _transform_scan_on_other_domain(
+    stmt: itir.Stmt,
+    declarations: list[itir.Temporary],
+    uids: next_utils.IDGeneratorPool,
+) -> Optional[list[itir.Stmt]]:
+    # A scan is computed on its own vertical range, which can differ from the domain of the
+    # statement. Materialize it in a temporary and copy the part of it that is requested.
+    if not isinstance(stmt, itir.SetAt) or cpm.is_ref_to(stmt.domain, "UNPOPULATED"):
+        return None
+    projector, expr = ir_utils_misc.extract_projector(stmt.expr)
+    if not cpm.is_applied_scan(expr):
+        return None
+    stmt_domain = infer_domain._make_symbolic_domain_tuple(
+        constant_folding.ConstantFolding.apply(stmt.domain)
+    )
+    scan_domains = set(next_utils.flatten_nested_tuple((expr.annex.domain,))) - {
+        infer_domain.DomainAccessDescriptor.NEVER
+    }
+    if scan_domains <= set(next_utils.flatten_nested_tuple((stmt_domain,))):
+        return None
+
+    tmp_target, tmp_stmts = _materialize_in_temporaries(expr, declarations, uids)
+    source = (
+        _fold_tuple_get(
+            inline_lambdas.inline_lambda(im.call(projector)(tmp_target), opcount_preserving=False)
+        )
+        if projector is not None
+        else tmp_target
+    )
+    scan_domain = SymbolicDomain.from_expr(expr.fun.args[1])
+
+    elems_by_domain: dict[SymbolicDomain, list[tuple[int, ...]]] = {}
+    next_utils.tree_map(
+        lambda domain, path: elems_by_domain.setdefault(domain, []).append(path),
+        with_path_arg=True,
+    )(stmt_domain)
+
+    get_path = lambda expr, path: functools.reduce(  # noqa: E731
+        lambda e, idx: e.args[idx] if cpm.is_call_to(e, "make_tuple") else im.tuple_get(idx, e),
+        path,
+        expr,
+    )
+    copy_stmts: list[itir.Stmt] = []
+    for domain, paths in elems_by_domain.items():
+        copy_domain = domain_utils.domain_intersection(domain, scan_domain)
+        if paths == [()]:
+            target, elems = stmt.target, source
+        else:
+            target = im.make_tuple(*(get_path(stmt.target, path) for path in paths))
+            elems = im.make_tuple(*(get_path(source, path) for path in paths))
+        copy = im.as_fieldop("deref", copy_domain.as_expr())(elems)
+        copy.annex.domain = copy_domain
+        copy_stmts.append(itir.SetAt(target=target, domain=copy_domain.as_expr(), expr=copy))
+    return [*tmp_stmts, *copy_stmts]
+
+
+def _materialize_in_temporaries(
+    tmp_expr: itir.Expr,
+    declarations: list[itir.Temporary],
+    uids: next_utils.IDGeneratorPool,
+) -> tuple[itir.Expr, list[itir.Stmt]]:
+    """Declare temporaries for `tmp_expr` and return a reference to them and the statements filling them."""
+    as_tuple = lambda _, elts: tuple(elts)  # noqa: E731
+
+    assert isinstance(tmp_expr.type, ts.TypeSpec)
+    tmp_names: str | tuple[str | tuple, ...] = type_info.tree_map_type(
+        lambda x: next(uids["__tmp"]),
+        result_collection_constructor=as_tuple,
+    )(tmp_expr.type)
+    tmp_dtypes: ts.ScalarType | ts.ListType | tuple[ts.ScalarType | ts.ListType | tuple, ...] = (
+        type_info.tree_map_type(
+            type_info.extract_dtype,
+            result_collection_constructor=as_tuple,
+        )(tmp_expr.type)
+    )
+
+    tmp_domains: SymbolicDomain | tuple[SymbolicDomain | tuple, ...] = tmp_expr.annex.domain
+
+    if cpm.is_applied_as_fieldop(tmp_expr):
+        # In this case all tuple elements have the same size (or will be `NEVER`).
+        # Create the tuple structure with that domain.
+        domain = list(
+            set(next_utils.flatten_nested_tuple((tmp_domains,)))
+            - {infer_domain.DomainAccessDescriptor.NEVER}
+        )
+        assert len(domain) == 1
+        # this is the domain used as initial value in the tuple construction below
+        tmp_domains = domain[0]
+
+    def get_domain(
+        _, path: tuple[int, ...]
+    ) -> domain_utils.SymbolicDomain:  # function only used inside loop
+        domain = functools.reduce(
+            lambda var, idx: var[idx] if isinstance(var, tuple) else var,
+            path,
+            tmp_domains,
+        )
+        assert isinstance(domain, domain_utils.SymbolicDomain)
+        return domain
+
+    # The following propagates the domains to the tuple structure of `tmp_expr.type`.
+    # `tmp_domains` might not have this structure because domain inference was not able to infer the tuple structure.
+    tmp_domains = type_info.tree_map_type(
+        get_domain,
+        result_collection_constructor=as_tuple,
+        with_path_arg=True,
+    )(tmp_expr.type)
+
+    declarations.extend(
+        itir.Temporary(id=tmp_name, domain=domain.as_expr(), dtype=dtype)
+        for tmp_name, domain, dtype in zip(
+            next_utils.flatten_nested_tuple((tmp_names,)),
+            next_utils.flatten_nested_tuple((tmp_domains,)),
+            next_utils.flatten_nested_tuple((tmp_dtypes,)),
+            strict=True,
+        )
+    )
+
+    # if the expr is a field this just gives a simple `itir.SymRef`, otherwise we generate a
+    #  `make_tuple` expression.
+    target_expr: itir.Expr = next_utils.tree_map(
+        lambda name, domain: im.ref(name, annex={"domain": domain}),
+        result_collection_constructor=lambda _, elts: im.make_tuple(*elts),
+    )(tmp_names, tmp_domains)  # type: ignore[assignment]  # typing of tree_map does not reflect action of `result_collection_constructor` yet
+
+    # TODO(tehrengruber): _transform_stmt not needed if deepest_expr_first=True
+    stmts = _transform_stmt(
+        itir.SetAt(
+            target=target_expr,
+            # The domain is populated later in `_populate_and_homogenize_domains`
+            # at this point the `SetAt` contains possibly expressions on different domains.
+            domain=im.ref("UNPOPULATED"),
+            expr=tmp_expr,
+        ),
+        declarations,
+        uids,
+    )
+
+    return target_expr, stmts
 
 
 def _transform_by_pattern(
@@ -169,94 +315,19 @@ def _transform_by_pattern(
     if extracted_fields:
         tmp_stmts: list[itir.Stmt] = []
 
-        as_tuple = lambda _, elts: tuple(elts)  # noqa: E731
-
         # for each extracted expression generate:
         #  - one or more `Temporary` declarations (depending on whether the expression is a field
         #    or a tuple thereof)
         #  - one `SetAt` statement that materializes the expression into the temporary
         for tmp_sym, tmp_expr in extracted_fields.items():
-            assert isinstance(tmp_expr.type, ts.TypeSpec)
-            tmp_names: str | tuple[str | tuple, ...] = type_info.tree_map_type(
-                lambda x: next(uids["__tmp"]),
-                result_collection_constructor=as_tuple,
-            )(tmp_expr.type)
-            tmp_dtypes: (
-                ts.ScalarType | ts.ListType | tuple[ts.ScalarType | ts.ListType | tuple, ...]
-            ) = type_info.tree_map_type(
-                type_info.extract_dtype,
-                result_collection_constructor=as_tuple,
-            )(tmp_expr.type)
-
-            tmp_domains: SymbolicDomain | tuple[SymbolicDomain | tuple, ...] = tmp_expr.annex.domain
-
-            if cpm.is_applied_as_fieldop(tmp_expr):
-                # In this case all tuple elements have the same size (or will be `NEVER`).
-                # Create the tuple structure with that domain.
-                domain = list(
-                    set(next_utils.flatten_nested_tuple((tmp_domains,)))
-                    - {infer_domain.DomainAccessDescriptor.NEVER}
-                )
-                assert len(domain) == 1
-                # this is the domain used as initial value in the tuple construction below
-                tmp_domains = domain[0]
-
-            def get_domain(
-                _, path: tuple[int, ...]
-            ) -> domain_utils.SymbolicDomain:  # function only used inside loop
-                domain = functools.reduce(
-                    lambda var, idx: var[idx] if isinstance(var, tuple) else var,
-                    path,
-                    tmp_domains,  # noqa: B023
-                )
-                assert isinstance(domain, domain_utils.SymbolicDomain)
-                return domain
-
-            # The following propagates the domains to the tuple structure of `tmp_expr.type`.
-            # `tmp_domains` might not have this structure because domain inference was not able to infer the tuple structure.
-            tmp_domains = type_info.tree_map_type(
-                get_domain,
-                result_collection_constructor=as_tuple,
-                with_path_arg=True,
-            )(tmp_expr.type)
-
-            declarations.extend(
-                itir.Temporary(id=tmp_name, domain=domain.as_expr(), dtype=dtype)
-                for tmp_name, domain, dtype in zip(
-                    next_utils.flatten_nested_tuple((tmp_names,)),
-                    next_utils.flatten_nested_tuple((tmp_domains,)),
-                    next_utils.flatten_nested_tuple((tmp_dtypes,)),
-                    strict=True,
-                )
-            )
-
-            # if the expr is a field this just gives a simple `itir.SymRef`, otherwise we generate a
-            #  `make_tuple` expression.
-            target_expr: itir.Expr = next_utils.tree_map(
-                lambda name, domain: im.ref(name, annex={"domain": domain}),
-                result_collection_constructor=lambda _, elts: im.make_tuple(*elts),
-            )(tmp_names, tmp_domains)  # type: ignore[assignment]  # typing of tree_map does not reflect action of `result_collection_constructor` yet
-
+            target_expr, stmts = _materialize_in_temporaries(tmp_expr, declarations, uids)
             # note: the let would be removed automatically by the `cse.extract_subexpression`, but
             # we remove it here for readability & debuggability.
             new_expr = inline_lambdas.inline_lambda(
                 im.let(tmp_sym, target_expr)(new_expr), opcount_preserving=False
             )
 
-            # TODO(tehrengruber): _transform_stmt not needed if deepest_expr_first=True
-            tmp_stmts.extend(
-                _transform_stmt(
-                    itir.SetAt(
-                        target=target_expr,
-                        # The domain is populated later in `_populate_and_homogenize_domains`
-                        # at this point the `SetAt` contains possibly expressions on different domains.
-                        domain=im.ref("UNPOPULATED"),
-                        expr=tmp_expr,
-                    ),
-                    declarations,
-                    uids,
-                )
-            )
+            tmp_stmts.extend(stmts)
 
         if projector is not None:
             # add the projector back
@@ -279,6 +350,7 @@ def _transform_stmt(
     transforms: list[Callable] = [
         # transform `if_` call into `IfStmt`
         _transform_if,
+        _transform_scan_on_other_domain,
         # extract applied `as_fieldop` to top-level
         functools.partial(
             _transform_by_pattern, predicate=lambda expr, _: cpm.is_applied_as_fieldop(expr)

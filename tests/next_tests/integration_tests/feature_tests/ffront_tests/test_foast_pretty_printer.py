@@ -11,7 +11,7 @@ import textwrap
 
 import pytest
 
-from gt4py.next import Dimension, DimensionKind, Field, field_operator, int32, int64, scan_operator
+from gt4py.next import Dimension, DimensionKind, Field, field_operator, int32, int64, scan
 from gt4py.next.ffront.ast_passes import single_static_assign as ssa
 from gt4py.next.ffront.foast_pretty_printer import pretty_format
 from gt4py.next.ffront.func_to_foast import FieldOperatorParser
@@ -66,21 +66,23 @@ def test_fieldop():
     assert pretty_format(bar.foast_stage.foast_node) == expected
 
 
-def test_scanop():
+def test_scan_call():
     KDim = Dimension("KDim", kind=DimensionKind.VERTICAL)
 
-    @scan_operator(axis=KDim, forward=False, init=1)
-    def scan(inp: int32) -> int32:
-        foo = inp
-        return inp
+    @field_operator
+    def scan_pass(carry: int32, inp: int32) -> int32:
+        return carry + inp
+
+    @field_operator
+    def scan_call(inp: Field[[KDim], int32]) -> Field[[KDim], int32]:
+        return scan(scan_pass, range=(KDim, 0, 9), forward=False, init=1)(inp)
 
     expected = textwrap.dedent(
-        f"""
-        @scan_operator(axis=KDim[vertical], forward=False, init=1)
-        def scan(inp: int32) -> int32:
-          {ssa.unique_name("foo", 0)} = inp
-          return inp
+        """
+        @field_operator
+        def scan_call(inp: Field[[KDim], int32]) -> Field[[KDim], int32]:
+          return scan(scan_pass, range=(KDim, 0, 9), forward=False, init=1)(inp)
         """
     ).strip()
 
-    assert pretty_format(scan.foast_stage.foast_node) == expected
+    assert pretty_format(scan_call.foast_stage.foast_node) == expected

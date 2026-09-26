@@ -42,7 +42,7 @@ from .embedded import (  # Just for registering field implementations
     nd_array_field as _nd_array_field,
 )
 from .ffront import fbuiltins
-from .ffront.decorator import field_operator, program, scan_operator
+from .ffront.decorator import field_operator, program
 from .ffront.fbuiltins import (
     FieldOffset,
     IndexType,
@@ -83,6 +83,8 @@ from .ffront.fbuiltins import (
     neg,
     neighbor_sum,
     power,
+    reduce,
+    scan,
     sin,
     sinh,
     sqrt,
@@ -140,7 +142,6 @@ __all__ = [  # noqa: RUF022 [unsorted-dunder-all]
     "FieldOffset",
     "field_operator",
     "program",
-    "scan_operator",
     # from otf
     "wait_for_compilation",
     # from program_processor
@@ -186,6 +187,8 @@ __all__ = [  # noqa: RUF022 [unsorted-dunder-all]
     "neg",
     "neighbor_sum",
     "power",
+    "reduce",
+    "scan",
     "sin",
     "sinh",
     "sqrt",

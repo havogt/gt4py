@@ -30,7 +30,7 @@ with no pointer into their code. Thread a `SourceLocation` through.
    that is wrong; describe other contributing code (e.g. the other operand of
    a type mismatch) as a `related` span, not in the headline.
 3. **Says what to do, not only what is wrong.** Give a `Hint:` that names the
-   supported alternative (`where(...)`, `astype(...)`, `scan_operator`,
+   supported alternative (`where(...)`, `astype(...)`, `scan(...)`,
    `&` / `|`).
 4. **Keeps compiler internals out of the headline.** Say `'while' loop`, not
    `ast.While`; raw internal names are only the last-resort fallback for
@@ -171,7 +171,7 @@ Unsupported Python syntax: 'while' loop.
        |         ^^^^^^^^^^^
   Note: Only a subset of Python is valid inside GT4Py functions.
   Hint: GT4Py functions describe operations on whole fields without explicit loops. For
-    sequential dependencies along a dimension, use a 'scan_operator'.
+    sequential dependencies along a dimension, use 'scan'.
 ```
 
 **Arithmetic with a boolean mask** (`label` on the bad operand, `related` on

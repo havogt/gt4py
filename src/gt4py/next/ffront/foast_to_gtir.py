@@ -120,35 +120,6 @@ class FieldOperatorLowering(eve.PreserveLocationVisitor, eve.NodeTranslator):
             id=func_definition.id, params=func_definition.params, expr=func_definition.expr
         )
 
-    def visit_ScanOperator(
-        self, node: foast.ScanOperator, **kwargs: Any
-    ) -> itir.FunctionDefinition:
-        # note: we don't need the axis here as this is handled by the program
-        #  decorator
-        assert isinstance(node.type, ts_ffront.ScanOperatorType)
-
-        # We are lowering node.forward and node.init to iterators, but here we expect values -> `deref`.
-        # In iterator IR we didn't properly specify if this is legal,
-        # however after lift-inlining the expressions are transformed back to literals.
-        forward = self.visit(node.forward, **kwargs)
-        init = self.visit(node.init, **kwargs)
-
-        # lower definition function
-        func_definition: itir.FunctionDefinition = self.visit(node.definition, **kwargs)
-        new_body = func_definition.expr
-
-        stencil_args: list[itir.Expr] = []
-        assert not node.type.definition.pos_only_args and not node.type.definition.kw_only_args
-        for param in func_definition.params[1:]:
-            new_body = im.let(param.id, im.deref(param.id))(new_body)
-            stencil_args.append(im.ref(param.id))
-
-        definition = itir.Lambda(params=func_definition.params, expr=new_body)
-
-        body = im.as_fieldop(im.scan(definition, forward, init))(*stencil_args)
-
-        return itir.FunctionDefinition(id=node.id, params=definition.params[1:], expr=body)
-
     def visit_Stmt(self, node: foast.Stmt, **kwargs: Any) -> Never:
         raise AssertionError("Statements must always be visited in the context of a function.")
 
@@ -351,7 +322,15 @@ class FieldOperatorLowering(eve.PreserveLocationVisitor, eve.NodeTranslator):
         return current_expr
 
     def visit_Call(self, node: foast.Call, **kwargs: Any) -> itir.Expr:
-        if type_info.type_class(node.func.type) is ts.FieldType:
+        if isinstance(node.func, foast.Call) and isinstance(
+            node.func.type, ts_ffront.ReduceOperatorType
+        ):
+            raise NotImplementedError("'reduce' is only supported in embedded execution.")
+        elif isinstance(node.func, foast.Call) and isinstance(
+            node.func.type, ts_ffront.ScanOperatorType
+        ):
+            return self._visit_scan_call(node, **kwargs)
+        elif type_info.type_class(node.func.type) is ts.FieldType:
             return self._visit_shift(node, **kwargs)
         elif isinstance(node.func, foast.Name) and node.func.id in fbuiltins.MATH_BUILTIN_NAMES:
             return self._visit_math_built_in(node, **kwargs)
@@ -391,6 +370,70 @@ class FieldOperatorLowering(eve.PreserveLocationVisitor, eve.NodeTranslator):
 
         raise AssertionError(
             f"Call to object of type '{type(node.func.type).__name__}' not understood."
+        )
+
+    def _visit_scan_call(self, node: foast.Call, **kwargs: Any) -> itir.Expr:
+        # `scan(scan_pass, forward=..., init=...)(*args)`
+        scan_call = node.func
+        assert isinstance(scan_call, foast.Call)
+        assert isinstance(scan_call.type, ts_ffront.ScanOperatorType)
+        scan_pass = self.visit(scan_call.args[0], **kwargs)
+        forward = self.visit(scan_call.kwargs["forward"], **kwargs)
+        init = self.visit(scan_call.kwargs["init"], **kwargs)
+
+        lowered_args, lowered_kwargs = type_info.canonicalize_arguments(
+            scan_call.type, self.visit(node.args, **kwargs), self.visit(node.kwargs, **kwargs)
+        )
+        stencil_args = [*lowered_args, *lowered_kwargs.values()]
+        range_ = scan_call.kwargs["range"]
+        assert isinstance(range_, foast.TupleExpr)
+        _, start, stop = range_.elts
+        output_dims = type_info.extract_dims(
+            next(iter(type_info.primitive_constituents(node.type)))
+        )
+        # The grid type and the bounds of the other dimensions are placeholders: domain inference
+        # only keeps the range of the scan dimension and infers the rest from the consumers.
+        domain = im.domain(
+            common.GridType.CARTESIAN,
+            {
+                dim: (self.visit(start, **kwargs), self.visit(stop, **kwargs))
+                if dim == scan_call.type.axis
+                else (itir.InfinityLiteral.NEGATIVE, itir.InfinityLiteral.POSITIVE)
+                for dim in output_dims
+            },
+        )
+        carry = next(self.uid_generator["__scan_carry"])
+        params = [next(self.uid_generator["__scan_arg"]) for _ in stencil_args]
+
+        if foast_utils.is_literal(scan_call.kwargs["init"]):
+            definition = im.lambda_(carry, *params)(
+                im.call(scan_pass)(carry, *(im.deref(param) for param in params))
+            )
+            return im.as_fieldop(im.scan(definition, forward, init), domain)(*stencil_args)
+
+        # A non-literal `init` is not a value the scan can be seeded with, as a stencil may not
+        # reference outer symbols. It is passed as an extra argument instead and read on the
+        # first level, marked by a flag in the carry: `carry = (is_initialized, state)`.
+        init_param = next(self.uid_generator["__scan_init"])
+        state = next(self.uid_generator["__scan_state"])
+        definition = im.lambda_(carry, *params, init_param)(
+            im.let(
+                state,
+                im.if_(im.tuple_get(0, carry), im.tuple_get(1, carry), im.deref(init_param)),
+            )(
+                im.make_tuple(
+                    im.literal_from_value(True),
+                    im.call(scan_pass)(state, *(im.deref(param) for param in params)),
+                )
+            )
+        )
+        placeholder = type_info.tree_map_type(
+            lambda type_: im.literal_from_value(tt.as_dtype(type_).scalar_type(0)),
+            result_collection_constructor=lambda _, elems: im.make_tuple(*elems),
+        )(scan_call.type.definition.returns)
+        seed = im.make_tuple(im.literal_from_value(False), placeholder)
+        return im.tuple_get(
+            1, im.as_fieldop(im.scan(definition, forward, seed), domain)(*stencil_args, init)
         )
 
     def _visit_astype(self, node: foast.Call, **kwargs: Any) -> itir.Expr:

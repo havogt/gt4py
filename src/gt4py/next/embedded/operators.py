@@ -7,16 +7,15 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 import dataclasses
-from typing import Any, Callable, Generic, Optional, ParamSpec, Sequence, TypeVar
+from typing import Any, Callable, Generic, Optional, ParamSpec, Sequence, TypeVar, cast
 
-from gt4py import eve
 from gt4py._core import definitions as core_defs
 from gt4py.eve import extended_typing as xtyping
 from gt4py.next import common, errors, field_utils, named_collections, utils
 from gt4py.next.embedded import common as embedded_common, context as embedded_context
 from gt4py.next.field_utils import get_array_ns
 from gt4py.next.otf import arguments
-from gt4py.next.type_system import type_specifications as ts, type_translation
+from gt4py.next.type_system import type_info, type_specifications as ts, type_translation
 
 
 _P = ParamSpec("_P")
@@ -34,8 +33,8 @@ class EmbeddedOperator(Generic[_R, _P]):
 @dataclasses.dataclass(frozen=True)
 class ScanOperator(EmbeddedOperator[xtyping.MaybeNestedInTuple[core_defs.ScalarT], _P]):
     forward: bool
-    init: xtyping.MaybeNestedInTuple[core_defs.ScalarT]
-    axis: common.Dimension
+    init: xtyping.MaybeNestedInTuple[core_defs.ScalarT | common.Field]
+    range: common.NamedRange
 
     def __call__(  # type: ignore[override]
         self,
@@ -45,11 +44,10 @@ class ScanOperator(EmbeddedOperator[xtyping.MaybeNestedInTuple[core_defs.ScalarT
         common.Field[Any, core_defs.ScalarT]
         | tuple[common.Field[Any, core_defs.ScalarT] | tuple, ...]
     ):
-        scan_range = embedded_context.get_closure_column_range()
-        assert self.axis == scan_range.dim
+        scan_range = self.range
         scan_axis = scan_range.dim
         all_args = [*args, *kwargs.values()]
-        domain_intersection = _intersect_scan_args(*all_args)
+        domain_intersection = _intersect_scan_args(*all_args, self.init)
         non_scan_domain = common.Domain(*[nr for nr in domain_intersection if nr.dim != scan_axis])
 
         out_domain = common.Domain(
@@ -60,12 +58,14 @@ class ScanOperator(EmbeddedOperator[xtyping.MaybeNestedInTuple[core_defs.ScalarT
             out_domain = common.Domain(*out_domain, (scan_range))
 
         xp = get_array_ns(*(arguments.extract(arg) for arg in all_args))
-        init_type = type_translation.from_value(self.init)
+        init_type = type_info.tree_map_type(
+            lambda t: t.dtype if isinstance(t, ts.FieldType) else t
+        )(type_translation.from_value(self.init))
         assert isinstance(init_type, ts.TupleType | ts.ScalarType | ts.NamedCollectionType)
         res = field_utils.field_from_typespec(init_type, out_domain, xp)
 
         def scan_loop(hpos: Sequence[common.NamedIndex]) -> None:
-            acc: xtyping.MaybeNestedInTuple[core_defs.ScalarT] = self.init
+            acc = cast(xtyping.MaybeNestedInTuple[core_defs.ScalarT], _tuple_at(hpos, self.init))
             for k in scan_range.unit_range if self.forward else reversed(scan_range.unit_range):
                 pos = (*hpos, common.NamedIndex(scan_axis, k))
                 new_args = [_tuple_at(pos, arg) for arg in args]
@@ -86,12 +86,6 @@ class ScanOperator(EmbeddedOperator[xtyping.MaybeNestedInTuple[core_defs.ScalarT
                 scan_loop(hpos)
 
         return res
-
-
-def _get_out_domain(out: xtyping.MaybeNestedInTuple[common.MutableField]) -> common.Domain:
-    return embedded_common.domain_intersection(
-        *[f.domain for f in utils.flatten_nested_tuple((out,))]
-    )
 
 
 def field_operator_call(op: EmbeddedOperator[_R, _P], args: Any, kwargs: Any) -> Optional[_R]:
@@ -121,10 +115,8 @@ def field_operator_call(op: EmbeddedOperator[_R, _P], args: Any, kwargs: Any) ->
         out_domain = (
             utils.tree_map(common.domain)(domain)
             if domain is not None
-            else _get_out_domain(container_extracted_out)
+            else utils.tree_map(lambda f: f.domain)(container_extracted_out)
         )
-
-        new_context_kwargs["closure_column_range"] = _get_vertical_range(out_domain)
 
         with embedded_context.update(**new_context_kwargs):
             res = op(*args, **kwargs)
@@ -138,10 +130,7 @@ def field_operator_call(op: EmbeddedOperator[_R, _P], args: Any, kwargs: Any) ->
         offset_provider = kwargs.pop("offset_provider")
         domain = utils.tree_map(common.domain)(kwargs.pop("domain"))
 
-        with embedded_context.update(
-            offset_provider=offset_provider,
-            closure_column_range=_get_vertical_range(domain),  # type: ignore[arg-type]
-        ):
+        with embedded_context.update(offset_provider=offset_provider):
             full_res: Any = op(*args, **kwargs)
 
         xp = get_array_ns(*(arguments.extract(arg) for arg in [*args, *kwargs.values()]))
@@ -160,13 +149,6 @@ def field_operator_call(op: EmbeddedOperator[_R, _P], args: Any, kwargs: Any) ->
             # assuming we wanted to call the field_operator as program, otherwise `offset_provider` would not be there
             raise errors.MissingArgumentError(None, "out", True)
         return op(*args, **kwargs)
-
-
-@utils.tree_map
-def _get_vertical_range(domain: common.Domain) -> common.NamedRange | eve.NothingType:
-    vertical_dim_filtered = [nr for nr in domain if nr.dim.kind == common.DimensionKind.VERTICAL]
-    assert len(vertical_dim_filtered) <= 1
-    return vertical_dim_filtered[0] if vertical_dim_filtered else eve.NOTHING
 
 
 def _field_on_domain(
@@ -224,7 +206,11 @@ def _tuple_at(
 ) -> core_defs.Scalar | tuple[core_defs.ScalarT | tuple, ...]:
     @named_collections.tree_map_named_collection
     def impl(field: common.Field | core_defs.Scalar) -> core_defs.Scalar:
-        res = field[pos].as_scalar() if isinstance(field, common.Field) else field
+        res = (
+            field[tuple(p for p in pos if p.dim in field.domain.dims)].as_scalar()
+            if isinstance(field, common.Field)
+            else field
+        )
         assert core_defs.is_scalar_type(res)
         return res
 
