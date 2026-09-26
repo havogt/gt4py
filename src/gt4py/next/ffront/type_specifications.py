@@ -24,5 +24,6 @@ class ScanOperatorType(ts.CallableType):
     definition: ts.FunctionType
 
 
-class ReduceOperatorType(ScanOperatorType):
-    pass
+class ReduceOperatorType(ts.CallableType):
+    axis: common.Dimension
+    definition: ts.FunctionType
