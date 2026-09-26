@@ -9,7 +9,7 @@
 import numpy as np
 
 import gt4py.next as gtx
-from gt4py.next import broadcast, neighbor_sum, scan
+from gt4py.next import broadcast, neighbor_sum, reduce, scan
 from gt4py.next.experimental import as_offset, concat_where, connectivity_chains, required_indices
 from gt4py.next.ffront.connectivity_chains import Access, Unbounded
 
@@ -139,6 +139,17 @@ def test_scan_inside_field_operator_reads_the_whole_column():
     def testee(a: CellKField) -> gtx.Field[[Edge, K], float]:
         column = scan(column_sum_pass, range=(K, 0, 5), forward=True, init=0.0)(a)
         return neighbor_sum(column(E2C), axis=E2CDim)
+
+    assert connectivity_chains(testee, OFFSET_PROVIDER) == {
+        (): {"a": frozenset({Access(chain=("E2C",), displacement=(("K", Unbounded.COLUMN),))})}
+    }
+
+
+def test_vertical_reduce_reads_the_column_at_the_same_horizontal_point():
+    @gtx.field_operator
+    def testee(a: CellKField) -> EdgeField:
+        column_sum = reduce(column_sum_pass, range=(K, 1, 4))(a)
+        return neighbor_sum(column_sum(E2C), axis=E2CDim)
 
     assert connectivity_chains(testee, OFFSET_PROVIDER) == {
         (): {"a": frozenset({Access(chain=("E2C",), displacement=(("K", Unbounded.COLUMN),))})}

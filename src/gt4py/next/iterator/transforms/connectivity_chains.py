@@ -16,7 +16,7 @@ from typing import TypeAlias
 from gt4py import eve
 from gt4py.next import common, utils
 from gt4py.next.iterator import builtins, ir as itir
-from gt4py.next.iterator.ir_utils import common_pattern_matcher as cpm
+from gt4py.next.iterator.ir_utils import common_pattern_matcher as cpm, domain_utils
 from gt4py.next.iterator.transforms import (
     concat_where,
     dead_code_elimination,
@@ -215,6 +215,13 @@ def _trace_expr(
         )
     if cpm.is_call_to(expr, "broadcast"):
         return _trace_expr(expr.args[0], accesses, offset_provider_type)
+    if cpm.is_call_to(expr, "column_reduce"):
+        _, reduce_domain, field = expr.args
+        reduced_dims = list(domain_utils.SymbolicDomain.from_expr(reduce_domain).ranges.keys())
+        column_accesses = frozenset(
+            access.with_column(reduced_dims) for access in flatten(accesses)
+        )
+        return _trace_expr(field, column_accesses, offset_provider_type)
     if cpm.is_call_to(expr, ("index", "unstructured_domain", "cartesian_domain")):
         return {}
     if cpm.is_call_to(expr, builtins.ARITHMETIC_BUILTINS) or cpm.is_call_to(
