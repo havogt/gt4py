@@ -22,7 +22,7 @@ field operators / programs (ffront)
 - `common` / `common.py` — the core data model: `Field`, `Dimension`,
   `Domain`, `UnitRange`, `Connectivity`, `GridType`.
 - `ffront/` — the declarative frontend: `@field_operator`, `@program`,
-  `@scan_operator`, `fbuiltins`, and lowering to FOAST/PAST.
+  `scan`, `fbuiltins`, and lowering to FOAST/PAST.
 - `iterator/` — Iterator IR (ITIR/GTIR) and its transforms.
   `iterator/embedded.py` runs the lowered IR directly and is what the
   `roundtrip` backend targets.

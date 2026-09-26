@@ -77,8 +77,6 @@ fingerprinter = semantic_fingerprinter
 @dataclasses.dataclass(frozen=True)
 class DSLFieldOperatorDef(BaseStage):
     definition: types.FunctionType
-    node_class: type[foast.OperatorNode] = foast.FieldOperator
-    attributes: dict[str, Any] = dataclasses.field(default_factory=dict)
     grid_type: Optional[common.GridType] = None
     debug: bool = False
 
@@ -90,10 +88,9 @@ ConcreteDSLFieldOperatorDef: typing.TypeAlias = workflow.ConcreteArtifact[
 
 @dataclasses.dataclass(frozen=True)
 class FOASTOperatorDef(BaseStage):
-    foast_node: foast.OperatorNode
+    foast_node: foast.FieldOperator
     closure_vars: dict[str, Any]
     grid_type: Optional[common.GridType] = None
-    attributes: dict[str, Any] = dataclasses.field(default_factory=dict)
     debug: bool = False
 
 

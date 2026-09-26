@@ -120,35 +120,6 @@ class FieldOperatorLowering(eve.PreserveLocationVisitor, eve.NodeTranslator):
             id=func_definition.id, params=func_definition.params, expr=func_definition.expr
         )
 
-    def visit_ScanOperator(
-        self, node: foast.ScanOperator, **kwargs: Any
-    ) -> itir.FunctionDefinition:
-        # note: we don't need the axis here as this is handled by the program
-        #  decorator
-        assert isinstance(node.type, ts_ffront.ScanOperatorType)
-
-        # We are lowering node.forward and node.init to iterators, but here we expect values -> `deref`.
-        # In iterator IR we didn't properly specify if this is legal,
-        # however after lift-inlining the expressions are transformed back to literals.
-        forward = self.visit(node.forward, **kwargs)
-        init = self.visit(node.init, **kwargs)
-
-        # lower definition function
-        func_definition: itir.FunctionDefinition = self.visit(node.definition, **kwargs)
-        new_body = func_definition.expr
-
-        stencil_args: list[itir.Expr] = []
-        assert not node.type.definition.pos_only_args and not node.type.definition.kw_only_args
-        for param in func_definition.params[1:]:
-            new_body = im.let(param.id, im.deref(param.id))(new_body)
-            stencil_args.append(im.ref(param.id))
-
-        definition = itir.Lambda(params=func_definition.params, expr=new_body)
-
-        body = im.as_fieldop(im.scan(definition, forward, init))(*stencil_args)
-
-        return itir.FunctionDefinition(id=node.id, params=definition.params[1:], expr=body)
-
     def visit_Stmt(self, node: foast.Stmt, **kwargs: Any) -> Never:
         raise AssertionError("Statements must always be visited in the context of a function.")
 

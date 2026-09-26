@@ -12,7 +12,6 @@ import pytest
 
 import gt4py.next as gtx
 from gt4py.next import errors, float64, int32, scan
-from gt4py.next.ffront.decorator import program, scan_operator
 
 from next_tests.integration_tests import cases
 from next_tests.integration_tests.cases import (
@@ -28,10 +27,14 @@ from next_tests.integration_tests.cases_utils import (
 
 @pytest.mark.uses_scan
 def test_scalar_scan(cartesian_case):
-    @gtx.scan_operator(axis=KDim, forward=True, init=(0.0))
-    def testee_scan(state: float, qc_in: float, scalar: float) -> float:
+    @gtx.field_operator
+    def testee_pass(state: float, qc_in: float, scalar: float) -> float:
         qc = qc_in + state + scalar
         return qc
+
+    @gtx.field_operator
+    def testee_scan(qc: cases.IKFloatField, scalar: float) -> cases.IKFloatField:
+        return scan(testee_pass, axis=KDim, forward=True, init=0.0)(qc, scalar)
 
     @gtx.program
     def testee(qc: cases.IKFloatField, scalar: float):
@@ -50,8 +53,8 @@ def test_scalar_scan(cartesian_case):
 @pytest.mark.uses_scan_in_field_operator
 @pytest.mark.uses_tuple_args
 def test_tuple_scalar_scan(cartesian_case):
-    @gtx.scan_operator(axis=KDim, forward=True, init=0.0)
-    def testee_scan(
+    @gtx.field_operator
+    def testee_pass(
         state: float, qc_in: float, tuple_scalar: tuple[float, tuple[float, float]]
     ) -> float:
         return (qc_in + state + tuple_scalar[1][0] + tuple_scalar[1][1]) / tuple_scalar[0]
@@ -60,7 +63,7 @@ def test_tuple_scalar_scan(cartesian_case):
     def testee_op(
         qc: cases.IKFloatField, tuple_scalar: tuple[float, tuple[float, float]]
     ) -> cases.IKFloatField:
-        return testee_scan(qc, tuple_scalar)
+        return scan(testee_pass, axis=KDim, forward=True, init=0.0)(qc, tuple_scalar)
 
     qc = cases.allocate(cartesian_case, testee_op, "qc").zeros()()
     tuple_scalar = (1.0, (1.0, 0.0))
@@ -74,13 +77,13 @@ def test_tuple_scalar_scan(cartesian_case):
 @pytest.mark.uses_scan
 @pytest.mark.uses_scan_in_field_operator
 def test_scalar_scan_vertical_offset(cartesian_case):
-    @gtx.scan_operator(axis=KDim, forward=True, init=(0.0))
-    def testee_scan(state: float, inp: float) -> float:
+    @gtx.field_operator
+    def testee_pass(state: float, inp: float) -> float:
         return inp
 
     @gtx.field_operator
     def testee(inp: gtx.Field[[KDim], float]) -> gtx.Field[[KDim], float]:
-        return testee_scan(inp(KDim + 1))
+        return scan(testee_pass, axis=KDim, forward=True, init=0.0)(inp(KDim + 1))
 
     inp = cases.allocate(
         cartesian_case,
@@ -99,15 +102,15 @@ def test_scalar_scan_vertical_offset(cartesian_case):
 @pytest.mark.uses_scan
 @pytest.mark.uses_scan_in_field_operator
 def test_scan_unused_parameter(cartesian_case):
-    @gtx.scan_operator(axis=KDim, forward=True, init=(0.0))
-    def testee_scan(state: float, inp: float, unused: float) -> float:
+    @gtx.field_operator
+    def testee_pass(state: float, inp: float, unused: float) -> float:
         return state + inp
 
     @gtx.field_operator
     def testee(
         inp: gtx.Field[[KDim], float], unused: gtx.Field[[KDim], float]
     ) -> gtx.Field[[KDim], float]:
-        return testee_scan(inp, unused)
+        return scan(testee_pass, axis=KDim, forward=True, init=0.0)(inp, unused)
 
     inp = cases.allocate(cartesian_case, testee, "inp")()
     unused = cases.allocate(cartesian_case, testee, "unused")()
@@ -138,24 +141,32 @@ def test_fieldop_from_scan(cartesian_case, forward):
     def add(carry: float, foo: float) -> float:
         return carry + foo
 
-    @gtx.scan_operator(axis=KDim, forward=forward, init=init)
-    def simple_scan_operator(carry: float) -> float:
+    @gtx.field_operator
+    def scan_pass(carry: float) -> float:
         return add(carry, 1.0)
 
-    cases.verify(cartesian_case, simple_scan_operator, out=out, ref=expected)
+    @gtx.field_operator
+    def forward_scan() -> gtx.Field[[KDim], float]:
+        return scan(scan_pass, axis=KDim, forward=True, init=1.0)()
+
+    @gtx.field_operator
+    def backward_scan() -> gtx.Field[[KDim], float]:
+        return scan(scan_pass, axis=KDim, forward=False, init=1.0)()
+
+    cases.verify(cartesian_case, forward_scan if forward else backward_scan, out=out, ref=expected)
 
 
 @pytest.mark.uses_scan
 @pytest.mark.uses_scan_nested
 @pytest.mark.uses_scan_in_field_operator
 def test_solve_triag(cartesian_case):
-    @gtx.scan_operator(axis=KDim, forward=True, init=(0.0, 0.0))
+    @gtx.field_operator
     def tridiag_forward(
         state: tuple[float, float], a: float, b: float, c: float, d: float
     ) -> tuple[float, float]:
         return (c / (b - a * state[0]), (d - a * state[1]) / (b - a * state[0]))
 
-    @gtx.scan_operator(axis=KDim, forward=False, init=0.0)
+    @gtx.field_operator
     def tridiag_backward(x_kp1: float, cp: float, dp: float) -> float:
         return dp - cp * x_kp1
 
@@ -166,8 +177,8 @@ def test_solve_triag(cartesian_case):
         c: cases.IJKFloatField,
         d: cases.IJKFloatField,
     ) -> cases.IJKFloatField:
-        cp, dp = tridiag_forward(a, b, c, d)
-        return tridiag_backward(cp, dp)
+        cp, dp = scan(tridiag_forward, axis=KDim, forward=True, init=(0.0, 0.0))(a, b, c, d)
+        return scan(tridiag_backward, axis=KDim, forward=False, init=0.0)(cp, dp)
 
     def expected(a, b, c, d):
         shape = tuple(cartesian_case.default_sizes[dim] for dim in [IDim, JDim, KDim])
@@ -192,9 +203,13 @@ def test_solve_triag(cartesian_case):
 
 @pytest.mark.uses_scan
 def test_ternary_scan(cartesian_case):
-    @gtx.scan_operator(axis=KDim, forward=True, init=0.0)
-    def simple_scan_operator(carry: float, a: float) -> float:
+    @gtx.field_operator
+    def scan_pass(carry: float, a: float) -> float:
         return carry if carry > a else carry + 1.0
+
+    @gtx.field_operator
+    def simple_scan_operator(a: gtx.Field[[KDim], float]) -> gtx.Field[[KDim], float]:
+        return scan(scan_pass, axis=KDim, forward=True, init=0.0)(a)
 
     k_size = cartesian_case.default_sizes[KDim]
     a = cartesian_case.as_field([KDim], 4.0 * np.ones((k_size,)))
@@ -214,25 +229,36 @@ def test_ternary_scan(cartesian_case):
 @pytest.mark.uses_scan_without_field_args
 @pytest.mark.uses_tuple_returns
 def test_scan_nested_tuple_output(forward, cartesian_case):
-    init = (1, (2, 3))
     k_size = cartesian_case.default_sizes[KDim]
     expected = np.arange(1, 1 + k_size, 1, dtype=int32)
     if not forward:
         expected = np.flip(expected)
 
-    @gtx.scan_operator(axis=KDim, forward=forward, init=init)
-    def simple_scan_operator(
+    @gtx.field_operator
+    def scan_pass(
         carry: tuple[int32, tuple[int32, int32]],
     ) -> tuple[int32, tuple[int32, int32]]:
         return (carry[0] + 1, (carry[1][0] + 1, carry[1][1] + 1))
 
+    @gtx.field_operator
+    def forward_scan() -> tuple[cases.KField, tuple[cases.KField, cases.KField]]:
+        return scan(scan_pass, axis=KDim, forward=True, init=(1, (2, 3)))()
+
+    @gtx.field_operator
+    def backward_scan() -> tuple[cases.KField, tuple[cases.KField, cases.KField]]:
+        return scan(scan_pass, axis=KDim, forward=False, init=(1, (2, 3)))()
+
     @gtx.program
-    def testee(out: tuple[cases.KField, tuple[cases.KField, cases.KField]]):
-        simple_scan_operator(out=out)
+    def testee_forward(out: tuple[cases.KField, tuple[cases.KField, cases.KField]]):
+        forward_scan(out=out)
+
+    @gtx.program
+    def testee_backward(out: tuple[cases.KField, tuple[cases.KField, cases.KField]]):
+        backward_scan(out=out)
 
     cases.verify_with_default_data(
         cartesian_case,
-        testee,
+        testee_forward if forward else testee_backward,
         ref=lambda: (expected + 1.0, (expected + 2.0, expected + 3.0)),
         comparison=lambda ref, out: (
             np.all(out[0] == ref[0])
@@ -264,9 +290,15 @@ def test_scan_nested_tuple_input(cartesian_case):
         ]
     )
 
-    @gtx.scan_operator(axis=KDim, forward=True, init=init)
-    def simple_scan_operator(carry: float, a: tuple[float, float]) -> float:
+    @gtx.field_operator
+    def scan_pass(carry: float, a: tuple[float, float]) -> float:
         return carry + a[0] + a[1]
+
+    @gtx.field_operator
+    def simple_scan_operator(
+        a: tuple[gtx.Field[[KDim], float], gtx.Field[[KDim], float]],
+    ) -> gtx.Field[[KDim], float]:
+        return scan(scan_pass, axis=KDim, forward=True, init=1.0)(a)
 
     cases.verify(cartesian_case, simple_scan_operator, (inp1, inp2), out=out, ref=expected)
 
@@ -299,15 +331,15 @@ def test_scan_different_domain_in_tuple(cartesian_case):
         ]
     ).transpose()
 
-    @gtx.scan_operator(axis=KDim, forward=True, init=init)
-    def scan_op(carry: float, a: tuple[float, float]) -> float:
+    @gtx.field_operator
+    def scan_pass(carry: float, a: tuple[float, float]) -> float:
         return carry + a[0] + a[1]
 
     @gtx.field_operator
     def foo(
         inp1: gtx.Field[[IDim, KDim], float], inp2: gtx.Field[[IDim, KDim], float]
     ) -> gtx.Field[[IDim, KDim], float]:
-        return scan_op((inp1, inp2))
+        return scan(scan_pass, axis=KDim, forward=True, init=1.0)((inp1, inp2))
 
     cases.verify(cartesian_case, foo, inp1, inp2, out=out, ref=expected)
 
@@ -334,13 +366,13 @@ def test_scan_tuple_field_scalar_mixed(cartesian_case):
         ]
     ).transpose()
 
-    @gtx.scan_operator(axis=KDim, forward=True, init=init)
-    def scan_op(carry: float, a: tuple[float, float]) -> float:
+    @gtx.field_operator
+    def scan_pass(carry: float, a: tuple[float, float]) -> float:
         return carry + a[0] + a[1]
 
     @gtx.field_operator
     def foo(inp1: float, inp2: gtx.Field[[IDim, KDim], float]) -> gtx.Field[[IDim, KDim], float]:
-        return scan_op((inp1, inp2))
+        return scan(scan_pass, axis=KDim, forward=True, init=1.0)((inp1, inp2))
 
     cases.verify(cartesian_case, foo, 1.0, inp2, out=out, ref=expected)
 
@@ -350,17 +382,17 @@ def test_scan_wrong_return_type(cartesian_case):
     with pytest.raises(
         errors.DSLError,
         match=(
-            r"Argument 'state' to scan operator 'testee_scan' must have same type as its return"
+            r"Argument 'state' to scan operator 'testee_pass' must have same type as its return"
         ),
     ):
 
-        @scan_operator(axis=KDim, forward=True, init=0)
-        def testee_scan(state: int32) -> float:
+        @gtx.field_operator
+        def testee_pass(state: int32) -> float:
             return 1.0
 
-        @program
-        def testee(qc: cases.IKFloatField, param_1: int32, param_2: float, scalar: float):
-            testee_scan(qc, param_1, param_2, scalar, out=(qc, param_1, param_2))
+        @gtx.field_operator
+        def testee(qc: cases.IKFloatField) -> cases.IKFloatField:
+            return scan(testee_pass, axis=KDim, forward=True, init=0)()
 
 
 @pytest.mark.uses_scan
@@ -368,29 +400,33 @@ def test_scan_wrong_init_type(cartesian_case):
     with pytest.raises(
         errors.DSLError,
         match=(
-            r"Argument 'init' to scan operator 'testee_scan' must have same type as 'state' argument"
+            r"Argument 'init' to scan operator 'testee_pass' must have same type as 'state' argument"
         ),
     ):
 
-        @scan_operator(axis=KDim, forward=True, init=0)
-        def testee_scan(state: float) -> float:
+        @gtx.field_operator
+        def testee_pass(state: float) -> float:
             return 1.0
 
-        @program
-        def testee(qc: cases.IKFloatField, param_1: int32, param_2: float, scalar: float):
-            testee_scan(qc, param_1, param_2, scalar, out=(qc, param_1, param_2))
+        @gtx.field_operator
+        def testee(qc: cases.IKFloatField) -> cases.IKFloatField:
+            return scan(testee_pass, axis=KDim, forward=True, init=0)()
 
 
 @pytest.mark.uses_scan
 def test_scan_without_carry(cartesian_case):
     with pytest.raises(
         errors.DSLError,
-        match=r"Scan operator 'testee_scan' must have at least one argument",
+        match=r"Scan operator 'testee_pass' must have at least one argument",
     ):
 
-        @scan_operator(axis=KDim, forward=True, init=0)
-        def testee_scan() -> float:
+        @gtx.field_operator
+        def testee_pass() -> float:
             return 1.0
+
+        @gtx.field_operator
+        def testee(qc: cases.IKFloatField) -> cases.IKFloatField:
+            return scan(testee_pass, axis=KDim, forward=True, init=0.0)()
 
 
 @pytest.mark.uses_scan

@@ -36,7 +36,6 @@ from gt4py.next import (
 )
 from gt4py.next.embedded import operators as embedded_operators
 from gt4py.next.ffront import (
-    field_operator_ast as foast,
     foast_to_gtir,
     past_process_args,
     stages as ffront_stages,
@@ -583,17 +582,11 @@ class FieldOperator(_CompilableGTEntryPointMixin[ffront_stages.DSLFieldOperatorD
         definition: types.FunctionType,
         backend: Optional[next_backend.Backend],
         grid_type: Optional[common.GridType] = None,
-        *,
-        operator_node_cls: type[foast.OperatorNode] = foast.FieldOperator,
-        operator_attributes: Optional[dict[str, Any]] = None,
         **compilation_options: Unpack[options.CompilationOptionsArgs],
     ) -> FieldOperator:
         return cls(
             definition_stage=ffront_stages.DSLFieldOperatorDef(
-                definition=definition,
-                grid_type=grid_type,
-                node_class=operator_node_cls,
-                attributes=operator_attributes or {},
+                definition=definition, grid_type=grid_type
             ),
             backend=backend,
             compilation_options=options.CompilationOptions(**compilation_options),
@@ -678,25 +671,7 @@ class FieldOperator(_CompilableGTEntryPointMixin[ffront_stages.DSLFieldOperatorD
             if not next_embedded.context.within_valid_context():
                 # field_operator as program
                 kwargs["offset_provider"] = {**kwargs.pop("offset_provider", {})}
-            attributes = (
-                self.definition_stage.attributes
-                if self.definition_stage
-                else self.foast_stage.attributes
-            )
-            if attributes is not None and any(
-                has_scan_op_attribute := [
-                    attribute in attributes for attribute in ["init", "axis", "forward"]
-                ]
-            ):
-                assert all(has_scan_op_attribute)
-                forward = attributes["forward"]
-                init = attributes["init"]
-                axis = attributes["axis"]
-                op: embedded_operators.EmbeddedOperator = embedded_operators.ScanOperator(
-                    self.definition_stage.definition, forward, init, axis
-                )
-            else:
-                op = embedded_operators.EmbeddedOperator(self.definition_stage.definition)
+            op = embedded_operators.EmbeddedOperator(self.definition_stage.definition)
             return embedded_operators.field_operator_call(op, args, kwargs)
 
 
@@ -779,95 +754,3 @@ def field_operator(
         )
 
     return field_operator_inner if definition is None else field_operator_inner(definition)
-
-
-@typing.overload
-def scan_operator(
-    definition: Callable,
-    *,
-    axis: common.Dimension,
-    forward: bool = True,
-    init: core_defs.Scalar = 0.0,
-    backend: next_backend.Backend | eve.NothingType | None,
-    grid_type: common.GridType | None,
-) -> FieldOperator: ...
-
-
-@typing.overload
-def scan_operator(
-    *,
-    axis: common.Dimension,
-) -> Callable[[Callable], FieldOperator]: ...
-
-
-@typing.overload
-def scan_operator(
-    *,
-    axis: common.Dimension,
-    forward: bool = True,
-    init: core_defs.Scalar = 0.0,
-) -> Callable[[Callable], FieldOperator]: ...
-
-
-@typing.overload
-def scan_operator(
-    *,
-    axis: common.Dimension,
-    forward: bool = True,
-    init: core_defs.Scalar = 0.0,
-    backend: next_backend.Backend | eve.NothingType | None,
-    grid_type: common.GridType | None,
-) -> Callable[[Callable], FieldOperator]: ...
-
-
-def scan_operator(
-    definition: Callable | None = None,
-    *,
-    axis: common.Dimension,
-    forward: bool = True,
-    init: core_defs.Scalar = 0.0,
-    backend: next_backend.Backend | eve.NothingType | None = eve.NOTHING,
-    grid_type: common.GridType | None = None,
-) -> FieldOperator | Callable[[Callable], FieldOperator]:
-    """
-    Generate an implementation of the scan operator from a Python function object.
-
-    Arguments:
-        definition: Function from scalars to a scalar.
-
-    Keyword Arguments:
-        axis: A :ref:`Dimension` to reduce over.
-        forward: Boolean specifying the direction.
-        init: Initial value for the carry argument of the scan pass.
-
-    Examples:
-        >>> import numpy as np
-        >>> import gt4py.next as gtx
-        >>> from gt4py.next.iterator import embedded
-        >>> embedded._column_range = 1  # implementation detail
-        >>> KDim = gtx.Dimension("K", kind=gtx.DimensionKind.VERTICAL)
-        >>> inp = gtx.as_field([KDim], np.ones((10,)))
-        >>> out = gtx.as_field([KDim], np.zeros((10,)))
-        >>> @gtx.scan_operator(axis=KDim, forward=True, init=0.0)
-        ... def scan_operator(carry: float, val: float) -> float:
-        ...     return carry + val
-        >>> scan_operator(inp, out=out, offset_provider={})  # doctest: +SKIP
-        >>> out.array()  # doctest: +SKIP
-        array([ 1.,  2.,  3.,  4.,  5.,  6.,  7.,  8.,  9., 10.])
-    """
-    # TODO(tehrengruber): enable doctests again. For unknown / obscure reasons
-    #  the above doctest fails when executed using `pytest --doctest-modules`.
-
-    def scan_operator_inner(definition: Callable) -> FieldOperator:
-        assert isinstance(definition, types.FunctionType)
-        return FieldOperator.from_function(
-            definition,
-            typing.cast(
-                next_backend.Backend | None, DEFAULT_BACKEND if backend is eve.NOTHING else backend
-            ),
-            grid_type,
-            operator_node_cls=foast.ScanOperator,
-            operator_attributes={"axis": axis, "forward": forward, "init": init},
-        )
-
-    return scan_operator_inner if definition is None else scan_operator_inner(definition)

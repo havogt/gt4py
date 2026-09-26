@@ -74,16 +74,10 @@ def func_to_foast(inp: DSLFieldOperatorDef) -> FOASTOperatorDef:
     annotations = typing.get_type_hints(inp.definition)
     try:
         foast_definition_node = FieldOperatorParser.apply(source_def, closure_vars, annotations)
-        loc = foast_definition_node.location
-        operator_attribute_nodes = {
-            key: foast.Constant(value=value, type=type_translation.from_value(value), location=loc)
-            for key, value in inp.attributes.items()
-        }
-        untyped_foast_node = inp.node_class(
+        untyped_foast_node = foast.FieldOperator(
             id=foast_definition_node.id,
             definition=foast_definition_node,
-            location=loc,
-            **operator_attribute_nodes,
+            location=foast_definition_node.location,
         )
         foast_node = FieldOperatorTypeDeduction.apply(untyped_foast_node)
     except errors.DSLError as err:
@@ -93,7 +87,6 @@ def func_to_foast(inp: DSLFieldOperatorDef) -> FOASTOperatorDef:
         foast_node=foast_node,
         closure_vars=closure_vars,
         grid_type=inp.grid_type,
-        attributes=inp.attributes,
         debug=inp.debug,
     )
 

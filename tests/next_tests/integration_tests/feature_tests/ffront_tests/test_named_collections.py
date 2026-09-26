@@ -13,7 +13,7 @@ import numpy as np
 from typing import NamedTuple
 
 import gt4py.next as gtx
-from gt4py.next import common, neighbor_sum
+from gt4py.next import common, float32, neighbor_sum, scan
 from gt4py.next.ffront import decorator
 from gt4py.next.ffront.fbuiltins import where
 from gt4py.next.ffront.experimental import concat_where
@@ -307,7 +307,7 @@ class StateNamedTuple(NamedTuple):
     value: gtx.float32
 
 
-@gtx.scan_operator(axis=cases.KDim, forward=True, init=StateDataclass(value=0.0))
+@gtx.field_operator
 def scan_dataclass(
     state: StateDataclass,
     inp: gtx.float32,
@@ -317,12 +317,14 @@ def scan_dataclass(
 
 @gtx.field_operator
 def scan_dataclass_wrapper(inp: gtx.Field[[KDim], gtx.float32]) -> gtx.Field[[KDim], gtx.float32]:
-    # Note: `scan_dataclass(inp)` is of a (implicit) type `StateDataclass` with `gtx.float32` replaced by `gtx.Field[[...], gtx.float32]`.
+    # Note: the scan result is of a (implicit) type `StateDataclass` with `gtx.float32` replaced by `gtx.Field[[...], gtx.float32]`.
     # Consequently, we need to extract the `value` field as we cannot properly annotate the return type.
-    return scan_dataclass(inp).value
+    return scan(
+        scan_dataclass, axis=cases.KDim, forward=True, init=StateDataclass(value=float32(0.0))
+    )(inp).value
 
 
-@gtx.scan_operator(axis=cases.KDim, forward=True, init=StateNamedTuple(value=0.0))
+@gtx.field_operator
 def scan_named_tuple(
     state: StateNamedTuple,
     inp: gtx.float32,
@@ -332,9 +334,11 @@ def scan_named_tuple(
 
 @gtx.field_operator
 def scan_named_tuple_wrapper(inp: gtx.Field[[KDim], gtx.float32]) -> gtx.Field[[KDim], gtx.float32]:
-    # Note: `scan_named_tuple(inp)` is of a (implicit) type `StateNamedTuple` with `gtx.float32` replaced by `gtx.Field[[...], gtx.float32]`.
+    # Note: the scan result is of a (implicit) type `StateNamedTuple` with `gtx.float32` replaced by `gtx.Field[[...], gtx.float32]`.
     # Consequently, we need to extract the `value` field as we cannot properly annotate the return type.
-    return scan_named_tuple(inp).value
+    return scan(
+        scan_named_tuple, axis=cases.KDim, forward=True, init=StateNamedTuple(value=float32(0.0))
+    )(inp).value
 
 
 @pytest.mark.parametrize(
@@ -366,7 +370,7 @@ class FieldNamedCollection:
     value: gtx.Field[[KDim], gtx.float32]
 
 
-@gtx.scan_operator(axis=cases.KDim, forward=True, init=gtx.float32(0.0))
+@gtx.field_operator
 def scan_with_scalar_named_collection(
     state: gtx.float32,
     inp: ScalarNamedCollection,
@@ -380,7 +384,9 @@ def scan_with_scalar_named_collection_wrapper(
     inp: FieldNamedCollection,
     scalar: ScalarNamedCollection,
 ) -> gtx.Field[[KDim], gtx.float32]:
-    return scan_with_scalar_named_collection(inp, scalar=scalar)
+    return scan(
+        scan_with_scalar_named_collection, axis=cases.KDim, forward=True, init=float32(0.0)
+    )(inp, scalar=scalar)
 
 
 @pytest.mark.uses_scan

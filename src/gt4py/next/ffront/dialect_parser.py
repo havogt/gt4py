@@ -36,7 +36,7 @@ _UNSUPPORTED_FEATURE_HINTS: dict[type[ast.AST], tuple[str, tuple[str, ...]]] = {
             (
                 "GT4Py functions describe operations on whole fields without explicit loops. "
                 "Use field expressions or built-ins like 'neighbor_sum' instead; for sequential "
-                "dependencies along a dimension, use a 'scan_operator'."
+                "dependencies along a dimension, use 'scan'."
             ),
         ),
     ),
@@ -45,7 +45,7 @@ _UNSUPPORTED_FEATURE_HINTS: dict[type[ast.AST], tuple[str, tuple[str, ...]]] = {
         (
             (
                 "GT4Py functions describe operations on whole fields without explicit loops. "
-                "For sequential dependencies along a dimension, use a 'scan_operator'."
+                "For sequential dependencies along a dimension, use 'scan'."
             ),
         ),
     ),

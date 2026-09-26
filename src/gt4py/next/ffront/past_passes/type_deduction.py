@@ -93,10 +93,9 @@ def _validate_operator_call(new_func: past.Name, new_kwargs: dict) -> None:
 
     Domain has to be of type dictionary, including dimensions with values expressed as tuples of 2 numbers.
     """
-    if not isinstance(new_func.type, (ts_ffront.FieldOperatorType, ts_ffront.ScanOperatorType)):
+    if not isinstance(new_func.type, ts_ffront.FieldOperatorType):
         raise ValueError(
-            f"Only calls to 'FieldOperators' and 'ScanOperators' "
-            f"allowed in 'Program', got '{new_func.type}'."
+            f"Only calls to 'FieldOperators' allowed in 'Program', got '{new_func.type}'."
         )
 
     if "out" not in new_kwargs:
@@ -228,9 +227,7 @@ class ProgramTypeDeduction(traits.VisitorWithSymbolTableTrait, NodeTranslator):
         new_kwargs = self.visit(node.kwargs, **kwargs)
 
         try:
-            is_operator = isinstance(
-                new_func.type, (ts_ffront.FieldOperatorType, ts_ffront.ScanOperatorType)
-            )
+            is_operator = isinstance(new_func.type, ts_ffront.FieldOperatorType)
             if is_operator:
                 _validate_operator_call(new_func, new_kwargs)
             arg_types = [arg.type for arg in new_args]
@@ -263,7 +260,7 @@ class ProgramTypeDeduction(traits.VisitorWithSymbolTableTrait, NodeTranslator):
                 return_type = arg_types[0]
             else:
                 raise AssertionError(
-                    "Only calls to 'FieldOperator', 'ScanOperator' or 'minimum' and 'maximum' builtins allowed."
+                    "Only calls to 'FieldOperator' or 'minimum' and 'maximum' builtins allowed."
                 )
 
         except ValueError as ex:

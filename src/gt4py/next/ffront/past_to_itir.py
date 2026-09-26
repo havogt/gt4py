@@ -167,9 +167,7 @@ def _column_axis(all_closure_vars: dict[str, Any]) -> Optional[common.Dimension]
     for name, gt_callable in transform_utils._filter_closure_vars_by_type(
         all_closure_vars, gtcallable.GTCallable
     ).items():
-        if isinstance((type_ := gt_callable.__gt_type__()), ts_ffront.ScanOperatorType):
-            scanops_per_axis.setdefault(type_.axis, []).append(name)
-        elif isinstance(
+        if isinstance(
             foast_stage := getattr(gt_callable, "foast_stage", None), ffront_stages.FOASTOperatorDef
         ):
             for scan_call in (
@@ -190,7 +188,7 @@ def _column_axis(all_closure_vars: dict[str, Any]) -> Optional[common.Dimension]
         )
 
         raise TypeError(
-            "Only 'ScanOperator's defined on the same axis "
+            "Only scans along the same axis "
             f"can be used in a 'Program', found:\n{scanops_per_axis_str}\n"
         )
 
@@ -328,7 +326,7 @@ class ProgramLowering(
             node_kwargs.pop("out"), domain, **kwargs
         )
 
-        assert isinstance(node.func.type, (ts_ffront.FieldOperatorType, ts_ffront.ScanOperatorType))
+        assert isinstance(node.func.type, ts_ffront.FieldOperatorType)
 
         args, node_kwargs = type_info.canonicalize_arguments(node.func.type, node.args, node_kwargs)
 

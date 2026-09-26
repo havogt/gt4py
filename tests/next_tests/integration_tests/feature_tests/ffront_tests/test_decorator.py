@@ -110,22 +110,6 @@ def test_default_backend_is_respected_field_operator(cartesian_case):
         _ = copy(a, out=a, offset_provider={})
 
 
-@pytest.mark.uses_scan
-def test_default_backend_is_respected_scan_operator(cartesian_case):
-    """Test that manually calling the scan operator without setting the backend raises an error."""
-
-    # Important not to set the backend here!
-    @gtx.scan_operator(axis=KDim, init=0.0, forward=True)
-    def sum(state: float, a: float) -> float:
-        return state + a
-
-    a = gtx.ones({KDim: 10}, allocator=cartesian_case.allocator)
-
-    with pytest.raises(ValueError, match="No backend selected!"):
-        # see comment in field_operator test
-        _ = sum(a, out=a, offset_provider={})
-
-
 def test_default_backend_is_respected_program(cartesian_case):
     """Test that manually calling the program without setting the backend raises an error."""
 

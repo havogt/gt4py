@@ -176,7 +176,7 @@ def _is_literal(expr: foast.Expr) -> bool:
         case foast.UnaryOp():
             return _is_literal(expr.operand)
         case foast.Call(func=foast.Name(type=ts.ConstructorType())):
-            return all(_is_literal(arg) for arg in expr.args)
+            return all(_is_literal(arg) for arg in [*expr.args, *expr.kwargs.values()])
     return False
 
 
@@ -296,37 +296,6 @@ class FieldOperatorTypeDeduction(traits.VisitorWithSymbolTableTrait, NodeTransla
             type=ts_ffront.FieldOperatorType(definition=new_definition.type),
         )
 
-    def visit_ScanOperator(self, node: foast.ScanOperator, **kwargs: Any) -> foast.ScanOperator:
-        new_axis = self.visit(node.axis, **kwargs)
-        if not isinstance(new_axis.type, ts.DimensionType):
-            raise errors.DSLError(
-                node.location, f"Argument 'axis' to scan operator '{node.id}' must be a dimension."
-            )
-        if not new_axis.type.dim.kind == DimensionKind.VERTICAL:
-            raise errors.DSLError(
-                node.location,
-                f"Argument 'axis' to scan operator '{node.id}' must be a vertical dimension.",
-            )
-        new_forward = self.visit(node.forward, **kwargs)
-        new_init = self.visit(node.init, **kwargs)
-        new_definition = self.visit(node.definition, **kwargs)
-        _check_scan_pass(
-            node.location, node.id, new_definition.type, new_forward.type, new_init.type
-        )
-
-        new_type = ts_ffront.ScanOperatorType(
-            axis=new_axis.type.dim, definition=new_definition.type
-        )
-        return foast.ScanOperator(
-            id=node.id,
-            axis=new_axis,
-            forward=new_forward,
-            init=new_init,
-            definition=new_definition,
-            type=new_type,
-            location=node.location,
-        )
-
     def _visit_scan_call(
         self, node: foast.Call, scan_arg_types: list[ts.TypeSpec], **kwargs: Any
     ) -> foast.Call:
@@ -352,9 +321,11 @@ class FieldOperatorTypeDeduction(traits.VisitorWithSymbolTableTrait, NodeTransla
         pass_name = str(new_pass)
 
         new_kwargs = {
-            "forward": foast.Constant(value=True, location=node.location),
-            "init": foast.Constant(value=0.0, location=node.location),
             **node.kwargs,
+            "forward": node.kwargs.get(
+                "forward", foast.Constant(value=True, location=node.location)
+            ),
+            "init": node.kwargs.get("init", foast.Constant(value=0.0, location=node.location)),
         }
         new_kwargs = {name: self.visit(arg, **kwargs) for name, arg in new_kwargs.items()}
         for name in ("forward", "init"):
@@ -913,7 +884,7 @@ class FieldOperatorTypeDeduction(traits.VisitorWithSymbolTableTrait, NodeTransla
             # have the proper format here.
             if not isinstance(
                 new_func,
-                (foast.FunctionDefinition, foast.FieldOperator, foast.ScanOperator, foast.Name),
+                (foast.FunctionDefinition, foast.FieldOperator, foast.Name),
             ) and not (
                 isinstance(new_func, foast.Call)
                 and isinstance(new_func.type, ts_ffront.ScanOperatorType)
@@ -946,7 +917,7 @@ class FieldOperatorTypeDeduction(traits.VisitorWithSymbolTableTrait, NodeTransla
         else:
             raise errors.DSLError(
                 node.location,
-                f"Expression of type '{new_func.type}' is not callable, must be a 'Function', 'FieldOperator', 'ScanOperator' or 'Field'.",
+                f"Expression of type '{new_func.type}' is not callable, must be a 'Function', 'FieldOperator', a scan operator or 'Field'.",
             )
 
         assert isinstance(func_type, ts.CallableType)

@@ -18,7 +18,7 @@ import contextlib
 
 from gt4py import next as gtx
 from gt4py._core import definitions as core_defs
-from gt4py.next import errors, config
+from gt4py.next import errors, config, scan
 from gt4py.next.otf import compiled_program, options, arguments
 from gt4py.next.otf.compilation import cache as compilation_cache
 from gt4py.next.ffront.decorator import Program
@@ -88,13 +88,17 @@ def compile_testee_domain(cartesian_case):
 @pytest.fixture(
     params=[
         pytest.param(True, id="program"),
-        pytest.param(False, id="scan-operator"),
+        pytest.param(False, id="field-operator"),
     ]
 )
 def compile_testee_scan(request, cartesian_case):
-    @gtx.scan_operator(axis=cases.KDim, forward=True, init=0, backend=cartesian_case.backend)
-    def testee_op(carry: gtx.int32, inp: gtx.int32) -> gtx.int32:
+    @gtx.field_operator
+    def testee_pass(carry: gtx.int32, inp: gtx.int32) -> gtx.int32:
         return carry + inp
+
+    @gtx.field_operator(backend=cartesian_case.backend)
+    def testee_op(inp: cases.KField) -> cases.KField:
+        return scan(testee_pass, axis=cases.KDim, forward=True, init=0)(inp)
 
     @gtx.program(backend=cartesian_case.backend)
     def testee(a: cases.KField, out: cases.KField):
@@ -173,9 +177,6 @@ def test_compile_kwargs(cartesian_case, compile_testee):
 def test_compile_scan(cartesian_case, compile_testee_scan):
     if cartesian_case.backend is None:
         pytest.skip("Embedded compiled program doesn't make sense.")
-
-    if isinstance(compile_testee_scan, gtx.ffront.decorator.FieldOperator):
-        pytest.xfail(reason="Scan operators can not be precompiled yet.")
 
     compile_testee_scan.compile(offset_provider=cartesian_case.offset_provider)
 
@@ -1052,39 +1053,3 @@ def test_compile_variants_decorator_static_domains(cartesian_case):
             arguments.FieldDomainDescriptor(out[1].domain),
         ),
     }
-
-
-@pytest.fixture
-def scan_operator_testee(cartesian_case):
-    """A scan operator called directly as a FieldOperator — the only case where _is_generic=True."""
-    if cartesian_case.backend is None:
-        pytest.skip("Embedded compiled program doesn't make sense.")
-
-    @gtx.scan_operator(axis=KDim, forward=True, init=0, backend=cartesian_case.backend)
-    def testee(carry: gtx.int32, inp: gtx.int32) -> gtx.int32:
-        return carry + inp
-
-    return testee
-
-
-@pytest.mark.uses_scan
-def test_warn_on_direct_scan_operator_call(cartesian_case, scan_operator_testee):
-    """A warning is emitted when a scan operator is called directly as a FieldOperator.
-
-    Scan operators called directly (not wrapped in a @program) are the only case where
-    _is_generic is True, triggering the 'not optimized' generic-program warning.
-    """
-    k_size = cartesian_case.default_sizes[KDim]
-    inp = cartesian_case.as_field([KDim], np.arange(k_size, dtype=np.int32))
-    out = cartesian_case.as_field([KDim], np.zeros(k_size, dtype=np.int32))
-
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        call_lineno = inspect.currentframe().f_lineno + 1
-        scan_operator_testee(inp, out=out, offset_provider=cartesian_case.offset_provider)
-
-    generic_warnings = [w for w in caught if "generic" in str(w.message)]
-    assert len(generic_warnings) == 1
-    w = generic_warnings[0]
-    assert w.filename == __file__
-    assert w.lineno == call_lineno
