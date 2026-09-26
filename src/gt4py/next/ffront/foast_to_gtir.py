@@ -325,7 +325,7 @@ class FieldOperatorLowering(eve.PreserveLocationVisitor, eve.NodeTranslator):
         if isinstance(node.func, foast.Call) and isinstance(
             node.func.type, ts_ffront.ReduceOperatorType
         ):
-            raise NotImplementedError("'reduce' is only supported in embedded execution.")
+            return self._visit_reduce_call(node, **kwargs)
         elif isinstance(node.func, foast.Call) and isinstance(
             node.func.type, ts_ffront.ScanOperatorType
         ):
@@ -370,6 +370,32 @@ class FieldOperatorLowering(eve.PreserveLocationVisitor, eve.NodeTranslator):
 
         raise AssertionError(
             f"Call to object of type '{type(node.func.type).__name__}' not understood."
+        )
+
+    def _visit_reduce_call(self, node: foast.Call, **kwargs: Any) -> itir.Expr:
+        # `reduce(op, range=(dim, start, stop))(field)`
+        reduce_call = node.func
+        assert isinstance(reduce_call, foast.Call)
+        assert isinstance(reduce_call.type, ts_ffront.ReduceOperatorType)
+        op = self.visit(reduce_call.args[0], **kwargs)
+        range_ = reduce_call.kwargs["range"]
+        assert isinstance(range_, foast.TupleExpr)
+        _, start, stop = range_.elts
+        (field,) = node.args
+        lhs = next(self.uid_generator["__reduce_lhs"])
+        rhs = next(self.uid_generator["__reduce_rhs"])
+        return im.column_reduce(
+            im.lambda_(lhs, rhs)(im.call(op)(lhs, rhs)),
+            im.domain(
+                common.GridType.CARTESIAN,
+                {
+                    reduce_call.type.axis: (
+                        self.visit(start, **kwargs),
+                        self.visit(stop, **kwargs),
+                    )
+                },
+            ),
+            self.visit(field, **kwargs),
         )
 
     def _visit_scan_call(self, node: foast.Call, **kwargs: Any) -> itir.Expr:

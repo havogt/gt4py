@@ -423,6 +423,11 @@ def concat_where(*args):
 
 
 @builtin_dispatch
+def column_reduce(*args):
+    raise BackendNotSelectedError()
+
+
+@builtin_dispatch
 def get_domain_range(*args):
     raise BackendNotSelectedError()
 
@@ -518,6 +523,7 @@ BUILTINS = {
     "tuple_get",
     "unstructured_domain",
     "concat_where",
+    "column_reduce",
     *ARITHMETIC_BUILTINS,
     *TYPE_BUILTINS,
 }

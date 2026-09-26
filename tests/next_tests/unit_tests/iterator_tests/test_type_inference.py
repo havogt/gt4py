@@ -306,6 +306,33 @@ def expression_test_cases():
             ),
             ts.TupleType(types=[float_i_field, float_ij_field]),
         ),
+        # column_reduce
+        (
+            im.column_reduce(
+                im.lambda_("a", "b")(im.plus("a", "b")),
+                k_domain,
+                im.ref("f", ts.FieldType(dims=[IDim, KDim], dtype=float64_type)),
+            ),
+            float_i_field,
+        ),
+        (
+            im.column_reduce(
+                im.lambda_("a", "b")(
+                    im.make_tuple(
+                        im.plus(im.tuple_get(0, "a"), im.tuple_get(0, "b")),
+                        im.plus(im.tuple_get(1, "a"), im.tuple_get(1, "b")),
+                    )
+                ),
+                k_domain,
+                im.ref(
+                    "f",
+                    ts.TupleType(
+                        types=[ts.FieldType(dims=[IDim, KDim], dtype=float64_type), float_k_field]
+                    ),
+                ),
+            ),
+            ts.TupleType(types=[float_i_field, ts.FieldType(dims=[], dtype=float64_type)]),
+        ),
     )
 
 

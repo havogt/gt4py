@@ -29,6 +29,7 @@ from gt4py.next import (
     max_over,
     min_over,
     neighbor_sum,
+    reduce,
     where,
 )
 from gt4py.next.ffront import type_specifications as ts_ffront
@@ -55,6 +56,7 @@ TOff = gtx.FieldOffset("TDim", source=TDim, target=(TDim,))
 RenamedV2EDim = gtx.Dimension("RenamedLocal", gtx.DimensionKind.LOCAL)
 renamed_v2e = gtx.FieldOffset("RenamedTag", source=Edge, target=(Vertex, RenamedV2EDim))
 UDim = gtx.Dimension("UDim")
+KDim = gtx.Dimension("KDim", gtx.DimensionKind.VERTICAL)
 
 
 def test_return():
@@ -827,6 +829,29 @@ def test_reduction_lowering_neighbor_sum():
             im.literal(value="0", type_="float64"),
         )
     )(im.as_fieldop_neighbors("V2E", "edge_f"))
+
+    assert lowered.expr == reference
+
+
+@gtx.field_operator
+def _add(a: float64, b: float64) -> float64:
+    return a + b
+
+
+def test_vertical_reduce_lowering():
+    def foo(f: gtx.Field[[TDim, KDim], float64], start: int32):
+        return reduce(_add, range=(KDim, start, 10))(f)
+
+    parsed = FieldOperatorParser.apply_to_function(foo)
+    lowered = FieldOperatorLowering.apply(parsed)
+
+    reference = im.column_reduce(
+        im.lambda_("__reduce_lhs_0", "__reduce_rhs_0")(
+            im.call("_add")("__reduce_lhs_0", "__reduce_rhs_0")
+        ),
+        im.domain(gtx.GridType.CARTESIAN, {KDim: ("start", 10)}),
+        im.ref("f"),
+    )
 
     assert lowered.expr == reference
 

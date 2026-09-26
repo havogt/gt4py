@@ -21,14 +21,14 @@ pytestmark = pytest.mark.uses_vertical_reduce
 
 
 @gtx.field_operator
-def plus(a: float, b: float) -> float:
+def add(a: float, b: float) -> float:
     return a + b
 
 
 def test_reduce_sum(cartesian_case):
     @gtx.field_operator
     def testee(a: cases.IKFloatField) -> cases.IFloatField:
-        return reduce(plus, range=(KDim, 1, 4))(a)
+        return reduce(add, range=(KDim, 1, 4))(a)
 
     a = cases.allocate(cartesian_case, testee, "a")()
     out = cases.allocate(cartesian_case, testee, cases.RETURN)()
@@ -39,7 +39,7 @@ def test_reduce_sum(cartesian_case):
 def test_reduce_runtime_range(cartesian_case):
     @gtx.field_operator
     def testee(a: cases.IKFloatField, start: int32, stop: int32) -> cases.IFloatField:
-        return reduce(plus, range=(KDim, start, stop))(a)
+        return reduce(add, range=(KDim, start, stop))(a)
 
     ksize = cartesian_case.default_sizes[KDim]
     a = cases.allocate(cartesian_case, testee, "a")()
@@ -59,7 +59,7 @@ def test_reduce_runtime_range(cartesian_case):
 def test_reduce_single_level(cartesian_case):
     @gtx.field_operator
     def testee(a: cases.IKFloatField) -> cases.IFloatField:
-        return reduce(plus, range=(KDim, 3, 4))(a)
+        return reduce(add, range=(KDim, 3, 4))(a)
 
     a = cases.allocate(cartesian_case, testee, "a")()
     out = cases.allocate(cartesian_case, testee, cases.RETURN)()
@@ -85,7 +85,7 @@ def test_reduce_max(cartesian_case):
 def test_reduce_of_expression(cartesian_case):
     @gtx.field_operator
     def testee(a: cases.IKFloatField, b: cases.IKFloatField) -> cases.IFloatField:
-        return reduce(plus, range=(KDim, 0, 5))(a * b) + 1.0
+        return reduce(add, range=(KDim, 0, 5))(a * b) + 1.0
 
     a = cases.allocate(cartesian_case, testee, "a")()
     b = cases.allocate(cartesian_case, testee, "b")()
@@ -104,14 +104,14 @@ def test_reduce_of_expression(cartesian_case):
 @pytest.mark.uses_tuple_returns
 def test_reduce_tuple(cartesian_case):
     @gtx.field_operator
-    def plus_and_max(a: tuple[float, float], b: tuple[float, float]) -> tuple[float, float]:
+    def add_and_max(a: tuple[float, float], b: tuple[float, float]) -> tuple[float, float]:
         return a[0] + b[0], maximum(a[1], b[1])
 
     @gtx.field_operator
     def testee(
         a: cases.IKFloatField, b: cases.IKFloatField
     ) -> tuple[cases.IFloatField, cases.IFloatField]:
-        return reduce(plus_and_max, range=(KDim, 0, 5))((a, b))
+        return reduce(add_and_max, range=(KDim, 0, 5))((a, b))
 
     a = cases.allocate(cartesian_case, testee, "a")()
     b = cases.allocate(cartesian_case, testee, "b")()

@@ -1182,6 +1182,31 @@ def test_scan_pinned_vertical_range():
     run_test_expr(testee, expected, domain, {"a": inferred})
 
 
+def test_column_reduce():
+    float_ik_field = ts.FieldType(dims=[IDim, KDim], dtype=float_type)
+    op = im.lambda_("a", "b")(im.plus("a", "b"))
+    stencil = im.lambda_("it")(im.deref(im.shift(Ioff, 1)("it")))
+    reduce_domain = im.domain(common.GridType.CARTESIAN, {KDim: (2, 7)})
+    domain = im.domain(common.GridType.CARTESIAN, {IDim: (0, 5)})
+    testee = im.column_reduce(
+        op, reduce_domain, im.as_fieldop(stencil)(im.ref("a", float_ik_field))
+    )
+    expected = im.column_reduce(
+        op,
+        reduce_domain,
+        im.as_fieldop(stencil, im.domain(common.GridType.CARTESIAN, {IDim: (0, 5), KDim: (2, 7)}))(
+            im.ref("a", float_ik_field)
+        ),
+    )
+
+    run_test_expr(
+        testee,
+        expected,
+        domain,
+        {"a": im.domain(common.GridType.CARTESIAN, {IDim: (1, 6), KDim: (2, 7)})},
+    )
+
+
 def test_symbolic_domain_sizes(unstructured_offset_provider):
     stencil = im.lambda_("arg0")(im.deref(im.shift("E2V", 1)("arg0")))
     domain = im.domain(common.GridType.UNSTRUCTURED, {Edge: (0, 1)})
