@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 import gt4py.next as gtx
-from gt4py.next import errors, float64, int32, scan
+from gt4py.next import errors, float64, int32, maximum, scan
 
 from next_tests.integration_tests import cases
 from next_tests.integration_tests.cases import (
@@ -478,5 +478,81 @@ def test_scan_call_tuple_carry(cartesian_case):
         ref=(
             np.cumsum(inp.asnumpy(), axis=1),
             np.full((isize, ksize), np.arange(1, ksize + 1, dtype=np.int32)),
+        ),
+    )
+
+
+@pytest.mark.uses_scan
+def test_scan_call_scalar_init(cartesian_case):
+    @gtx.field_operator
+    def add(carry: float, inp: float) -> float:
+        return carry + inp
+
+    @gtx.field_operator
+    def testee(inp: cases.IKFloatField, init: float) -> cases.IKFloatField:
+        return scan(add, axis=KDim, forward=True, init=init)(inp)
+
+    inp = cases.allocate(cartesian_case, testee, "inp")()
+    out = cases.allocate(cartesian_case, testee, cases.RETURN).zeros()()
+
+    cases.verify(
+        cartesian_case, testee, inp, 3.0, out=out, ref=3.0 + np.cumsum(inp.asnumpy(), axis=1)
+    )
+
+
+@pytest.mark.uses_scan
+def test_scan_call_column_init(cartesian_case):
+    @gtx.field_operator
+    def add(carry: float, inp: float) -> float:
+        return carry + inp
+
+    @gtx.field_operator
+    def testee(inp: cases.IKFloatField, init: cases.IFloatField) -> cases.IKFloatField:
+        return scan(add, axis=KDim, forward=False, init=init)(inp)
+
+    inp = cases.allocate(cartesian_case, testee, "inp")()
+    init = cases.allocate(cartesian_case, testee, "init")()
+    out = cases.allocate(cartesian_case, testee, cases.RETURN).zeros()()
+    backward_cumsum = np.flip(np.cumsum(np.flip(inp.asnumpy(), axis=1), axis=1), axis=1)
+
+    cases.verify(
+        cartesian_case,
+        testee,
+        inp,
+        init,
+        out=out,
+        ref=init.asnumpy()[:, np.newaxis] + backward_cumsum,
+    )
+
+
+@pytest.mark.uses_scan
+@pytest.mark.uses_tuple_returns
+def test_scan_call_tuple_init_mixed(cartesian_case):
+    @gtx.field_operator
+    def sum_and_max(carry: tuple[float, float], inp: float) -> tuple[float, float]:
+        return carry[0] + inp, maximum(carry[1], inp)
+
+    @gtx.field_operator
+    def testee(
+        inp: cases.IKFloatField, init: cases.IFloatField
+    ) -> tuple[cases.IKFloatField, cases.IKFloatField]:
+        return scan(sum_and_max, axis=KDim, forward=True, init=(1.0, init))(inp)
+
+    inp = cases.allocate(cartesian_case, testee, "inp")()
+    init = cases.allocate(cartesian_case, testee, "init")()
+    out = cases.allocate(cartesian_case, testee, cases.RETURN).zeros()()
+    inp_np = inp.asnumpy()
+
+    cases.verify(
+        cartesian_case,
+        testee,
+        inp,
+        init,
+        out=out,
+        ref=(
+            1.0 + np.cumsum(inp_np, axis=1),
+            np.maximum.accumulate(
+                np.concatenate([init.asnumpy()[:, np.newaxis], inp_np], axis=1), axis=1
+            )[:, 1:],
         ),
     )

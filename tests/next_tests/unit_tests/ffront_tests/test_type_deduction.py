@@ -848,14 +848,51 @@ def test_scan_call_non_vertical_axis():
         _ = FieldOperatorParser.apply_to_function(non_vertical_axis)
 
 
-def test_scan_call_non_constant_init():
-    def non_constant_init(
-        a: Field[[TDim, KDim], float64], init: float64
+def test_scan_call_non_constant_forward():
+    def non_constant_forward(
+        a: Field[[TDim, KDim], float64], forward: bool
+    ) -> Field[[TDim, KDim], float64]:
+        return scan(_scan_pass, axis=KDim, forward=forward)(a)
+
+    with pytest.raises(
+        errors.DSLError, match=r"'forward' to 'scan' must be a compile-time constant"
+    ):
+        _ = FieldOperatorParser.apply_to_function(non_constant_forward)
+
+
+def test_scan_call_column_init():
+    def column_init(
+        a: Field[[TDim, KDim], float64], init: Field[[TDim], float64]
     ) -> Field[[TDim, KDim], float64]:
         return scan(_scan_pass, axis=KDim, init=init)(a)
 
-    with pytest.raises(errors.DSLError, match=r"'init' to 'scan' must be a compile-time constant"):
-        _ = FieldOperatorParser.apply_to_function(non_constant_init)
+    parsed = FieldOperatorParser.apply_to_function(column_init)
+
+    assert parsed.type.returns == ts.FieldType(
+        dims=[TDim, KDim], dtype=ts.ScalarType(kind=ts.ScalarKind.FLOAT64)
+    )
+
+
+def test_scan_call_init_over_scan_dim():
+    def init_over_scan_dim(
+        a: Field[[TDim, KDim], float64], init: Field[[TDim, KDim], float64]
+    ) -> Field[[TDim, KDim], float64]:
+        return scan(_scan_pass, axis=KDim, init=init)(a)
+
+    with pytest.raises(
+        errors.DSLError, match=r"'init' to 'scan' must not be a field over the scan"
+    ):
+        _ = FieldOperatorParser.apply_to_function(init_over_scan_dim)
+
+
+def test_scan_call_init_dims_not_in_result():
+    def init_dims_not_in_result(
+        a: Field[[KDim], float64], init: Field[[TDim], float64]
+    ) -> Field[[KDim], float64]:
+        return scan(_scan_pass, axis=KDim, init=init)(a)
+
+    with pytest.raises(errors.DSLError, match=r"must be a subset of the dimensions of the result"):
+        _ = FieldOperatorParser.apply_to_function(init_dims_not_in_result)
 
 
 def test_scan_call_wrong_init_type():

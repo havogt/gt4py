@@ -167,19 +167,6 @@ def _is_scan_builtin(expr: foast.Expr) -> bool:
     return isinstance(expr, foast.Name) and expr.id == "scan"
 
 
-def _is_literal(expr: foast.Expr) -> bool:
-    match expr:
-        case foast.Constant():
-            return True
-        case foast.TupleExpr():
-            return all(_is_literal(el) for el in expr.elts)
-        case foast.UnaryOp():
-            return _is_literal(expr.operand)
-        case foast.Call(func=foast.Name(type=ts.ConstructorType())):
-            return all(_is_literal(arg) for arg in [*expr.args, *expr.kwargs.values()])
-    return False
-
-
 def _check_scan_pass(
     location: eve.SourceLocation,
     name: str,
@@ -328,14 +315,20 @@ class FieldOperatorTypeDeduction(traits.VisitorWithSymbolTableTrait, NodeTransla
             "init": node.kwargs.get("init", foast.Constant(value=0.0, location=node.location)),
         }
         new_kwargs = {name: self.visit(arg, **kwargs) for name, arg in new_kwargs.items()}
-        for name in ("forward", "init"):
-            if not _is_literal(new_kwargs[name]):
-                raise errors.DSLError(
-                    new_kwargs[name].location,
-                    f"Argument '{name}' to 'scan' must be a compile-time constant.",
-                )
+        if not foast_utils.is_literal(new_kwargs["forward"]):
+            raise errors.DSLError(
+                new_kwargs["forward"].location,
+                "Argument 'forward' to 'scan' must be a compile-time constant.",
+            )
+        init_type = new_kwargs["init"].type
         _check_scan_pass(
-            node.location, pass_name, pass_type, new_kwargs["forward"].type, new_kwargs["init"].type
+            node.location,
+            pass_name,
+            pass_type,
+            new_kwargs["forward"].type,
+            type_info.tree_map_type(lambda t: t.dtype if isinstance(t, ts.FieldType) else t)(
+                init_type
+            ),
         )
         if not all(
             isinstance(t, ts.ScalarType)
@@ -381,6 +374,29 @@ class FieldOperatorTypeDeduction(traits.VisitorWithSymbolTableTrait, NodeTransla
                     hints=["Pass the axis explicitly, e.g. 'scan(..., axis=KDim)'."],
                 )
             (axis,) = vertical_dims
+
+        output_dims = promote_dims(
+            *(
+                type_info.extract_dims(el)
+                for arg_type in scan_arg_types
+                for el in type_info.primitive_constituents(arg_type)
+            ),
+            [axis],
+        )
+        for init_leaf_type in type_info.primitive_constituents(init_type):
+            if not isinstance(init_leaf_type, ts.FieldType):
+                continue
+            if axis in init_leaf_type.dims:
+                raise errors.DSLError(
+                    new_kwargs["init"].location,
+                    f"Argument 'init' to 'scan' must not be a field over the scan dimension '{axis.value}'.",
+                )
+            if not set(init_leaf_type.dims) <= set(output_dims):
+                raise errors.DSLError(
+                    new_kwargs["init"].location,
+                    f"Dimensions of argument 'init' to 'scan' ({', '.join(d.value for d in init_leaf_type.dims)}) "
+                    f"must be a subset of the dimensions of the result ({', '.join(d.value for d in output_dims)}).",
+                )
 
         return foast.Call(
             func=new_func,

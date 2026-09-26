@@ -383,10 +383,37 @@ class FieldOperatorLowering(eve.PreserveLocationVisitor, eve.NodeTranslator):
         stencil_args = [*lowered_args, *lowered_kwargs.values()]
         carry = next(self.uid_generator["__scan_carry"])
         params = [next(self.uid_generator["__scan_arg"]) for _ in stencil_args]
-        definition = im.lambda_(carry, *params)(
-            im.call(scan_pass)(carry, *(im.deref(param) for param in params))
+
+        if foast_utils.is_literal(scan_call.kwargs["init"]):
+            definition = im.lambda_(carry, *params)(
+                im.call(scan_pass)(carry, *(im.deref(param) for param in params))
+            )
+            return im.as_fieldop(im.scan(definition, forward, init))(*stencil_args)
+
+        # A non-literal `init` is not a value the scan can be seeded with, as a stencil may not
+        # reference outer symbols. It is passed as an extra argument instead and read on the
+        # first level, marked by a flag in the carry: `carry = (is_initialized, state)`.
+        init_param = next(self.uid_generator["__scan_init"])
+        state = next(self.uid_generator["__scan_state"])
+        definition = im.lambda_(carry, *params, init_param)(
+            im.let(
+                state,
+                im.if_(im.tuple_get(0, carry), im.tuple_get(1, carry), im.deref(init_param)),
+            )(
+                im.make_tuple(
+                    im.literal_from_value(True),
+                    im.call(scan_pass)(state, *(im.deref(param) for param in params)),
+                )
+            )
         )
-        return im.as_fieldop(im.scan(definition, forward, init))(*stencil_args)
+        placeholder = type_info.tree_map_type(
+            lambda type_: im.literal("False" if type_.kind == ts.ScalarKind.BOOL else "0", type_),
+            result_collection_constructor=lambda _, elems: im.make_tuple(*elems),
+        )(scan_call.type.definition.returns)
+        seed = im.make_tuple(im.literal_from_value(False), placeholder)
+        return im.tuple_get(
+            1, im.as_fieldop(im.scan(definition, forward, seed))(*stencil_args, init)
+        )
 
     def _visit_astype(self, node: foast.Call, **kwargs: Any) -> itir.Expr:
         # Note: the type to convert to is uniquely identified by its GT4Py type (`ConstructorType`),
