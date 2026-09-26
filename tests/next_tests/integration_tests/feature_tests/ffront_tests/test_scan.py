@@ -496,7 +496,7 @@ def test_scan_call_scalar_init(cartesian_case):
     out = cases.allocate(cartesian_case, testee, cases.RETURN).zeros()()
 
     cases.verify(
-        cartesian_case, testee, inp, 3.0, out=out, ref=3.0 + np.cumsum(inp.asnumpy(), axis=1)
+        cartesian_case, testee, inp, 0.5, out=out, ref=0.5 + np.cumsum(inp.asnumpy(), axis=1)
     )
 
 
@@ -511,7 +511,9 @@ def test_scan_call_column_init(cartesian_case):
         return scan(add, axis=KDim, forward=False, init=init)(inp)
 
     inp = cases.allocate(cartesian_case, testee, "inp")()
-    init = cases.allocate(cartesian_case, testee, "init")()
+    init = cartesian_case.as_field(
+        [IDim], np.arange(cartesian_case.default_sizes[IDim], dtype=float64) + 0.25
+    )
     out = cases.allocate(cartesian_case, testee, cases.RETURN).zeros()()
     backward_cumsum = np.flip(np.cumsum(np.flip(inp.asnumpy(), axis=1), axis=1), axis=1)
 
@@ -539,7 +541,9 @@ def test_scan_call_tuple_init_mixed(cartesian_case):
         return scan(sum_and_max, axis=KDim, forward=True, init=(1.0, init))(inp)
 
     inp = cases.allocate(cartesian_case, testee, "inp")()
-    init = cases.allocate(cartesian_case, testee, "init")()
+    init = cartesian_case.as_field(
+        [IDim], np.arange(cartesian_case.default_sizes[IDim], dtype=float64) + 0.25
+    )
     out = cases.allocate(cartesian_case, testee, cases.RETURN).zeros()()
     inp_np = inp.asnumpy()
 

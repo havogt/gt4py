@@ -407,7 +407,7 @@ class FieldOperatorLowering(eve.PreserveLocationVisitor, eve.NodeTranslator):
             )
         )
         placeholder = type_info.tree_map_type(
-            lambda type_: im.literal("False" if type_.kind == ts.ScalarKind.BOOL else "0", type_),
+            lambda type_: im.literal_from_value(tt.as_dtype(type_).scalar_type(0)),
             result_collection_constructor=lambda _, elems: im.make_tuple(*elems),
         )(scan_call.type.definition.returns)
         seed = im.make_tuple(im.literal_from_value(False), placeholder)

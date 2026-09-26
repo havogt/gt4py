@@ -315,7 +315,7 @@ def scan(
     *,
     axis: common.Dimension | None = None,
     forward: bool = True,
-    init: core_defs.Scalar | Tuple = 0.0,
+    init: core_defs.Scalar | common.Field | Tuple = 0.0,
 ) -> Callable[..., common.Field | Tuple]:
     """
     Create a scan operator from a scan pass, to be called inside a field operator.
@@ -325,7 +325,9 @@ def scan(
         axis: Vertical dimension to scan along. If omitted, it is the unique vertical
             dimension of the arguments the scan operator is called with.
         forward: Scan direction.
-        init: Initial value of the carry, a compile-time constant.
+        init: Initial value of the carry: a constant, a scalar, or a field without the scan
+            dimension holding the initial value of each column. For tuple carries, each
+            element may be any of these; fields are not supported in named collections.
 
     Examples:
         >>> scan(my_pass, axis=KDim, forward=True, init=0.0)(a)  # doctest: +SKIP
