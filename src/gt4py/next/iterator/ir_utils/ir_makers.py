@@ -252,6 +252,11 @@ def concat_where(cond, true_field, false_field):
     return call("concat_where")(cond, true_field, false_field)
 
 
+def column_reduce(op, domain, field):
+    """Create a column_reduce FunCall, shorthand for ``call("column_reduce")(op, domain, field)``."""
+    return call("column_reduce")(op, domain, field)
+
+
 def lift(expr):
     """Create a lift FunCall, shorthand for ``call(call("lift")(expr))``."""
     return call(call("lift")(expr))

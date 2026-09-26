@@ -291,6 +291,29 @@ def concat_where(
 
 
 @_register_builtin_type_synthesizer
+def column_reduce(
+    op: TypeSynthesizer,
+    domain: ts.DomainType,
+    field: ts.FieldType | ts.TupleType | ts.DeferredType,
+    offset_provider_type: common.OffsetProviderType,
+) -> ts.FieldType | ts.TupleType | ts.DeferredType:
+    if any(isinstance(el, ts.DeferredType) for el in type_info.primitive_constituents(field)):
+        return ts.DeferredType(constraint=None)
+    assert all(
+        set(domain.dims) <= set(type_info.extract_dims(el))
+        for el in type_info.primitive_constituents(field)
+    )
+    dtype = type_info.tree_map_type(type_info.extract_dtype)(field)
+    assert op(dtype, dtype, offset_provider_type=offset_provider_type) == dtype
+    return type_info.tree_map_type(
+        lambda el: ts.FieldType(
+            dims=[dim for dim in el.dims if dim not in domain.dims], dtype=el.dtype
+        ),
+        result_collection_constructor=lambda _, elts: ts.TupleType(types=list(elts)),
+    )(field)
+
+
+@_register_builtin_type_synthesizer
 def broadcast(
     arg: ts.FieldType | ts.ScalarType | ts.DeferredType, dims: tuple[ts.DimensionType]
 ) -> ts.FieldType | ts.DeferredType:

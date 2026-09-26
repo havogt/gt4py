@@ -394,6 +394,25 @@ def _infer_concat_where(
     return result_expr, actual_domains
 
 
+def _infer_column_reduce(
+    expr: itir.Expr,
+    domain: DomainAccess,
+    **kwargs: Unpack[InferenceOptions],
+) -> tuple[itir.Expr, AccessedDomains]:
+    assert cpm.is_call_to(expr, "column_reduce")
+    op, reduce_domain, field = expr.args
+    reduce_ranges = SymbolicDomain.from_expr(reduce_domain).ranges
+
+    @tree_map
+    def mapper(d: NonTupleDomainAccess) -> NonTupleDomainAccess:
+        if isinstance(d, DomainAccessDescriptor):
+            return d
+        return SymbolicDomain(d.grid_type, {**d.ranges, **reduce_ranges})
+
+    infered_field, actual_domains = infer_expr(field, mapper(domain), **kwargs)
+    return im.call(expr.fun)(op, reduce_domain, infered_field), actual_domains
+
+
 def _infer_broadcast(
     expr: itir.Expr,
     domain: DomainAccess,
@@ -430,6 +449,8 @@ def _infer_expr(
         return _infer_concat_where(expr, domain, **kwargs)
     elif cpm.is_call_to(expr, "broadcast"):
         return _infer_broadcast(expr, domain, **kwargs)
+    elif cpm.is_call_to(expr, "column_reduce"):
+        return _infer_column_reduce(expr, domain, **kwargs)
     elif (
         cpm.is_call_to(expr, builtins.ARITHMETIC_BUILTINS)
         or cpm.is_call_to(expr, builtins.TYPE_BUILTINS)
