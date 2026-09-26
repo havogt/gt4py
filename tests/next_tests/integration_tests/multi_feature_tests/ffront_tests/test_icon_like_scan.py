@@ -26,7 +26,6 @@ from next_tests.integration_tests.cases_utils import (
 pytestmark = [
     pytest.mark.uses_scan,
     pytest.mark.uses_cartesian_shift,
-    pytest.mark.uses_scan_in_field_operator,
 ]
 
 

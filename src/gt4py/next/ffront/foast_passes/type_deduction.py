@@ -189,7 +189,7 @@ def _check_scan_pass(
 ) -> None:
     if not (isinstance(forward_type, ts.ScalarType) and forward_type.kind == ts.ScalarKind.BOOL):
         raise errors.DSLError(
-            location, f"Argument 'forward' to scan operator '{name}' must be a boolean."
+            location, f"Argument 'forward' to scan pass '{name}' must be a boolean."
         )
     if not all(
         type_info.is_arithmetic(type_) or type_info.is_logical(type_)
@@ -197,26 +197,26 @@ def _check_scan_pass(
     ):
         raise errors.DSLError(
             location,
-            f"Argument 'init' to scan operator '{name}' must "
+            f"Argument 'init' to scan pass '{name}' must "
             "be an arithmetic type or a logical type or a composite of arithmetic and logical types.",
         )
     if not pass_type.pos_or_kw_args:
         raise errors.DSLError(
             location,
-            f"Scan operator '{name}' must have at least one argument (the carry).",
+            f"Scan pass '{name}' must have at least one argument (the carry).",
         )
     carry_arg_name = next(iter(pass_type.pos_or_kw_args.keys()))
     carry_type = pass_type.pos_or_kw_args[carry_arg_name]
     if carry_type != pass_type.returns:
         raise errors.DSLError(
             location,
-            f"Argument '{carry_arg_name}' to scan operator '{name}' must have same type as its return: "
+            f"Argument '{carry_arg_name}' to scan pass '{name}' must have same type as its return: "
             f"expected '{pass_type.returns}', got '{carry_type}'.",
         )
     elif init_type != carry_type:
         raise errors.DSLError(
             location,
-            f"Argument 'init' to scan operator '{name}' must have same type as '{carry_arg_name}' argument: "
+            f"Argument 'init' to scan pass '{name}' must have same type as '{carry_arg_name}' argument: "
             f"expected '{carry_type}', got '{init_type}'.",
         )
 

@@ -142,7 +142,6 @@ def test_call_field_operator_from_program(cartesian_case):
 
 
 @pytest.mark.uses_scan
-@pytest.mark.uses_scan_in_field_operator
 def test_call_scan_operator_from_field_operator(cartesian_case):
     @field_operator
     def testee_pass(state: float, x: float, y: float) -> float:

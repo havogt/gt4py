@@ -105,7 +105,6 @@ USES_OFFSET_TAG_DIFFERING_FROM_LOCAL_DIM_IN_REDUCTION = (
 USES_ORIGIN = "uses_origin"
 USES_REDUCE_WITH_LAMBDA = "uses_reduce_with_lambda"
 USES_SCAN = "uses_scan"
-USES_SCAN_IN_FIELD_OPERATOR = "uses_scan_in_field_operator"
 USES_SCAN_IN_STENCIL = "uses_scan_in_stencil"
 USES_SCAN_WITHOUT_FIELD_ARGS = "uses_scan_without_field_args"
 USES_SCAN_NESTED = "uses_scan_nested"

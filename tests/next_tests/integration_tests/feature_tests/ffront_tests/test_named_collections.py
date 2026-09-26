@@ -346,7 +346,6 @@ def scan_named_tuple_wrapper(inp: gtx.Field[[KDim], gtx.float32]) -> gtx.Field[[
     [scan_named_tuple_wrapper, scan_dataclass_wrapper],
 )
 @pytest.mark.uses_scan
-@pytest.mark.uses_scan_in_field_operator
 def test_scan(cartesian_case, testee):
     inp = cases.allocate(cartesian_case, testee, "inp")()
     out = cases.allocate(cartesian_case, testee, cases.RETURN)()
@@ -390,7 +389,6 @@ def scan_with_scalar_named_collection_wrapper(
 
 
 @pytest.mark.uses_scan
-@pytest.mark.uses_scan_in_field_operator
 @pytest.mark.uses_tuple_args
 def test_scan_with_scalar_named_collection(cartesian_case):
     inp = cases.allocate(cartesian_case, scan_with_scalar_named_collection_wrapper, "inp")()

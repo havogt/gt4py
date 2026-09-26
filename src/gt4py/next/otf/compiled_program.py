@@ -41,8 +41,8 @@ T = TypeVar("T")
 
 ScalarOrTupleOfScalars: TypeAlias = xtyping.MaybeNestedInTuple[core_defs.Scalar]
 
-#: Content of the key: (*hashable_arg_descriptors, id(offset_provider), concrete_instantation_if_generic)
-CompiledProgramsKey: TypeAlias = tuple[tuple[Hashable, ...], int, str | None]
+#: Content of the key: (*hashable_arg_descriptors, id(offset_provider))
+CompiledProgramsKey: TypeAlias = tuple[tuple[Hashable, ...], int]
 
 ArgStaticDescriptorsByType: TypeAlias = dict[
     type[arguments.ArgStaticDescriptor], dict[str, arguments.ArgStaticDescriptor]
@@ -352,8 +352,6 @@ class CompiledProgramsPool(Generic[ffront_stages.DSLDefinitionT]):
 
     backend: gtx_backend.Backend
     definition_stage: ffront_stages.DSLDefinitionT
-    # Note: This type can be incomplete, i.e. contain DeferredType, whenever the operator is a
-    #  scan operator. In the future it could also be the type of a generic program.
     program_type: ts_ffront.ProgramType
     #: mapping from an argument descriptor type to a list of parameters or expression thereof
     #: e.g. `{arguments.StaticArg: ["static_int_param"]}`
@@ -406,31 +404,7 @@ class CompiledProgramsPool(Generic[ffront_stages.DSLDefinitionT]):
             args, kwargs = canonical_args, canonical_kwargs
         static_args_values = self._argument_descriptor_cache_key_from_args(*args, **kwargs)
 
-        if self._is_generic:
-            # In case the program or operator is generic, i.e. callable for arguments of varying
-            # type, add the argument types to the cache key as the argument types are used during
-            # compilation. In case the program is not generic we can avoid the potentially
-            # expensive type deduction for all arguments and not include it in the key.
-            if enable_jit:
-                warnings.warn(
-                    "Calling generic programs / direct calls to scan operators are not optimized. "
-                    "Consider calling a specialized version instead.",
-                    stacklevel=3,
-                )
-            arg_specialization_key = eve_utils.content_hash(
-                (
-                    tuple(type_translation.from_value(arg) for arg in canonical_args),
-                    {k: type_translation.from_value(v) for k, v in canonical_kwargs.items()},
-                )
-            )
-        else:
-            arg_specialization_key = None
-
-        key = (
-            static_args_values,
-            common.hash_offset_provider_items_by_id(offset_provider),
-            arg_specialization_key,
-        )
+        key = (static_args_values, common.hash_offset_provider_items_by_id(offset_provider))
 
         # Note: no `KeyError` handler, as anything raised inside one gets chained to it.
         compiled_program = self.compiled_programs.get(key)
@@ -465,7 +439,7 @@ class CompiledProgramsPool(Generic[ffront_stages.DSLDefinitionT]):
                     f"No program compiled for this set of static arguments of "
                     f"'{self.definition.__name__}'{self._describe_argument_descriptors(key[0])}."
                     " Note that a variant is also selected by the identity of the"
-                    " 'offset_provider' entries and, for generic programs, by the argument types."
+                    " 'offset_provider' entries."
                 )
 
         with compiled_program_call_context(self, key, args, kwargs, offset_provider):
@@ -500,26 +474,6 @@ class CompiledProgramsPool(Generic[ffront_stages.DSLDefinitionT]):
     @functools.cached_property
     def _primitive_values_extractor(self) -> Callable | None:
         return arguments.make_primitive_value_args_extractor(self.program_type.definition)
-
-    @functools.cached_property
-    def _is_generic(self) -> bool:
-        """
-        Is the operator or program generic in the sense that it can be called for different
-        argument types.
-
-        Right now this is only the case for scan operators.
-        """
-        # TODO(tehrengruber): This concept does not exist elsewhere and is not properly reflected
-        #  in the type system. For now we just use `DeferredType` to communicate between
-        #  here and `type_info.type_in_program_context`.
-        return any(
-            isinstance(t, ts.DeferredType)
-            for t in itertools.chain(
-                self.program_type.definition.pos_only_args,
-                self.program_type.definition.pos_or_kw_args.values(),
-                self.program_type.definition.kw_only_args.values(),
-            )
-        )
 
     @functools.cached_property
     def _args_canonicalizer(self) -> Callable[..., tuple[tuple, dict[str, Any]]]:
@@ -652,7 +606,6 @@ class CompiledProgramsPool(Generic[ffront_stages.DSLDefinitionT]):
         key = (
             self._argument_descriptor_cache_key_from_descriptors(argument_descriptor_contexts),
             common.hash_offset_provider_items_by_id(offset_provider),
-            eve_utils.content_hash(arg_specialization_info) if self._is_generic else None,
         )
         assert call_key is None or call_key == key
 
@@ -662,10 +615,6 @@ class CompiledProgramsPool(Generic[ffront_stages.DSLDefinitionT]):
         if arg_specialization_info:
             arg_types, kwarg_types = arg_specialization_info
         else:
-            if self._is_generic:
-                raise ValueError(
-                    "Can not precompile generic program or scan operator without argument types."
-                )
             arg_types = (
                 *self.program_type.definition.pos_only_args,
                 *self.program_type.definition.pos_or_kw_args.values(),

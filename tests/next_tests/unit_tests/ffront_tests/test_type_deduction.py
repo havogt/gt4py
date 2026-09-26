@@ -862,7 +862,7 @@ def test_scan_call_wrong_init_type():
     def wrong_init_type(a: Field[[TDim, KDim], float64]) -> Field[[TDim, KDim], float64]:
         return scan(_scan_pass, axis=KDim, init=0)(a)
 
-    with pytest.raises(errors.DSLError, match=r"Argument 'init' to scan operator '_scan_pass'"):
+    with pytest.raises(errors.DSLError, match=r"Argument 'init' to scan pass '_scan_pass'"):
         _ = FieldOperatorParser.apply_to_function(wrong_init_type)
 
 

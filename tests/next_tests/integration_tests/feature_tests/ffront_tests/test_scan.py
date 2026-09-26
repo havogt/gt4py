@@ -50,7 +50,6 @@ def test_scalar_scan(cartesian_case):
 
 
 @pytest.mark.uses_scan
-@pytest.mark.uses_scan_in_field_operator
 @pytest.mark.uses_tuple_args
 def test_tuple_scalar_scan(cartesian_case):
     @gtx.field_operator
@@ -75,7 +74,6 @@ def test_tuple_scalar_scan(cartesian_case):
 
 @pytest.mark.uses_cartesian_shift
 @pytest.mark.uses_scan
-@pytest.mark.uses_scan_in_field_operator
 def test_scalar_scan_vertical_offset(cartesian_case):
     @gtx.field_operator
     def testee_pass(state: float, inp: float) -> float:
@@ -100,7 +98,6 @@ def test_scalar_scan_vertical_offset(cartesian_case):
 
 
 @pytest.mark.uses_scan
-@pytest.mark.uses_scan_in_field_operator
 def test_scan_unused_parameter(cartesian_case):
     @gtx.field_operator
     def testee_pass(state: float, inp: float, unused: float) -> float:
@@ -130,8 +127,7 @@ def test_scan_unused_parameter(cartesian_case):
 @pytest.mark.uses_scan_without_field_args
 @pytest.mark.parametrize("forward", [True, False])
 def test_fieldop_from_scan(cartesian_case, forward):
-    init = 1.0
-    expected = np.arange(init + 1.0, init + 1.0 + cartesian_case.default_sizes[KDim], 1)
+    expected = np.arange(2.0, 2.0 + cartesian_case.default_sizes[KDim], 1)
     out = cartesian_case.as_field([KDim], np.zeros((cartesian_case.default_sizes[KDim],)))
 
     if not forward:
@@ -158,7 +154,6 @@ def test_fieldop_from_scan(cartesian_case, forward):
 
 @pytest.mark.uses_scan
 @pytest.mark.uses_scan_nested
-@pytest.mark.uses_scan_in_field_operator
 def test_solve_triag(cartesian_case):
     @gtx.field_operator
     def tridiag_forward(
@@ -304,7 +299,6 @@ def test_scan_nested_tuple_input(cartesian_case):
 
 
 @pytest.mark.uses_scan
-@pytest.mark.uses_scan_in_field_operator
 @pytest.mark.uses_tuple_args
 def test_scan_different_domain_in_tuple(cartesian_case):
     init = 1.0
@@ -345,7 +339,6 @@ def test_scan_different_domain_in_tuple(cartesian_case):
 
 
 @pytest.mark.uses_scan
-@pytest.mark.uses_scan_in_field_operator
 @pytest.mark.uses_tuple_args
 def test_scan_tuple_field_scalar_mixed(cartesian_case):
     init = 1.0
@@ -381,9 +374,7 @@ def test_scan_tuple_field_scalar_mixed(cartesian_case):
 def test_scan_wrong_return_type(cartesian_case):
     with pytest.raises(
         errors.DSLError,
-        match=(
-            r"Argument 'state' to scan operator 'testee_pass' must have same type as its return"
-        ),
+        match=(r"Argument 'state' to scan pass 'testee_pass' must have same type as its return"),
     ):
 
         @gtx.field_operator
@@ -400,7 +391,7 @@ def test_scan_wrong_init_type(cartesian_case):
     with pytest.raises(
         errors.DSLError,
         match=(
-            r"Argument 'init' to scan operator 'testee_pass' must have same type as 'state' argument"
+            r"Argument 'init' to scan pass 'testee_pass' must have same type as 'state' argument"
         ),
     ):
 
@@ -417,7 +408,7 @@ def test_scan_wrong_init_type(cartesian_case):
 def test_scan_without_carry(cartesian_case):
     with pytest.raises(
         errors.DSLError,
-        match=r"Scan operator 'testee_pass' must have at least one argument",
+        match=r"Scan pass 'testee_pass' must have at least one argument",
     ):
 
         @gtx.field_operator
@@ -430,7 +421,6 @@ def test_scan_without_carry(cartesian_case):
 
 
 @pytest.mark.uses_scan
-@pytest.mark.uses_scan_in_field_operator
 def test_scan_call(cartesian_case):
     @gtx.field_operator
     def add(carry: float, inp: float) -> float:
@@ -447,7 +437,6 @@ def test_scan_call(cartesian_case):
 
 
 @pytest.mark.uses_scan
-@pytest.mark.uses_scan_in_field_operator
 def test_scan_call_backward_inferred_axis(cartesian_case):
     @gtx.field_operator
     def add(carry: float, inp: float, scalar: float) -> float:
@@ -466,7 +455,6 @@ def test_scan_call_backward_inferred_axis(cartesian_case):
 
 
 @pytest.mark.uses_scan
-@pytest.mark.uses_scan_in_field_operator
 @pytest.mark.uses_tuple_returns
 def test_scan_call_tuple_carry(cartesian_case):
     @gtx.field_operator
