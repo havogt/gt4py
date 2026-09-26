@@ -9,8 +9,8 @@
 import numpy as np
 
 import gt4py.next as gtx
-from gt4py.next import neighbor_sum, scan
-from gt4py.next.experimental import as_offset, connectivity_chains, required_indices
+from gt4py.next import broadcast, neighbor_sum, scan
+from gt4py.next.experimental import as_offset, concat_where, connectivity_chains, required_indices
 from gt4py.next.ffront.connectivity_chains import Access, Unbounded
 
 
@@ -105,6 +105,26 @@ def test_vertical_displacements():
                 }
             ),
             "off": frozenset({Access(chain=("E2C",))}),
+        }
+    }
+
+
+def test_dynamic_shift_of_concat_where_and_broadcast():
+    @gtx.field_operator
+    def testee(
+        a: CellKField, b: CellKField, c: CellField, off: gtx.Field[[Cell, K], gtx.int32]
+    ) -> CellKField:
+        return concat_where(K < 1, a, b)(as_offset(Koff, off)) + broadcast(c, (Cell, K))(
+            as_offset(Koff, off)
+        )
+
+    dynamic = Access(displacement=(("K", Unbounded.DYNAMIC),))
+    assert connectivity_chains(testee, OFFSET_PROVIDER) == {
+        (): {
+            "a": frozenset({dynamic}),
+            "b": frozenset({dynamic}),
+            "c": frozenset({dynamic}),
+            "off": frozenset({Access()}),
         }
     }
 

@@ -21,7 +21,6 @@ from gt4py.next.iterator.transforms import (
     concat_where,
     dead_code_elimination,
     expand_tuple_maps,
-    inline_dynamic_shifts,
     inline_fundefs,
     trace_shifts,
 )
@@ -268,9 +267,6 @@ def trace_program(
     )
     program = dead_code_elimination.dead_code_elimination(
         program, uids=uids, offset_provider_type=offset_provider_type
-    )
-    program = inline_dynamic_shifts.InlineDynamicShifts.apply(
-        program, offset_provider_type=offset_provider_type, uids=uids
     )
     program = itir_type_inference.infer(program, offset_provider_type=offset_provider_type)
 
