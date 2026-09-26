@@ -324,6 +324,9 @@ def scan(
 
     Args:
         scan_pass: Field operator `(carry, *args) -> carry` on scalars (or tuples thereof).
+            In embedded execution it is called once per level on whole horizontal slices,
+            unless it branches on values (`if` or a conditional expression): then it is called
+            per column, and with JAX arrays this is an error. Prefer `where`.
         range: `(dim, start, stop)`: the vertical dimension to scan along and the half-open
             interval of it the scan covers. The carry starts from `init` at `start` (forward)
             or `stop - 1` (backward); the result is only defined on this interval.
@@ -339,11 +342,12 @@ def scan(
 
     dim, start, stop = range
     scan_range = common.NamedRange(dim, common.UnitRange(start, stop))
+    per_column = _branches_on_values(scan_pass)
 
     def scan_operator(*args: Any, **kwargs: Any) -> common.Field | Tuple:
-        return embedded_operators.ScanOperator(scan_pass, forward, init, scan_range)(
-            *args, **kwargs
-        )
+        return embedded_operators.ScanOperator(
+            scan_pass, forward, init, scan_range, per_column=per_column
+        )(*args, **kwargs)
 
     return scan_operator
 
@@ -396,6 +400,30 @@ def reduce(
         return acc
 
     return reduce_operator
+
+
+def _branches_on_values(operator: Callable) -> bool:
+    """
+    Check if `operator` or a field operator it calls contains an `if` or a conditional expression.
+
+    Branches on compile-time constants are included, a plain Python function is assumed not to branch.
+    """
+    from gt4py.next.ffront import decorator, field_operator_ast as foast
+
+    if not isinstance(operator, decorator.FieldOperator):
+        return False
+    foast_stage = operator.foast_stage
+    if (
+        foast_stage.foast_node.walk_values()
+        .if_isinstance(foast.TernaryExpr, foast.IfStmt)
+        .to_list()
+    ):
+        return True
+    return any(
+        _branches_on_values(value)
+        for value in foast_stage.closure_vars.values()
+        if isinstance(value, decorator.FieldOperator)
+    )
 
 
 @WhereBuiltinFunction

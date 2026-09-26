@@ -207,6 +207,7 @@ def test_solve_triag(cartesian_case):
 
 
 @pytest.mark.uses_scan
+@pytest.mark.uses_scan_with_value_branches
 def test_ternary_scan(cartesian_case):
     @gtx.field_operator
     def scan_pass(carry: float, a: float) -> float:
