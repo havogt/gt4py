@@ -167,6 +167,10 @@ def _is_scan_builtin(expr: foast.Expr) -> bool:
     return isinstance(expr, foast.Name) and expr.id == "scan"
 
 
+def _is_reduce_builtin(expr: foast.Expr) -> bool:
+    return isinstance(expr, foast.Name) and expr.id == "reduce"
+
+
 def _check_scan_pass(
     location: eve.SourceLocation,
     name: str,
@@ -206,6 +210,27 @@ def _check_scan_pass(
             f"Argument 'init' to scan pass '{name}' must have same type as '{carry_arg_name}' argument: "
             f"expected '{carry_type}', got '{init_type}'.",
         )
+
+
+def _check_vertical_range(range_: foast.Expr, builtin_name: str) -> common.Dimension:
+    if not (
+        isinstance(range_, foast.TupleExpr)
+        and len(range_.elts) == 3
+        and isinstance(range_.elts[0].type, ts.DimensionType)
+        and all(type_info.is_integral_scalar(bound.type) for bound in range_.elts[1:])
+    ):
+        raise errors.DSLError(
+            range_.location,
+            f"Argument 'range' to '{builtin_name}' must be a tuple '(dim, start, stop)' of a "
+            "dimension and two integers.",
+        )
+    axis = range_.elts[0].type.dim
+    if axis.kind != DimensionKind.VERTICAL:
+        raise errors.DSLError(
+            range_.location,
+            f"The dimension in 'range' of '{builtin_name}' must be a vertical dimension.",
+        )
+    return axis
 
 
 class FieldOperatorTypeDeduction(traits.VisitorWithSymbolTableTrait, NodeTranslator):
@@ -351,23 +376,7 @@ class FieldOperatorTypeDeduction(traits.VisitorWithSymbolTableTrait, NodeTransla
                 f"The scan pass '{pass_name}' must not have positional-only or keyword-only arguments.",
             )
 
-        range_ = new_kwargs["range"]
-        if not (
-            isinstance(range_, foast.TupleExpr)
-            and len(range_.elts) == 3
-            and isinstance(range_.elts[0].type, ts.DimensionType)
-            and all(type_info.is_integral_scalar(bound.type) for bound in range_.elts[1:])
-        ):
-            raise errors.DSLError(
-                range_.location,
-                "Argument 'range' to 'scan' must be a tuple '(dim, start, stop)' of a dimension "
-                "and two integers.",
-            )
-        axis = range_.elts[0].type.dim
-        if axis.kind != DimensionKind.VERTICAL:
-            raise errors.DSLError(
-                range_.location, "The dimension in 'range' of 'scan' must be a vertical dimension."
-            )
+        axis = _check_vertical_range(new_kwargs["range"], "scan")
 
         output_dims = promote_dims(
             *(
@@ -398,6 +407,69 @@ class FieldOperatorTypeDeduction(traits.VisitorWithSymbolTableTrait, NodeTransla
             kwargs=new_kwargs,
             location=node.location,
             type=ts_ffront.ScanOperatorType(axis=axis, definition=pass_type),
+        )
+
+    def _visit_reduce_call(self, node: foast.Call, **kwargs: Any) -> foast.Call:
+        """Type `reduce(op, range=...)`, the callee of a call-site reduction."""
+        new_func = self.visit(node.func, **kwargs)
+        if len(node.args) != 1:
+            raise errors.DSLError(
+                node.location,
+                f"'reduce' takes exactly one positional argument (the operator), got {len(node.args)}.",
+            )
+        if unexpected := set(node.kwargs) - {"range"}:
+            raise errors.DSLError(
+                node.location,
+                f"Unexpected keyword argument(s) {', '.join(sorted(unexpected))} to 'reduce'.",
+            )
+        if "range" not in node.kwargs:
+            raise errors.DSLError(
+                node.location,
+                "Missing argument 'range' to 'reduce'.",
+                hints=["Pass the reduced interval, e.g. 'reduce(..., range=(KDim, 0, nlev))'."],
+            )
+        new_op = self.visit(node.args[0], **kwargs)
+        if not isinstance(new_op.type, ts_ffront.FieldOperatorType):
+            raise errors.DSLError(
+                new_op.location,
+                f"The operator of 'reduce' must be a field operator, got '{new_op.type}'.",
+            )
+        op_type = new_op.type.definition
+        if (
+            op_type.pos_only_args
+            or op_type.kw_only_args
+            or len(op_type.pos_or_kw_args) != 2
+            or any(param != op_type.returns for param in op_type.pos_or_kw_args.values())
+            or not all(
+                type_info.is_arithmetic(t) or type_info.is_logical(t)
+                for t in type_info.primitive_constituents(op_type.returns)
+            )
+        ):
+            raise errors.DSLError(
+                new_op.location,
+                f"The operator '{new_op!s}' of 'reduce' must take two arguments and return a "
+                "value, all of the same scalar type or tuple of scalar types.",
+            )
+
+        range_ = self.visit(node.kwargs["range"], **kwargs)
+        axis = _check_vertical_range(range_, "reduce")
+        start, stop = range_.elts[1:]
+        if (
+            isinstance(start, foast.Constant)
+            and isinstance(stop, foast.Constant)
+            and start.value >= stop.value
+        ):
+            raise errors.DSLError(
+                range_.location,
+                f"Empty 'range' [{start.value}, {stop.value}) of 'reduce'.",
+            )
+
+        return foast.Call(
+            func=new_func,
+            args=[new_op],
+            kwargs={"range": range_},
+            location=node.location,
+            type=ts_ffront.ReduceOperatorType(axis=axis, definition=op_type),
         )
 
     def visit_Name(self, node: foast.Name, **kwargs: Any) -> foast.Name:
@@ -866,6 +938,12 @@ class FieldOperatorTypeDeduction(traits.VisitorWithSymbolTableTrait, NodeTransla
                 "'scan' creates a scan operator which must be called directly: "
                 "'scan(scan_pass, ...)(args)'.",
             )
+        if _is_reduce_builtin(node.func):
+            raise errors.DSLError(
+                node.location,
+                "'reduce' creates a reduction which must be called directly: "
+                "'reduce(op, range=...)(field)'.",
+            )
         new_args = self.visit(node.args, **kwargs)
         new_kwargs = self.visit(node.kwargs, **kwargs)
         if isinstance(node.func, foast.Call) and _is_scan_builtin(node.func.func):
@@ -874,6 +952,8 @@ class FieldOperatorTypeDeduction(traits.VisitorWithSymbolTableTrait, NodeTransla
                 scan_arg_types=[arg.type for arg in [*new_args, *new_kwargs.values()]],
                 **kwargs,
             )
+        elif isinstance(node.func, foast.Call) and _is_reduce_builtin(node.func.func):
+            new_func = self._visit_reduce_call(node.func, **kwargs)
         else:
             new_func = self.visit(node.func, **kwargs)
 

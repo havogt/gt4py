@@ -6,6 +6,7 @@
 # Please, refer to the LICENSE file in the root directory.
 # SPDX-License-Identifier: BSD-3-Clause
 
+import builtins
 import dataclasses
 import functools
 import inspect
@@ -62,6 +63,7 @@ __all__ = [  # noqa: RUF022 [unsorted-dunder-all] # type: ignore[attr-defined]
     "broadcast",
     "astype",
     "scan",
+    "reduce",
     "abs",
     "neg",
     "sin",
@@ -346,6 +348,56 @@ def scan(
     return scan_operator
 
 
+class ReduceBuiltinFunction(BuiltInFunction[_R, _P]):
+    def __gt_type__(self) -> ts.FunctionType:
+        return ts.FunctionType(
+            pos_only_args=[ts.DeferredType(constraint=None)],
+            pos_or_kw_args={},
+            kw_only_args={"range": ts.DeferredType(constraint=ts.TupleType)},
+            returns=ts.DeferredType(constraint=None),
+        )
+
+
+@ReduceBuiltinFunction
+def reduce(
+    op: Callable,
+    /,
+    *,
+    range: tuple[common.Dimension, int, int],  # noqa: A002 # shadowing a Python built-in
+) -> Callable[..., common.Field | Tuple]:
+    """
+    Create a reduction over a vertical dimension, to be called inside a field operator.
+
+    The reduction of a field `f` over `range=(K, start, stop)` is
+    `op(...op(op(f[start], f[start + 1]), ...), f[stop - 1])` in each column: a field without `K`.
+
+    Args:
+        op: Associative field operator `(a, b) -> c` on scalars (or tuples thereof), all of the
+            same type. The order in which it is applied is unspecified.
+        range: `(dim, start, stop)`: the vertical dimension to reduce and the non-empty
+            half-open interval of it to reduce over.
+
+    Examples:
+        >>> reduce(plus, range=(KDim, 0, nlev))(a)  # doctest: +SKIP
+    """
+    dim, start, stop = range
+    if start >= stop:
+        raise ValueError(f"Empty range [{start}, {stop}) in 'reduce' over '{dim.value}'.")
+
+    def at_level(field: common.Field | Tuple, level: int) -> common.Field | Tuple:
+        if isinstance(field, tuple):
+            return tuple(at_level(f, level) for f in field)
+        return field[dim(level)]
+
+    def reduce_operator(field: common.Field | Tuple) -> common.Field | Tuple:
+        acc = at_level(field, start)
+        for level in builtins.range(start + 1, stop):
+            acc = op(acc, at_level(field, level))
+        return acc
+
+    return reduce_operator
+
+
 @WhereBuiltinFunction
 def where(
     mask: common.Field,
@@ -507,6 +559,7 @@ FUN_BUILTIN_NAMES = [
     "where",
     "astype",
     "scan",
+    "reduce",
     *MATH_BUILTIN_NAMES,
 ]
 

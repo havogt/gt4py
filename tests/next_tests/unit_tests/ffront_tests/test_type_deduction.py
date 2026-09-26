@@ -28,6 +28,7 @@ from gt4py.next import (
     int64,
     field_operator,
     neighbor_sum,
+    reduce,
     scan,
     where,
 )
@@ -930,3 +931,93 @@ def test_scan_call_pass_not_a_field_operator():
 
     with pytest.raises(errors.DSLError, match=r"The scan pass must be a field operator"):
         _ = FieldOperatorParser.apply_to_function(pass_is_builtin)
+
+
+@field_operator
+def _plus(a: float, b: float) -> float:
+    return a + b
+
+
+def test_reduce_call():
+    def reduce_call(a: Field[[TDim, KDim], float64]) -> Field[[TDim], float64]:
+        return reduce(_plus, range=(KDim, 0, 10))(a)
+
+    parsed = FieldOperatorParser.apply_to_function(reduce_call)
+
+    assert parsed.type.returns == ts.FieldType(
+        dims=[TDim], dtype=ts.ScalarType(kind=ts.ScalarKind.FLOAT64)
+    )
+
+
+def test_reduce_call_tuple():
+    @field_operator
+    def plus_tuple(a: tuple[float, int32], b: tuple[float, int32]) -> tuple[float, int32]:
+        return a[0] + b[0], a[1] + b[1]
+
+    def reduce_tuple(
+        a: Field[[TDim, KDim], float64], b: Field[[KDim], int32]
+    ) -> tuple[Field[[TDim], float64], Field[[TDim], int32]]:
+        return reduce(plus_tuple, range=(KDim, 0, 10))((a, b))
+
+    parsed = FieldOperatorParser.apply_to_function(reduce_tuple)
+
+    assert parsed.type.returns == ts.TupleType(
+        types=[
+            ts.FieldType(dims=[TDim], dtype=ts.ScalarType(kind=ts.ScalarKind.FLOAT64)),
+            ts.FieldType(dims=[TDim], dtype=ts.ScalarType(kind=ts.ScalarKind.INT32)),
+        ]
+    )
+
+
+def test_reduce_call_not_called():
+    def reduce_not_called(a: Field[[TDim, KDim], float64]) -> Field[[TDim, KDim], float64]:
+        op = reduce(_plus, range=(KDim, 0, 10))
+        return a
+
+    with pytest.raises(errors.DSLError, match=r"'reduce' creates a reduction which must be called"):
+        _ = FieldOperatorParser.apply_to_function(reduce_not_called)
+
+
+def test_reduce_call_missing_range():
+    def missing_range(a: Field[[TDim, KDim], float64]) -> Field[[TDim], float64]:
+        return reduce(_plus)(a)
+
+    with pytest.raises(errors.DSLError, match=r"Missing argument 'range' to 'reduce'"):
+        _ = FieldOperatorParser.apply_to_function(missing_range)
+
+
+def test_reduce_call_non_vertical_axis():
+    def non_vertical_axis(a: Field[[TDim, KDim], float64]) -> Field[[KDim], float64]:
+        return reduce(_plus, range=(TDim, 0, 10))(a)
+
+    with pytest.raises(errors.DSLError, match=r"'range' of 'reduce' must be a vertical dimension"):
+        _ = FieldOperatorParser.apply_to_function(non_vertical_axis)
+
+
+def test_reduce_call_empty_literal_range():
+    def empty_range(a: Field[[TDim, KDim], float64]) -> Field[[TDim], float64]:
+        return reduce(_plus, range=(KDim, 3, 3))(a)
+
+    with pytest.raises(errors.DSLError, match=r"Empty 'range' \[3, 3\) of 'reduce'"):
+        _ = FieldOperatorParser.apply_to_function(empty_range)
+
+
+def test_reduce_call_wrong_op_signature():
+    def wrong_op(a: Field[[TDim, KDim], float64]) -> Field[[TDim], float64]:
+        return reduce(_scan_pass_with_arg, range=(KDim, 0, 10))(a)
+
+    with pytest.raises(errors.DSLError, match=r"must take two arguments and return a value"):
+        _ = FieldOperatorParser.apply_to_function(wrong_op)
+
+
+@field_operator
+def _scan_pass_with_arg(carry: float, inp: float, scale: float) -> float:
+    return carry + inp * scale
+
+
+def test_reduce_call_field_without_axis():
+    def without_axis(a: Field[[TDim], float64]) -> Field[[TDim], float64]:
+        return reduce(_plus, range=(KDim, 0, 10))(a)
+
+    with pytest.raises(errors.DSLError, match=r"must be fields over the reduced dimension 'KDim'"):
+        _ = FieldOperatorParser.apply_to_function(without_axis)

@@ -323,6 +323,10 @@ class FieldOperatorLowering(eve.PreserveLocationVisitor, eve.NodeTranslator):
 
     def visit_Call(self, node: foast.Call, **kwargs: Any) -> itir.Expr:
         if isinstance(node.func, foast.Call) and isinstance(
+            node.func.type, ts_ffront.ReduceOperatorType
+        ):
+            raise NotImplementedError("'reduce' is only supported in embedded execution.")
+        elif isinstance(node.func, foast.Call) and isinstance(
             node.func.type, ts_ffront.ScanOperatorType
         ):
             return self._visit_scan_call(node, **kwargs)

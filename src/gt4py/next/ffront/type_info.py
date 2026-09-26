@@ -284,6 +284,25 @@ def function_signature_incompatibilities_scanop(
 
 
 @type_info.function_signature_incompatibilities.register
+def function_signature_incompatibilities_reduceop(
+    reduceop_type: ts_ffront.ReduceOperatorType,
+    args: list[ts.TypeSpec],
+    kwargs: dict[str, ts.TypeSpec],
+) -> Iterator[str]:
+    if not all(
+        isinstance(el, ts.FieldType) and reduceop_type.axis in el.dims
+        for arg in [*args, *kwargs.values()]
+        for el in type_info.primitive_constituents(arg)
+    ):
+        yield (
+            f"Arguments to 'reduce' must be fields over the reduced dimension "
+            f"'{reduceop_type.axis.value}', or tuples thereof."
+        )
+        return
+    yield from function_signature_incompatibilities_scanop(reduceop_type, args, kwargs)
+
+
+@type_info.function_signature_incompatibilities.register
 def function_signature_incompatibilities_program(
     program_type: ts_ffront.ProgramType, args: tuple[ts.TypeSpec], kwargs: dict[str, ts.TypeSpec]
 ) -> Iterator[str]:
@@ -328,6 +347,32 @@ def return_type_scanop(
         ts.TypeSpec,
         type_info.tree_map_type(lambda arg: ts.FieldType(dims=promoted_dims, dtype=arg))(
             carry_dtype
+        ),
+    )
+
+
+@type_info.return_type.register
+def return_type_reduceop(
+    callable_type: ts_ffront.ReduceOperatorType,
+    *,
+    with_args: list[ts.TypeSpec],
+    with_kwargs: dict[str, ts.TypeSpec],
+) -> ts.TypeSpec:
+    dims = [
+        dim
+        for dim in common.promote_dims(
+            *(
+                type_info.extract_dims(el)
+                for arg in with_args + list(with_kwargs.values())
+                for el in type_info.primitive_constituents(arg)
+            )
+        )
+        if dim != callable_type.axis
+    ]
+    return cast(
+        ts.TypeSpec,
+        type_info.tree_map_type(lambda arg: ts.FieldType(dims=dims, dtype=arg))(
+            callable_type.definition.returns
         ),
     )
 
