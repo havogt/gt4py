@@ -11,18 +11,25 @@ import numpy as np
 import pytest
 
 import gt4py.next as gtx
-from gt4py.next import errors, float64, int32, maximum, scan
+from gt4py.next import common, errors, float64, int32, maximum, neighbor_sum, scan
 from gt4py.next.experimental import concat_where
 
 from next_tests.integration_tests import cases
 from next_tests.integration_tests.cases import (
+    Edge,
     IDim,
     JDim,
     KDim,
+    V2E,
+    V2EDim,
+    Vertex,
     cartesian_case,
+    unstructured_case,
+    unstructured_case_3d,
 )
 from next_tests.integration_tests.cases_utils import (
     exec_alloc_descriptor,
+    mesh_descriptor,
 )
 
 
@@ -634,3 +641,67 @@ def test_scan_range_larger_than_output(cartesian_case):
     ref[:, 2:5] = np.cumsum(inp.asnumpy(), axis=1)[:, 2:5]
 
     cases.verify(cartesian_case, prog, inp, out, inout=out, ref=ref)
+
+
+@pytest.mark.uses_scan
+@pytest.mark.uses_tuple_returns
+@pytest.mark.uses_program_with_sliced_out_arguments
+def test_scan_range_tuple_outputs_on_different_domains(cartesian_case):
+    @gtx.field_operator
+    def sum_and_double(carry: tuple[float, float], inp: float) -> tuple[float, float]:
+        return carry[0] + inp, carry[1] + 2.0 * inp
+
+    @gtx.field_operator
+    def testee(inp: cases.IKFloatField) -> tuple[cases.IKFloatField, cases.IKFloatField]:
+        return scan(sum_and_double, range=(KDim, 0, 9), forward=True, init=(0.0, 0.0))(inp)
+
+    @gtx.program
+    def prog(inp: cases.IKFloatField, out1: cases.IKFloatField, out2: cases.IKFloatField):
+        testee(inp, out=(out1, out2[:, 2:7]))
+
+    inp = cases.allocate(cartesian_case, prog, "inp")()
+    out1 = cases.allocate(cartesian_case, prog, "out1").zeros()()
+    out2 = cases.allocate(cartesian_case, prog, "out2").zeros()()
+    cumsum = np.cumsum(inp.asnumpy(), axis=1)
+    ref2 = np.zeros_like(cumsum)
+    ref2[:, 2:7] = 2.0 * cumsum[:, 2:7]
+
+    cases.verify(
+        cartesian_case,
+        prog,
+        inp,
+        out1,
+        out2,
+        inout=(out1, out2),
+        ref=(cumsum, ref2),
+        comparison=lambda ref, out: all(np.allclose(r, o) for r, o in zip(ref, out)),
+    )
+
+
+@pytest.mark.uses_scan
+@pytest.mark.uses_unstructured_shift
+@pytest.mark.uses_scan_with_unstructured_shift
+def test_scan_range_unstructured_backward(unstructured_case_3d):
+    @gtx.field_operator
+    def add(carry: float, inp: float) -> float:
+        return carry + inp
+
+    @gtx.field_operator
+    def testee(
+        e: gtx.Field[[Edge, KDim], float64], k_start: int32, k_end: int32
+    ) -> gtx.Field[[Vertex, KDim], float64]:
+        s = scan(add, range=(KDim, k_start, k_end), forward=False, init=0.0)(e)
+        return neighbor_sum(s(V2E), axis=V2EDim)
+
+    e = cases.allocate(unstructured_case_3d, testee, "e")()
+    out = cases.allocate(unstructured_case_3d, testee, cases.RETURN).zeros()()
+    v2e_table = unstructured_case_3d.offset_provider["V2E"].asnumpy()
+    backward_cumsum = np.flip(np.cumsum(np.flip(e.asnumpy(), axis=1), axis=1), axis=1)
+    ref = np.sum(
+        backward_cumsum[v2e_table],
+        axis=1,
+        initial=0,
+        where=(v2e_table != common._DEFAULT_SKIP_VALUE)[:, :, np.newaxis],
+    )
+
+    cases.verify(unstructured_case_3d, testee, e, 0, 10, out=out, ref=ref)

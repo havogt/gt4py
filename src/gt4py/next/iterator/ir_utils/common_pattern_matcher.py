@@ -100,6 +100,11 @@ def is_applied_as_fieldop(arg: itir.Node) -> TypeGuard[_FunCallToFunCallToRef]:
     return isinstance(arg, itir.FunCall) and is_call_to(arg.fun, "as_fieldop")
 
 
+def is_applied_scan(arg: itir.Node) -> TypeGuard[_FunCallToFunCallToRef]:
+    """Match expressions of the form `as_fieldop(scan(...))(*args)`."""
+    return is_applied_as_fieldop(arg) and is_call_to(arg.fun.args[0], "scan")
+
+
 _FunCallToLambda: TypeAlias = _FunCallTo[itir.Lambda]
 
 

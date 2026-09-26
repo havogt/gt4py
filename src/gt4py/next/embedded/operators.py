@@ -9,7 +9,6 @@
 import dataclasses
 from typing import Any, Callable, Generic, Optional, ParamSpec, Sequence, TypeVar, cast
 
-from gt4py import eve
 from gt4py._core import definitions as core_defs
 from gt4py.eve import extended_typing as xtyping
 from gt4py.next import common, errors, field_utils, named_collections, utils
@@ -89,12 +88,6 @@ class ScanOperator(EmbeddedOperator[xtyping.MaybeNestedInTuple[core_defs.ScalarT
         return res
 
 
-def _get_out_domain(out: xtyping.MaybeNestedInTuple[common.MutableField]) -> common.Domain:
-    return embedded_common.domain_intersection(
-        *[f.domain for f in utils.flatten_nested_tuple((out,))]
-    )
-
-
 def field_operator_call(op: EmbeddedOperator[_R, _P], args: Any, kwargs: Any) -> Optional[_R]:
     if "out" in kwargs:
         # called from program or direct field_operator as program
@@ -122,7 +115,7 @@ def field_operator_call(op: EmbeddedOperator[_R, _P], args: Any, kwargs: Any) ->
         out_domain = (
             utils.tree_map(common.domain)(domain)
             if domain is not None
-            else _get_out_domain(container_extracted_out)
+            else utils.tree_map(lambda f: f.domain)(container_extracted_out)
         )
 
         with embedded_context.update(**new_context_kwargs):

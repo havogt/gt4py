@@ -107,6 +107,7 @@ USES_REDUCE_WITH_LAMBDA = "uses_reduce_with_lambda"
 USES_SCAN = "uses_scan"
 USES_SCAN_IN_STENCIL = "uses_scan_in_stencil"
 USES_SCAN_WITHOUT_FIELD_ARGS = "uses_scan_without_field_args"
+USES_SCAN_WITH_UNSTRUCTURED_SHIFT = "uses_scan_with_unstructured_shift"
 USES_SCAN_NESTED = "uses_scan_nested"
 USES_SPARSE_FIELDS = "uses_sparse_fields"
 USES_SPARSE_FIELDS_AS_OUTPUT = "uses_sparse_fields_as_output"
@@ -219,6 +220,7 @@ GTIR_EMBEDDED_SKIP_LIST = ROUNDTRIP_SKIP_LIST + [
         XFAIL,
         OFFSET_TAG_DIFFERING_FROM_LOCAL_DIM_MESSAGE,
     ),
+    (USES_SCAN_WITH_UNSTRUCTURED_SHIFT, XFAIL, UNSUPPORTED_MESSAGE),
 ]
 GTFN_SKIP_TEST_LIST = (
     COMMON_SKIP_TEST_LIST

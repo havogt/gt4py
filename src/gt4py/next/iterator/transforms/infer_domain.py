@@ -360,11 +360,6 @@ def _infer_if(
     return result_expr, actual_domains
 
 
-def _is_scan(expr: itir.Expr) -> bool:
-    _, expr = ir_misc.extract_projector(expr)
-    return cpm.is_applied_as_fieldop(expr) and cpm.is_call_to(expr.fun.args[0], "scan")
-
-
 def _infer_concat_where(
     expr: itir.Expr,
     domain: DomainAccess,
@@ -390,11 +385,6 @@ def _infer_concat_where(
             return domain_utils.domain_intersection(d, promoted_cond)
 
         domain_ = mapper(domain)
-
-        # A scan is computed on its own vertical range, which can exceed the selected domain.
-        # Backends take a branch's domain as the region it is written to, so restrict it.
-        if _is_scan(arg):
-            arg = im.as_fieldop("deref")(arg)
 
         infered_arg_expr, actual_domains_arg = infer_expr(arg, domain_, **kwargs)
         infered_args_expr.append(infered_arg_expr)
@@ -508,7 +498,7 @@ def infer_expr(
         bidirectional=False if not isinstance(expr.type, ts.DeferredType) else True,
     )
 
-    if cpm.is_applied_as_fieldop(expr) and cpm.is_call_to(expr.fun.args[0], "scan"):
+    if cpm.is_applied_scan(expr):
         additional_dims = gtx_utils.tree_map(
             lambda d: (
                 _extract_vertical_dims(d) if isinstance(d, domain_utils.SymbolicDomain) else {}
@@ -532,8 +522,7 @@ def infer_expr(
     # A scan is computed on the vertical range of its domain argument, independent of the
     # domain it is accessed on.
     if (
-        cpm.is_applied_as_fieldop(expr)
-        and cpm.is_call_to(expr.fun.args[0], "scan")
+        cpm.is_applied_scan(expr)
         and len(expr.fun.args) == 2
         and cpm.is_call_to(expr.fun.args[1], ("cartesian_domain", "unstructured_domain"))
     ):
