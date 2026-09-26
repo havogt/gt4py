@@ -272,6 +272,7 @@ markers = [
   'uses_scan_in_stencil: tests that require backend support for scan in stencil',
   'uses_scan_without_field_args: tests that require calls to scan that do not have any fields as arguments',
   'uses_scan_with_unstructured_shift: tests that combine a scan with an unstructured shift',
+  'uses_scan_with_value_branches: tests with a scan pass that branches on values (`if` or a conditional expression)',
   'uses_scan_nested: tests that use nested scans',
   'uses_sparse_fields: tests that require backend support for sparse fields',
   'uses_sparse_fields_as_output: tests that require backend support for writing sparse fields',

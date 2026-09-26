@@ -32,9 +32,18 @@ class EmbeddedOperator(Generic[_R, _P]):
 
 @dataclasses.dataclass(frozen=True)
 class ScanOperator(EmbeddedOperator[xtyping.MaybeNestedInTuple[core_defs.ScalarT], _P]):
+    """
+    Embedded execution of a scan.
+
+    The scan pass is called once per level on the slices of the arguments orthogonal to the
+    scan dimension, with JAX arrays inside `jax.lax.scan`. A scan pass that branches on values
+    (`per_column`) can only be called on scalars, so it is called per column and level.
+    """
+
     forward: bool
     init: xtyping.MaybeNestedInTuple[core_defs.ScalarT | common.Field]
     range: common.NamedRange
+    per_column: bool = False
 
     def __call__(  # type: ignore[override]
         self,
@@ -57,12 +66,47 @@ class ScanOperator(EmbeddedOperator[xtyping.MaybeNestedInTuple[core_defs.ScalarT
             # even if the scan dimension is not in the input, we can scan over it
             out_domain = common.Domain(*out_domain, (scan_range))
 
-        xp = get_array_ns(*(arguments.extract(arg) for arg in all_args))
+        xp = get_array_ns(*(arguments.extract(arg) for arg in [*all_args, self.init]))
         init_type = type_info.tree_map_type(
             lambda t: t.dtype if isinstance(t, ts.FieldType) else t
         )(type_translation.from_value(self.init))
         assert isinstance(init_type, ts.TupleType | ts.ScalarType | ts.NamedCollectionType)
+
+        if xp.__name__.startswith("jax"):
+            if self.per_column:
+                raise ValueError(
+                    f"Scan pass '{getattr(self.fun, '__name__', self.fun)}' branches on values "
+                    "('if' or a conditional expression), which cannot be traced by JAX. "
+                    "Use 'where' instead."
+                )
+            return self._jax_scan(args, kwargs, init_type, non_scan_domain, out_domain)
+
         res = field_utils.field_from_typespec(init_type, out_domain, xp)
+
+        if not self.per_column:
+            acc = self.init
+            for k in scan_range.unit_range if self.forward else reversed(scan_range.unit_range):
+                level = common.NamedIndex(scan_axis, k)
+                acc = self.fun(
+                    acc,  # type: ignore[arg-type] # need to express that the first argument is the same type as the return
+                    *(_slice_at(level, arg) for arg in args),
+                    **{name: _slice_at(level, arg) for name, arg in kwargs.items()},
+                )
+                level_domain = common.Domain(
+                    *non_scan_domain, common.NamedRange(scan_axis, common.UnitRange(k, k + 1))
+                )
+                _tuple_assign_field(
+                    arguments.extract(res),  # type: ignore[arg-type] # `res` is a (tuple of) mutable field(s)
+                    utils.tree_map(
+                        lambda x: (
+                            _broadcast_to(x, level_domain)  # noqa: B023 # used within the iteration
+                            if isinstance(x, common.Field)
+                            else x
+                        )
+                    )(arguments.extract(acc)),
+                    domain=level_domain,
+                )
+            return res
 
         def scan_loop(hpos: Sequence[common.NamedIndex]) -> None:
             acc = cast(xtyping.MaybeNestedInTuple[core_defs.ScalarT], _tuple_at(hpos, self.init))
@@ -86,6 +130,113 @@ class ScanOperator(EmbeddedOperator[xtyping.MaybeNestedInTuple[core_defs.ScalarT
                 scan_loop(hpos)
 
         return res
+
+    def _jax_scan(
+        self,
+        args: Sequence[Any],
+        kwargs: dict[str, Any],
+        init_type: ts.TypeSpec,
+        non_scan_domain: common.Domain,
+        out_domain: common.Domain,
+    ) -> Any:
+        from jax import lax, numpy as jnp
+
+        scan_axis = self.range.dim
+        values = [*args, *kwargs.values()]
+
+        def is_scanned(x: Any) -> bool:
+            return isinstance(x, common.Field) and scan_axis in x.domain.dims
+
+        # `lax.scan` iterates over the leading axis of arrays; the leaves of the (possibly named)
+        # collections are passed as flat lists and put back in place in the same order.
+        def leaves(value: Any, predicate: Callable[[Any], bool]) -> list[Any]:
+            found: list[Any] = []
+            named_collections.tree_map_named_collection(
+                lambda x: found.append(x) if predicate(x) else None
+            )(value)
+            return found
+
+        def replace_leaves(value: Any, predicate: Callable[[Any], bool], new: Any) -> Any:
+            return named_collections.tree_map_named_collection(
+                lambda x: next(new) if predicate(x) else x
+            )(value)
+
+        def stack(field: common.Field) -> Any:
+            field = field[
+                common.Domain(*(self.range if nr.dim == scan_axis else nr for nr in field.domain))
+            ]
+            return jnp.moveaxis(field.ndarray, field.domain.dims.index(scan_axis), 0)
+
+        def level_field(field: common.Field, array: Any) -> common.Field:
+            return common._field(
+                array, domain=common.Domain(*(nr for nr in field.domain if nr.dim != scan_axis))
+            )
+
+        dtypes = [
+            type_translation.as_dtype(cast(ts.ScalarType, t)).scalar_type
+            for t in type_info.primitive_constituents(init_type)
+        ]
+
+        def carry_arrays(value: Any) -> list[Any]:
+            return [
+                _broadcast_to(x, non_scan_domain).ndarray.astype(dtype)
+                if isinstance(x, common.Field)
+                else jnp.full(non_scan_domain.shape, x, dtype=dtype)
+                for x, dtype in zip(leaves(value, lambda _: True), dtypes, strict=True)
+            ]
+
+        def body(carry: list[Any], level_arrays: list[Any]) -> tuple[list[Any], list[Any]]:
+            level_iter = iter(level_arrays)
+            level_values = [
+                replace_leaves(
+                    value,
+                    is_scanned,
+                    (level_field(x, next(level_iter)) for x in leaves(value, is_scanned)),
+                )
+                for value in values
+            ]
+            acc = replace_leaves(
+                self.init,
+                lambda _: True,
+                iter(common._field(array, domain=non_scan_domain) for array in carry),
+            )
+            new_carry = carry_arrays(
+                self.fun(
+                    acc,
+                    *level_values[: len(args)],
+                    **dict(zip(kwargs.keys(), level_values[len(args) :])),
+                )
+            )
+            return new_carry, new_carry
+
+        _, ys = lax.scan(
+            body,
+            carry_arrays(self.init),
+            [stack(x) for value in values for x in leaves(value, is_scanned)],
+            length=len(self.range.unit_range),
+            reverse=not self.forward,
+        )
+        scan_axis_index = out_domain.dims.index(scan_axis)
+        return replace_leaves(
+            self.init,
+            lambda _: True,
+            iter(common._field(jnp.moveaxis(y, 0, scan_axis_index), domain=out_domain) for y in ys),
+        )
+
+
+def _slice_at(level: common.NamedIndex, arg: Any) -> Any:
+    @named_collections.tree_map_named_collection
+    def impl(x: common.Field | core_defs.Scalar) -> common.Field | core_defs.Scalar:
+        return x[level] if isinstance(x, common.Field) and level.dim in x.domain.dims else x
+
+    return impl(arg)
+
+
+def _broadcast_to(field: common.Field, domain: common.Domain) -> common.Field:
+    from gt4py.next.embedded import nd_array_field
+
+    array = nd_array_field._broadcast(field, domain.dims)[domain].ndarray
+    return common._field(get_array_ns(field).broadcast_to(array, domain.shape), domain=domain)
 
 
 def field_operator_call(op: EmbeddedOperator[_R, _P], args: Any, kwargs: Any) -> Optional[_R]:
