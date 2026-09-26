@@ -351,11 +351,15 @@ def scan(
 
 
 def _branches_on_values(operator: Callable) -> bool:
-    """Check if `operator` or a field operator it calls contains an `if` or a conditional expression."""
+    """
+    Check if `operator` or a field operator it calls contains an `if` or a conditional expression.
+
+    Branches on compile-time constants are included, a plain Python function is assumed not to branch.
+    """
     from gt4py.next.ffront import decorator, field_operator_ast as foast
 
     if not isinstance(operator, decorator.FieldOperator):
-        return True
+        return False
     foast_stage = operator.foast_stage
     if (
         foast_stage.foast_node.walk_values()

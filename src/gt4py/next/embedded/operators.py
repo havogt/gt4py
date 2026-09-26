@@ -7,7 +7,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 import dataclasses
-from typing import Any, Callable, Generic, Optional, ParamSpec, Sequence, TypeVar, cast
+from typing import Any, Callable, Generic, Iterator, Optional, ParamSpec, Sequence, TypeVar, cast
 
 from gt4py._core import definitions as core_defs
 from gt4py.eve import extended_typing as xtyping
@@ -144,22 +144,10 @@ class ScanOperator(EmbeddedOperator[xtyping.MaybeNestedInTuple[core_defs.ScalarT
         scan_axis = self.range.dim
         values = [*args, *kwargs.values()]
 
-        def is_scanned(x: Any) -> bool:
-            return isinstance(x, common.Field) and scan_axis in x.domain.dims
-
         # `lax.scan` iterates over the leading axis of arrays; the leaves of the (possibly named)
         # collections are passed as flat lists and put back in place in the same order.
-        def leaves(value: Any, predicate: Callable[[Any], bool]) -> list[Any]:
-            found: list[Any] = []
-            named_collections.tree_map_named_collection(
-                lambda x: found.append(x) if predicate(x) else None
-            )(value)
-            return found
-
-        def replace_leaves(value: Any, predicate: Callable[[Any], bool], new: Any) -> Any:
-            return named_collections.tree_map_named_collection(
-                lambda x: next(new) if predicate(x) else x
-            )(value)
+        def is_scanned(x: Any) -> bool:
+            return isinstance(x, common.Field) and scan_axis in x.domain.dims
 
         def stack(field: common.Field) -> Any:
             field = field[
@@ -182,20 +170,20 @@ class ScanOperator(EmbeddedOperator[xtyping.MaybeNestedInTuple[core_defs.ScalarT
                 _broadcast_to(x, non_scan_domain).ndarray.astype(dtype)
                 if isinstance(x, common.Field)
                 else jnp.full(non_scan_domain.shape, x, dtype=dtype)
-                for x, dtype in zip(leaves(value, lambda _: True), dtypes, strict=True)
+                for x, dtype in zip(_leaves(value, lambda _: True), dtypes, strict=True)
             ]
 
         def body(carry: list[Any], level_arrays: list[Any]) -> tuple[list[Any], list[Any]]:
             level_iter = iter(level_arrays)
             level_values = [
-                replace_leaves(
+                _replace_leaves(
                     value,
                     is_scanned,
-                    (level_field(x, next(level_iter)) for x in leaves(value, is_scanned)),
+                    (level_field(x, next(level_iter)) for x in _leaves(value, is_scanned)),
                 )
                 for value in values
             ]
-            acc = replace_leaves(
+            acc = _replace_leaves(
                 self.init,
                 lambda _: True,
                 iter(common._field(array, domain=non_scan_domain) for array in carry),
@@ -212,16 +200,30 @@ class ScanOperator(EmbeddedOperator[xtyping.MaybeNestedInTuple[core_defs.ScalarT
         _, ys = lax.scan(
             body,
             carry_arrays(self.init),
-            [stack(x) for value in values for x in leaves(value, is_scanned)],
+            [stack(x) for value in values for x in _leaves(value, is_scanned)],
             length=len(self.range.unit_range),
             reverse=not self.forward,
         )
         scan_axis_index = out_domain.dims.index(scan_axis)
-        return replace_leaves(
+        return _replace_leaves(
             self.init,
             lambda _: True,
             iter(common._field(jnp.moveaxis(y, 0, scan_axis_index), domain=out_domain) for y in ys),
         )
+
+
+def _leaves(value: Any, predicate: Callable[[Any], bool]) -> list[Any]:
+    found: list[Any] = []
+    named_collections.tree_map_named_collection(
+        lambda x: found.append(x) if predicate(x) else None
+    )(value)
+    return found
+
+
+def _replace_leaves(value: Any, predicate: Callable[[Any], bool], new: Iterator[Any]) -> Any:
+    return named_collections.tree_map_named_collection(lambda x: next(new) if predicate(x) else x)(
+        value
+    )
 
 
 def _slice_at(level: common.NamedIndex, arg: Any) -> Any:

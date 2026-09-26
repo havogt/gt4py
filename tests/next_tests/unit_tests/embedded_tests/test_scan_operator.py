@@ -6,11 +6,15 @@
 # Please, refer to the LICENSE file in the root directory.
 # SPDX-License-Identifier: BSD-3-Clause
 
+from typing import NamedTuple
+
 import numpy as np
 import pytest
 
-from gt4py.next import common
+import gt4py.next as gtx
+from gt4py.next import common, scan
 from gt4py.next.embedded import operators
+from gt4py.next.ffront import fbuiltins
 
 
 IDim = common.Dimension("IDim")
@@ -28,6 +32,15 @@ def _weighted_sum(carry, inp, weight):
 
 def _sum_and_max(carry, inp):
     return carry[0] + inp, carry[1] * 0.0 + (carry[1] + inp) * 0.5
+
+
+class _State(NamedTuple):
+    total: float
+    mean: float
+
+
+def _running_mean(carry, inp):
+    return _State(total=carry.total + inp, mean=(carry.mean + inp) * 0.5)
 
 
 def _scan(fun, forward, init, k_range, per_column, *args, **kwargs):
@@ -79,6 +92,19 @@ def test_sliced_matches_per_column_tuple_carry(ijk_fields, forward):
         np.testing.assert_allclose(sliced_result, per_column_result)
 
 
+def test_sliced_matches_per_column_named_collection_carry(ijk_fields):
+    inp, _, column_init = ijk_fields
+
+    results = [
+        _scan(_running_mean, True, _State(total=column_init, mean=0.0), (0, 6), per_column, inp)
+        for per_column in (True, False)
+    ]
+
+    assert isinstance(results[1], _State)
+    for per_column_result, sliced_result in zip(*results, strict=True):
+        np.testing.assert_allclose(sliced_result.asnumpy(), per_column_result.asnumpy())
+
+
 def test_sliced_without_field_args():
     result = _scan(lambda carry, x: carry + x, True, 1.0, (2, 5), False, 2.0)
 
@@ -126,6 +152,23 @@ def test_jax_tuple_carry(ijk_fields):
 
 
 @pytest.mark.requires_jax
+def test_jax_named_collection_carry(ijk_fields):
+    import jax.numpy as jnp
+
+    inp, _, column_init = ijk_fields
+    to_jax = lambda f: common._field(jnp.asarray(f.ndarray), domain=f.domain)
+
+    expected = _scan(_running_mean, False, _State(column_init, 0.0), (1, 5), True, inp)
+    result = _scan(
+        _running_mean, False, _State(to_jax(column_init), 0.0), (1, 5), False, to_jax(inp)
+    )
+
+    assert isinstance(result, _State)
+    for expected_el, result_el in zip(expected, result, strict=True):
+        np.testing.assert_allclose(result_el.asnumpy(), expected_el.asnumpy())
+
+
+@pytest.mark.requires_jax
 def test_jax_jit_and_grad():
     import jax
     import jax.numpy as jnp
@@ -150,16 +193,24 @@ def test_jax_jit_and_grad():
 def test_jax_value_branches_raise():
     import jax.numpy as jnp
 
-    inp = _field(jnp.ones((2, 3)), {IDim: (0, 2), KDim: (0, 3)})
+    @gtx.field_operator
+    def ternary(carry: float, x: float) -> float:
+        return carry if carry > x else x
 
+    @gtx.field_operator
+    def testee(a: gtx.Field[[IDim, KDim], float]) -> gtx.Field[[IDim, KDim], float]:
+        return scan(ternary, range=(KDim, 0, 3), init=0.0)(a)
+
+    domain = {IDim: (0, 2), KDim: (0, 3)}
     with pytest.raises(ValueError, match="branches on values"):
-        _scan(lambda carry, x: carry + x, True, 0.0, (0, 3), True, inp)
+        testee(
+            _field(jnp.ones((2, 3)), domain),
+            out=_field(jnp.zeros((2, 3)), domain),
+            offset_provider={},
+        )
 
 
 def test_branches_on_values():
-    import gt4py.next as gtx
-    from gt4py.next.ffront import fbuiltins
-
     @gtx.field_operator
     def arithmetic(carry: float, x: float) -> float:
         return carry + x
@@ -169,11 +220,21 @@ def test_branches_on_values():
         return carry if carry > x else x
 
     @gtx.field_operator
+    def if_stmt(carry: float, x: float) -> float:
+        if carry > x:
+            result = carry
+        else:
+            result = x
+        return result
+
+    @gtx.field_operator
     def calls_ternary(carry: float, x: float) -> float:
         return ternary(carry, x) + 1.0
 
     assert not fbuiltins._branches_on_values(arithmetic)
+    assert not fbuiltins._branches_on_values(lambda carry, x: carry + x)
     assert fbuiltins._branches_on_values(ternary)
+    assert fbuiltins._branches_on_values(if_stmt)
     assert fbuiltins._branches_on_values(calls_ternary)
 
 
@@ -181,9 +242,6 @@ def test_branches_on_values():
 def test_jax_jit_and_grad_field_operator():
     import jax
     import jax.numpy as jnp
-
-    import gt4py.next as gtx
-    from gt4py.next import scan
 
     @gtx.field_operator
     def damped_sum(carry: float, x: float) -> float:
