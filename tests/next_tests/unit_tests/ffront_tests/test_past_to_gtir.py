@@ -15,8 +15,9 @@ import pytest
 import gt4py.eve as eve
 import gt4py.next as gtx
 from gt4py.eve.pattern_matching import ObjectPattern as P
-from gt4py.next import errors
+from gt4py.next import errors, reduce, scan
 from gt4py.next.ffront.func_to_past import ProgramParser
+from gt4py.next.ffront import past_to_itir
 from gt4py.next.ffront.past_to_itir import ProgramLowering
 from gt4py.next.iterator import builtins, ir as itir
 from gt4py.next.iterator.ir_utils import ir_makers as im
@@ -251,3 +252,20 @@ def test_invalid_call_sig_program(invalid_call_sig_program_def):
         re.search(r"Missing required keyword argument 'out'", exc_info.value.__cause__.args[0])
         is not None
     )
+
+
+def test_column_axis_ignores_vertical_reduce():
+    KDim = gtx.Dimension("KDim", kind=gtx.DimensionKind.VERTICAL)
+    KHalfDim = gtx.common.flip_staggered(KDim)
+
+    @gtx.field_operator
+    def add(a: float64, b: float64) -> float64:
+        return a + b
+
+    @gtx.field_operator
+    def reduce_and_scan(
+        a: gtx.Field[[IDim, KDim], float64], b: gtx.Field[[IDim, KHalfDim], float64]
+    ) -> tuple[gtx.Field[[IDim], float64], gtx.Field[[IDim, KHalfDim], float64]]:
+        return reduce(add, range=(KDim, 0, 5))(a), scan(add, range=(KHalfDim, 0, 5), init=0.0)(b)
+
+    assert past_to_itir._column_axis({"reduce_and_scan": reduce_and_scan}) == KHalfDim

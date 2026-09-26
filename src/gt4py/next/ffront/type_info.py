@@ -113,7 +113,7 @@ def canonicalize_program_or_fieldop_arguments(
 
 @type_info.canonicalize_arguments.register
 def canonicalize_scanop_arguments(
-    scanop_type: ts_ffront.ScanOperatorType,
+    scanop_type: ts_ffront.ScanOperatorType | ts_ffront.ReduceOperatorType,
     args: tuple | list,
     kwargs: dict,
     *,
@@ -215,7 +215,9 @@ def _scan_param_promotion(
 
 @type_info.function_signature_incompatibilities.register
 def function_signature_incompatibilities_scanop(
-    scanop_type: ts_ffront.ScanOperatorType, args: list[ts.TypeSpec], kwargs: dict[str, ts.TypeSpec]
+    scanop_type: ts_ffront.ScanOperatorType | ts_ffront.ReduceOperatorType,
+    args: list[ts.TypeSpec],
+    kwargs: dict[str, ts.TypeSpec],
 ) -> Iterator[str]:
     if not all(
         type_info.is_type_or_tuple_of_type(arg, (ts.ScalarType, ts.FieldType)) for arg in args

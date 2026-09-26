@@ -967,6 +967,7 @@ class FieldOperatorTypeDeduction(traits.VisitorWithSymbolTableTrait, NodeTransla
                 ts.FunctionType,
                 ts_ffront.FieldOperatorType,
                 ts_ffront.ScanOperatorType,
+                ts_ffront.ReduceOperatorType,
                 ts.ConstructorType,
             ),
         ):
@@ -977,7 +978,9 @@ class FieldOperatorTypeDeduction(traits.VisitorWithSymbolTableTrait, NodeTransla
                 (foast.FunctionDefinition, foast.FieldOperator, foast.Name),
             ) and not (
                 isinstance(new_func, foast.Call)
-                and isinstance(new_func.type, ts_ffront.ScanOperatorType)
+                and isinstance(
+                    new_func.type, (ts_ffront.ScanOperatorType, ts_ffront.ReduceOperatorType)
+                )
             ):
                 raise errors.DSLError(node.location, "Functions can only be called directly.")
         elif isinstance(new_func.type, ts.FieldType):

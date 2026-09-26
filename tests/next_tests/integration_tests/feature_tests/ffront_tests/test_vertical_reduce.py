@@ -10,10 +10,10 @@ import numpy as np
 import pytest
 
 import gt4py.next as gtx
-from gt4py.next import int32, maximum, reduce
+from gt4py.next import float64, int32, maximum, reduce, scan
 
 from next_tests.integration_tests import cases
-from next_tests.integration_tests.cases import IDim, KDim, cartesian_case
+from next_tests.integration_tests.cases import IDim, KDim, KHalfDim, cartesian_case
 from next_tests.integration_tests.cases_utils import exec_alloc_descriptor
 
 
@@ -124,4 +124,36 @@ def test_reduce_tuple(cartesian_case):
         b,
         out=out,
         ref=(a.asnumpy()[:, 0:5].sum(axis=1), b.asnumpy()[:, 0:5].max(axis=1)),
+    )
+
+
+@pytest.mark.uses_scan
+@pytest.mark.uses_tuple_returns
+def test_reduce_next_to_scan_over_other_vertical_dim(cartesian_case):
+    @gtx.field_operator
+    def carry_add(carry: float, x: float) -> float:
+        return carry + x
+
+    @gtx.field_operator
+    def testee(
+        a: cases.IKFloatField, b: gtx.Field[[IDim, KHalfDim], float64], nhalf: int32
+    ) -> tuple[cases.IFloatField, gtx.Field[[IDim, KHalfDim], float64]]:
+        return (
+            reduce(add, range=(KDim, 0, 5))(a),
+            scan(carry_add, range=(KHalfDim, 0, nhalf), init=0.0)(b),
+        )
+
+    nhalf = cartesian_case.default_sizes[KHalfDim]
+    a = cases.allocate(cartesian_case, testee, "a")()
+    b = cases.allocate(cartesian_case, testee, "b")()
+    out = cases.allocate(cartesian_case, testee, cases.RETURN)()
+
+    cases.verify(
+        cartesian_case,
+        testee,
+        a,
+        b,
+        int32(nhalf),
+        out=out,
+        ref=(a.asnumpy()[:, 0:5].sum(axis=1), np.cumsum(b.asnumpy(), axis=1)),
     )
