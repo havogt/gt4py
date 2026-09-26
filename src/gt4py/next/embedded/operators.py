@@ -35,7 +35,7 @@ class EmbeddedOperator(Generic[_R, _P]):
 class ScanOperator(EmbeddedOperator[xtyping.MaybeNestedInTuple[core_defs.ScalarT], _P]):
     forward: bool
     init: xtyping.MaybeNestedInTuple[core_defs.ScalarT | common.Field]
-    axis: common.Dimension
+    range: common.NamedRange
 
     def __call__(  # type: ignore[override]
         self,
@@ -45,8 +45,7 @@ class ScanOperator(EmbeddedOperator[xtyping.MaybeNestedInTuple[core_defs.ScalarT
         common.Field[Any, core_defs.ScalarT]
         | tuple[common.Field[Any, core_defs.ScalarT] | tuple, ...]
     ):
-        scan_range = embedded_context.get_closure_column_range()
-        assert self.axis == scan_range.dim
+        scan_range = self.range
         scan_axis = scan_range.dim
         all_args = [*args, *kwargs.values()]
         domain_intersection = _intersect_scan_args(*all_args, self.init)
@@ -126,8 +125,6 @@ def field_operator_call(op: EmbeddedOperator[_R, _P], args: Any, kwargs: Any) ->
             else _get_out_domain(container_extracted_out)
         )
 
-        new_context_kwargs["closure_column_range"] = _get_vertical_range(out_domain)
-
         with embedded_context.update(**new_context_kwargs):
             res = op(*args, **kwargs)
         container_extracted_res = arguments.extract(res)  # type: ignore[arg-type] # TODO(havogt): see notes above
@@ -139,13 +136,6 @@ def field_operator_call(op: EmbeddedOperator[_R, _P], args: Any, kwargs: Any) ->
             # assuming we wanted to call the field_operator as program, otherwise `offset_provider` would not be there
             raise errors.MissingArgumentError(None, "out", True)
         return op(*args, **kwargs)
-
-
-@utils.tree_map
-def _get_vertical_range(domain: common.Domain) -> common.NamedRange | eve.NothingType:
-    vertical_dim_filtered = [nr for nr in domain if nr.dim.kind == common.DimensionKind.VERTICAL]
-    assert len(vertical_dim_filtered) <= 1
-    return vertical_dim_filtered[0] if vertical_dim_filtered else eve.NOTHING
 
 
 def _tuple_assign_field(

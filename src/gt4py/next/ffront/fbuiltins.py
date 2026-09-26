@@ -300,7 +300,7 @@ class ScanBuiltinFunction(BuiltInFunction[_R, _P]):
             pos_only_args=[ts.DeferredType(constraint=None)],
             pos_or_kw_args={},
             kw_only_args={
-                "axis": ts.DeferredType(constraint=ts.DimensionType),
+                "range": ts.DeferredType(constraint=ts.TupleType),
                 "forward": ts.DeferredType(constraint=ts.ScalarType),
                 "init": ts.DeferredType(constraint=(ts.ScalarType, ts.TupleType)),
             },
@@ -313,7 +313,7 @@ def scan(
     scan_pass: Callable,
     /,
     *,
-    axis: common.Dimension | None = None,
+    range: tuple[common.Dimension, int, int],  # noqa: A002 # shadowing a Python built-in
     forward: bool = True,
     init: core_defs.Scalar | common.Field | Tuple = 0.0,
 ) -> Callable[..., common.Field | Tuple]:
@@ -322,21 +322,26 @@ def scan(
 
     Args:
         scan_pass: Field operator `(carry, *args) -> carry` on scalars (or tuples thereof).
-        axis: Vertical dimension to scan along. If omitted, it is the unique vertical
-            dimension of the arguments the scan operator is called with.
+        range: `(dim, start, stop)`: the vertical dimension to scan along and the half-open
+            interval of it the scan covers. The carry starts from `init` at `start` (forward)
+            or `stop - 1` (backward); the result is only defined on this interval.
         forward: Scan direction.
         init: Initial value of the carry: a constant, a scalar, or a field without the scan
             dimension holding the initial value of each column. For tuple carries, each
             element may be any of these; fields are not supported in named collections.
 
     Examples:
-        >>> scan(my_pass, axis=KDim, forward=True, init=0.0)(a)  # doctest: +SKIP
+        >>> scan(my_pass, range=(KDim, 0, nlev), forward=True, init=0.0)(a)  # doctest: +SKIP
     """
-    from gt4py.next.embedded import context as embedded_context, operators as embedded_operators
+    from gt4py.next.embedded import operators as embedded_operators
+
+    dim, start, stop = range
+    scan_range = common.NamedRange(dim, common.UnitRange(start, stop))
 
     def scan_operator(*args: Any, **kwargs: Any) -> common.Field | Tuple:
-        scan_axis = axis if axis is not None else embedded_context.get_closure_column_range().dim
-        return embedded_operators.ScanOperator(scan_pass, forward, init, scan_axis)(*args, **kwargs)
+        return embedded_operators.ScanOperator(scan_pass, forward, init, scan_range)(
+            *args, **kwargs
+        )
 
     return scan_operator
 

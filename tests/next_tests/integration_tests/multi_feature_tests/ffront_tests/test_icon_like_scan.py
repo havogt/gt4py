@@ -63,7 +63,7 @@ def _scan(
 ]:
     z_q_new, w_new, first_level = scan(
         _scan_pass,
-        axis=KDim,
+        range=(KDim, 1, 10),
         forward=True,
         init=State(z_q_new=0.0, w_new=0.0, first_level=True),
     )(w, z_q, z_a, z_b, z_c)

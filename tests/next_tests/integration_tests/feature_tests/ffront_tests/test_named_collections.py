@@ -320,7 +320,7 @@ def scan_dataclass_wrapper(inp: gtx.Field[[KDim], gtx.float32]) -> gtx.Field[[KD
     # Note: the scan result is of a (implicit) type `StateDataclass` with `gtx.float32` replaced by `gtx.Field[[...], gtx.float32]`.
     # Consequently, we need to extract the `value` field as we cannot properly annotate the return type.
     return scan(
-        scan_dataclass, axis=cases.KDim, forward=True, init=StateDataclass(value=float32(0.0))
+        scan_dataclass, range=(cases.KDim, 0, 9), forward=True, init=StateDataclass(value=float32(0.0))
     )(inp).value
 
 
@@ -337,7 +337,7 @@ def scan_named_tuple_wrapper(inp: gtx.Field[[KDim], gtx.float32]) -> gtx.Field[[
     # Note: the scan result is of a (implicit) type `StateNamedTuple` with `gtx.float32` replaced by `gtx.Field[[...], gtx.float32]`.
     # Consequently, we need to extract the `value` field as we cannot properly annotate the return type.
     return scan(
-        scan_named_tuple, axis=cases.KDim, forward=True, init=StateNamedTuple(value=float32(0.0))
+        scan_named_tuple, range=(cases.KDim, 0, 9), forward=True, init=StateNamedTuple(value=float32(0.0))
     )(inp).value
 
 
@@ -384,7 +384,7 @@ def scan_with_scalar_named_collection_wrapper(
     scalar: ScalarNamedCollection,
 ) -> gtx.Field[[KDim], gtx.float32]:
     return scan(
-        scan_with_scalar_named_collection, axis=cases.KDim, forward=True, init=float32(0.0)
+        scan_with_scalar_named_collection, range=(cases.KDim, 0, 9), forward=True, init=float32(0.0)
     )(inp, scalar=scalar)
 
 

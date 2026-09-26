@@ -144,6 +144,58 @@ def _transform_if(
     return None
 
 
+def _transform_scan_on_larger_domain(
+    stmt: itir.Stmt,
+    declarations: list[itir.Temporary],
+    uids: next_utils.IDGeneratorPool,
+) -> Optional[list[itir.Stmt]]:
+    # A scan is computed on its own vertical range, which can differ from the domain of the
+    # statement. Read the requested part through a copy, so the scan itself is materialized
+    # in a temporary. Temporaries are populated with the domain of their expression later.
+    if not isinstance(stmt, itir.SetAt) or cpm.is_ref_to(stmt.domain, "UNPOPULATED"):
+        return None
+    projector, expr = ir_utils_misc.extract_projector(stmt.expr)
+    if not _is_as_fieldop_of_scan(expr):
+        return None
+    stmt_domain = infer_domain._make_symbolic_domain_tuple(stmt.domain)
+    stmt_domains: list[SymbolicDomain] = list(
+        dict.fromkeys(next_utils.flatten_nested_tuple((stmt_domain,)))  # type: ignore[arg-type]  # set_at domains are never `DomainAccessDescriptor`s
+    )
+    scan_domains = set(next_utils.flatten_nested_tuple((expr.annex.domain,))) - {
+        infer_domain.DomainAccessDescriptor.NEVER
+    }
+    if scan_domains <= set(stmt_domains):
+        return None
+
+    if len(stmt_domains) == 1:
+        new_expr = im.as_fieldop("deref", stmt_domains[0].as_expr())(stmt.expr)
+        new_expr.type = stmt.expr.type
+    else:
+        # tuple elements on different domains: copy each element from the scan bound once
+        scan_result = next(uids["__scan_result"])
+        projected: itir.Expr = (
+            im.call(projector)(scan_result) if projector is not None else im.ref(scan_result)
+        )
+
+        def copy_elem(domain: SymbolicDomain, path: tuple[int, ...]) -> itir.Expr:
+            copy = im.as_fieldop("deref", domain.as_expr())(
+                functools.reduce(lambda e, idx: im.tuple_get(idx, e), path, projected)
+            )
+            copy.type = functools.reduce(lambda t, idx: t.types[idx], path, stmt.expr.type)
+            copy.annex.domain = domain
+            return copy
+
+        new_expr = im.let(scan_result, expr)(
+            next_utils.tree_map(
+                copy_elem,
+                result_collection_constructor=lambda _, elts: im.make_tuple(*elts),
+                with_path_arg=True,
+            )(stmt_domain)
+        )
+    new_expr.annex.domain = stmt_domain
+    return [itir.SetAt(target=stmt.target, domain=stmt.domain, expr=new_expr)]
+
+
 def _transform_by_pattern(
     stmt: itir.Stmt,
     predicate: Callable[[itir.Expr, int], bool],
@@ -279,6 +331,7 @@ def _transform_stmt(
     transforms: list[Callable] = [
         # transform `if_` call into `IfStmt`
         _transform_if,
+        _transform_scan_on_larger_domain,
         # extract applied `as_fieldop` to top-level
         functools.partial(
             _transform_by_pattern, predicate=lambda expr, _: cpm.is_applied_as_fieldop(expr)

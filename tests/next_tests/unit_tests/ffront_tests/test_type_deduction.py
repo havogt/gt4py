@@ -812,7 +812,7 @@ def _scan_pass(carry: float, inp: float) -> float:
 
 def test_scan_call():
     def scan_call(a: Field[[TDim, KDim], float64]) -> Field[[TDim, KDim], float64]:
-        return scan(_scan_pass, init=0.0)(a)
+        return scan(_scan_pass, range=(KDim, 0, 10), init=0.0)(a)
 
     parsed = FieldOperatorParser.apply_to_function(scan_call)
 
@@ -823,7 +823,7 @@ def test_scan_call():
 
 def test_scan_call_not_called():
     def scan_not_called(a: Field[[TDim, KDim], float64]) -> Field[[TDim, KDim], float64]:
-        op = scan(_scan_pass, axis=KDim)
+        op = scan(_scan_pass, range=(KDim, 0, 10))
         return a
 
     with pytest.raises(
@@ -832,19 +832,40 @@ def test_scan_call_not_called():
         _ = FieldOperatorParser.apply_to_function(scan_not_called)
 
 
-def test_scan_call_axis_not_inferable():
-    def no_vertical_dim(a: Field[[TDim], float64]) -> Field[[TDim, KDim], float64]:
+def test_scan_call_missing_range():
+    def missing_range(a: Field[[TDim, KDim], float64]) -> Field[[TDim, KDim], float64]:
         return scan(_scan_pass)(a)
 
-    with pytest.raises(errors.DSLError, match=r"Cannot infer the 'axis' of 'scan'"):
-        _ = FieldOperatorParser.apply_to_function(no_vertical_dim)
+    with pytest.raises(errors.DSLError, match=r"Missing argument 'range' to 'scan'"):
+        _ = FieldOperatorParser.apply_to_function(missing_range)
+
+
+def test_scan_call_malformed_range():
+    def malformed_range(a: Field[[TDim, KDim], float64]) -> Field[[TDim, KDim], float64]:
+        return scan(_scan_pass, range=(KDim, 0.0, 10))(a)
+
+    with pytest.raises(errors.DSLError, match=r"'range' to 'scan' must be a tuple"):
+        _ = FieldOperatorParser.apply_to_function(malformed_range)
+
+
+def test_scan_call_runtime_range():
+    def runtime_range(
+        a: Field[[TDim, KDim], float64], start: int32, stop: int32
+    ) -> Field[[TDim, KDim], float64]:
+        return scan(_scan_pass, range=(KDim, start, stop))(a)
+
+    parsed = FieldOperatorParser.apply_to_function(runtime_range)
+
+    assert parsed.type.returns == ts.FieldType(
+        dims=[TDim, KDim], dtype=ts.ScalarType(kind=ts.ScalarKind.FLOAT64)
+    )
 
 
 def test_scan_call_non_vertical_axis():
     def non_vertical_axis(a: Field[[TDim, KDim], float64]) -> Field[[TDim, KDim], float64]:
-        return scan(_scan_pass, axis=TDim)(a)
+        return scan(_scan_pass, range=(TDim, 0, 10))(a)
 
-    with pytest.raises(errors.DSLError, match=r"'axis' to 'scan' must be a vertical dimension"):
+    with pytest.raises(errors.DSLError, match=r"'range' of 'scan' must be a vertical dimension"):
         _ = FieldOperatorParser.apply_to_function(non_vertical_axis)
 
 
@@ -852,7 +873,7 @@ def test_scan_call_non_constant_forward():
     def non_constant_forward(
         a: Field[[TDim, KDim], float64], forward: bool
     ) -> Field[[TDim, KDim], float64]:
-        return scan(_scan_pass, axis=KDim, forward=forward)(a)
+        return scan(_scan_pass, range=(KDim, 0, 10), forward=forward)(a)
 
     with pytest.raises(
         errors.DSLError, match=r"'forward' to 'scan' must be a compile-time constant"
@@ -864,7 +885,7 @@ def test_scan_call_column_init():
     def column_init(
         a: Field[[TDim, KDim], float64], init: Field[[TDim], float64]
     ) -> Field[[TDim, KDim], float64]:
-        return scan(_scan_pass, axis=KDim, init=init)(a)
+        return scan(_scan_pass, range=(KDim, 0, 10), init=init)(a)
 
     parsed = FieldOperatorParser.apply_to_function(column_init)
 
@@ -877,7 +898,7 @@ def test_scan_call_init_over_scan_dim():
     def init_over_scan_dim(
         a: Field[[TDim, KDim], float64], init: Field[[TDim, KDim], float64]
     ) -> Field[[TDim, KDim], float64]:
-        return scan(_scan_pass, axis=KDim, init=init)(a)
+        return scan(_scan_pass, range=(KDim, 0, 10), init=init)(a)
 
     with pytest.raises(
         errors.DSLError, match=r"'init' to 'scan' must not be a field over the scan"
@@ -889,7 +910,7 @@ def test_scan_call_init_dims_not_in_result():
     def init_dims_not_in_result(
         a: Field[[KDim], float64], init: Field[[TDim], float64]
     ) -> Field[[KDim], float64]:
-        return scan(_scan_pass, axis=KDim, init=init)(a)
+        return scan(_scan_pass, range=(KDim, 0, 10), init=init)(a)
 
     with pytest.raises(errors.DSLError, match=r"must be a subset of the dimensions of the result"):
         _ = FieldOperatorParser.apply_to_function(init_dims_not_in_result)
@@ -897,7 +918,7 @@ def test_scan_call_init_dims_not_in_result():
 
 def test_scan_call_wrong_init_type():
     def wrong_init_type(a: Field[[TDim, KDim], float64]) -> Field[[TDim, KDim], float64]:
-        return scan(_scan_pass, axis=KDim, init=0)(a)
+        return scan(_scan_pass, range=(KDim, 0, 10), init=0)(a)
 
     with pytest.raises(errors.DSLError, match=r"Argument 'init' to scan pass '_scan_pass'"):
         _ = FieldOperatorParser.apply_to_function(wrong_init_type)
@@ -905,7 +926,7 @@ def test_scan_call_wrong_init_type():
 
 def test_scan_call_pass_not_a_field_operator():
     def pass_is_builtin(a: Field[[TDim, KDim], float64]) -> Field[[TDim, KDim], float64]:
-        return scan(where, axis=KDim)(a)
+        return scan(where, range=(KDim, 0, 10))(a)
 
     with pytest.raises(errors.DSLError, match=r"The scan pass must be a field operator"):
         _ = FieldOperatorParser.apply_to_function(pass_is_builtin)

@@ -98,7 +98,7 @@ def compile_testee_scan(request, cartesian_case):
 
     @gtx.field_operator(backend=cartesian_case.backend)
     def testee_op(inp: cases.KField) -> cases.KField:
-        return scan(testee_pass, axis=cases.KDim, forward=True, init=0)(inp)
+        return scan(testee_pass, range=(cases.KDim, 0, 9), forward=True, init=0)(inp)
 
     @gtx.program(backend=cartesian_case.backend)
     def testee(a: cases.KField, out: cases.KField):

@@ -150,10 +150,10 @@ def test_call_scan_operator_from_field_operator(cartesian_case):
     @field_operator
     def testee(a: IJKFloatField, b: IJKFloatField) -> IJKFloatField:
         return (
-            scan(testee_pass, axis=KDim, forward=True, init=0.0)(a, b)
-            + 3.0 * scan(testee_pass, axis=KDim, forward=True, init=0.0)(a, y=b)
-            + 5.0 * scan(testee_pass, axis=KDim, forward=True, init=0.0)(x=a, y=b)
-            + 7.0 * scan(testee_pass, axis=KDim, forward=True, init=0.0)(y=b, x=a)
+            scan(testee_pass, range=(KDim, 0, 9), forward=True, init=0.0)(a, b)
+            + 3.0 * scan(testee_pass, range=(KDim, 0, 9), forward=True, init=0.0)(a, y=b)
+            + 5.0 * scan(testee_pass, range=(KDim, 0, 9), forward=True, init=0.0)(x=a, y=b)
+            + 7.0 * scan(testee_pass, range=(KDim, 0, 9), forward=True, init=0.0)(y=b, x=a)
         )
 
     a, b, out = (

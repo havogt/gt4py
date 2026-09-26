@@ -75,13 +75,13 @@ def test_scan_call():
 
     @field_operator
     def scan_call(inp: Field[[KDim], int32]) -> Field[[KDim], int32]:
-        return scan(scan_pass, axis=KDim, forward=False, init=1)(inp)
+        return scan(scan_pass, range=(KDim, 0, 9), forward=False, init=1)(inp)
 
     expected = textwrap.dedent(
         """
         @field_operator
         def scan_call(inp: Field[[KDim], int32]) -> Field[[KDim], int32]:
-          return scan(scan_pass, axis=KDim, forward=False, init=1)(inp)
+          return scan(scan_pass, range=(KDim, 0, 9), forward=False, init=1)(inp)
         """
     ).strip()
 

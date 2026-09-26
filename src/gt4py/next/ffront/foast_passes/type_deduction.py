@@ -286,17 +286,23 @@ class FieldOperatorTypeDeduction(traits.VisitorWithSymbolTableTrait, NodeTransla
     def _visit_scan_call(
         self, node: foast.Call, scan_arg_types: list[ts.TypeSpec], **kwargs: Any
     ) -> foast.Call:
-        """Type `scan(pass, axis=..., forward=..., init=...)`, the callee of a call-site scan."""
+        """Type `scan(pass, range=..., forward=..., init=...)`, the callee of a call-site scan."""
         new_func = self.visit(node.func, **kwargs)
         if len(node.args) != 1:
             raise errors.DSLError(
                 node.location,
                 f"'scan' takes exactly one positional argument (the scan pass), got {len(node.args)}.",
             )
-        if unexpected := set(node.kwargs) - {"axis", "forward", "init"}:
+        if unexpected := set(node.kwargs) - {"range", "forward", "init"}:
             raise errors.DSLError(
                 node.location,
                 f"Unexpected keyword argument(s) {', '.join(sorted(unexpected))} to 'scan'.",
+            )
+        if "range" not in node.kwargs:
+            raise errors.DSLError(
+                node.location,
+                "Missing argument 'range' to 'scan'.",
+                hints=["Pass the scanned interval, e.g. 'scan(..., range=(KDim, 0, nlev))'."],
             )
         new_pass = self.visit(node.args[0], **kwargs)
         if not isinstance(new_pass.type, ts_ffront.FieldOperatorType):
@@ -345,35 +351,23 @@ class FieldOperatorTypeDeduction(traits.VisitorWithSymbolTableTrait, NodeTransla
                 f"The scan pass '{pass_name}' must not have positional-only or keyword-only arguments.",
             )
 
-        if "axis" in new_kwargs:
-            axis_type = new_kwargs["axis"].type
-            if not isinstance(axis_type, ts.DimensionType):
-                raise errors.DSLError(
-                    new_kwargs["axis"].location, "Argument 'axis' to 'scan' must be a dimension."
-                )
-            axis = axis_type.dim
-            if axis.kind != DimensionKind.VERTICAL:
-                raise errors.DSLError(
-                    new_kwargs["axis"].location,
-                    "Argument 'axis' to 'scan' must be a vertical dimension.",
-                )
-        else:
-            vertical_dims = {
-                dim
-                for arg_type in scan_arg_types
-                for el in type_info.primitive_constituents(arg_type)
-                for dim in type_info.extract_dims(el)
-                if dim.kind == DimensionKind.VERTICAL
-            }
-            if len(vertical_dims) != 1:
-                found = ", ".join(sorted(f"'{d.value}'" for d in vertical_dims)) or "none"
-                raise errors.DSLError(
-                    node.location,
-                    "Cannot infer the 'axis' of 'scan' from its arguments, expected exactly one "
-                    f"vertical dimension, found {found}.",
-                    hints=["Pass the axis explicitly, e.g. 'scan(..., axis=KDim)'."],
-                )
-            (axis,) = vertical_dims
+        range_ = new_kwargs["range"]
+        if not (
+            isinstance(range_, foast.TupleExpr)
+            and len(range_.elts) == 3
+            and isinstance(range_.elts[0].type, ts.DimensionType)
+            and all(type_info.is_integral_scalar(bound.type) for bound in range_.elts[1:])
+        ):
+            raise errors.DSLError(
+                range_.location,
+                "Argument 'range' to 'scan' must be a tuple '(dim, start, stop)' of a dimension "
+                "and two integers.",
+            )
+        axis = range_.elts[0].type.dim
+        if axis.kind != DimensionKind.VERTICAL:
+            raise errors.DSLError(
+                range_.location, "The dimension in 'range' of 'scan' must be a vertical dimension."
+            )
 
         output_dims = promote_dims(
             *(

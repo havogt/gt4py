@@ -36,7 +36,7 @@ def test_scan_init_duplicated(cartesian_case):
     def testee(
         inp: gtx.Field[[KDim], float],
     ) -> tuple[tuple[gtx.Field[[KDim], float]], tuple[gtx.Field[[KDim], float]]]:
-        return scan(testee_pass, axis=KDim, forward=True, init=((1.0,), (1.0,)))(inp)
+        return scan(testee_pass, range=(KDim, 0, 9), forward=True, init=((1.0,), (1.0,)))(inp)
 
     inp = cases.allocate(cartesian_case, testee, "inp")()
     out = cases.allocate(cartesian_case, testee, cases.RETURN).zeros()()

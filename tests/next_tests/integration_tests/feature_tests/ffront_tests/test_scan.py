@@ -12,6 +12,7 @@ import pytest
 
 import gt4py.next as gtx
 from gt4py.next import errors, float64, int32, maximum, scan
+from gt4py.next.experimental import concat_where
 
 from next_tests.integration_tests import cases
 from next_tests.integration_tests.cases import (
@@ -34,7 +35,7 @@ def test_scalar_scan(cartesian_case):
 
     @gtx.field_operator
     def testee_scan(qc: cases.IKFloatField, scalar: float) -> cases.IKFloatField:
-        return scan(testee_pass, axis=KDim, forward=True, init=0.0)(qc, scalar)
+        return scan(testee_pass, range=(KDim, 0, 9), forward=True, init=0.0)(qc, scalar)
 
     @gtx.program
     def testee(qc: cases.IKFloatField, scalar: float):
@@ -62,7 +63,7 @@ def test_tuple_scalar_scan(cartesian_case):
     def testee_op(
         qc: cases.IKFloatField, tuple_scalar: tuple[float, tuple[float, float]]
     ) -> cases.IKFloatField:
-        return scan(testee_pass, axis=KDim, forward=True, init=0.0)(qc, tuple_scalar)
+        return scan(testee_pass, range=(KDim, 0, 9), forward=True, init=0.0)(qc, tuple_scalar)
 
     qc = cases.allocate(cartesian_case, testee_op, "qc").zeros()()
     tuple_scalar = (1.0, (1.0, 0.0))
@@ -81,7 +82,7 @@ def test_scalar_scan_vertical_offset(cartesian_case):
 
     @gtx.field_operator
     def testee(inp: gtx.Field[[KDim], float]) -> gtx.Field[[KDim], float]:
-        return scan(testee_pass, axis=KDim, forward=True, init=0.0)(inp(KDim + 1))
+        return scan(testee_pass, range=(KDim, 0, 9), forward=True, init=0.0)(inp(KDim + 1))
 
     inp = cases.allocate(
         cartesian_case,
@@ -107,7 +108,7 @@ def test_scan_unused_parameter(cartesian_case):
     def testee(
         inp: gtx.Field[[KDim], float], unused: gtx.Field[[KDim], float]
     ) -> gtx.Field[[KDim], float]:
-        return scan(testee_pass, axis=KDim, forward=True, init=0.0)(inp, unused)
+        return scan(testee_pass, range=(KDim, 0, 9), forward=True, init=0.0)(inp, unused)
 
     inp = cases.allocate(cartesian_case, testee, "inp")()
     unused = cases.allocate(cartesian_case, testee, "unused")()
@@ -143,11 +144,11 @@ def test_fieldop_from_scan(cartesian_case, forward):
 
     @gtx.field_operator
     def forward_scan() -> gtx.Field[[KDim], float]:
-        return scan(scan_pass, axis=KDim, forward=True, init=1.0)()
+        return scan(scan_pass, range=(KDim, 0, 9), forward=True, init=1.0)()
 
     @gtx.field_operator
     def backward_scan() -> gtx.Field[[KDim], float]:
-        return scan(scan_pass, axis=KDim, forward=False, init=1.0)()
+        return scan(scan_pass, range=(KDim, 0, 9), forward=False, init=1.0)()
 
     cases.verify(cartesian_case, forward_scan if forward else backward_scan, out=out, ref=expected)
 
@@ -172,8 +173,10 @@ def test_solve_triag(cartesian_case):
         c: cases.IJKFloatField,
         d: cases.IJKFloatField,
     ) -> cases.IJKFloatField:
-        cp, dp = scan(tridiag_forward, axis=KDim, forward=True, init=(0.0, 0.0))(a, b, c, d)
-        return scan(tridiag_backward, axis=KDim, forward=False, init=0.0)(cp, dp)
+        cp, dp = scan(tridiag_forward, range=(KDim, 0, 9), forward=True, init=(0.0, 0.0))(
+            a, b, c, d
+        )
+        return scan(tridiag_backward, range=(KDim, 0, 9), forward=False, init=0.0)(cp, dp)
 
     def expected(a, b, c, d):
         shape = tuple(cartesian_case.default_sizes[dim] for dim in [IDim, JDim, KDim])
@@ -204,7 +207,7 @@ def test_ternary_scan(cartesian_case):
 
     @gtx.field_operator
     def simple_scan_operator(a: gtx.Field[[KDim], float]) -> gtx.Field[[KDim], float]:
-        return scan(scan_pass, axis=KDim, forward=True, init=0.0)(a)
+        return scan(scan_pass, range=(KDim, 0, 9), forward=True, init=0.0)(a)
 
     k_size = cartesian_case.default_sizes[KDim]
     a = cartesian_case.as_field([KDim], 4.0 * np.ones((k_size,)))
@@ -237,11 +240,11 @@ def test_scan_nested_tuple_output(forward, cartesian_case):
 
     @gtx.field_operator
     def forward_scan() -> tuple[cases.KField, tuple[cases.KField, cases.KField]]:
-        return scan(scan_pass, axis=KDim, forward=True, init=(1, (2, 3)))()
+        return scan(scan_pass, range=(KDim, 0, 9), forward=True, init=(1, (2, 3)))()
 
     @gtx.field_operator
     def backward_scan() -> tuple[cases.KField, tuple[cases.KField, cases.KField]]:
-        return scan(scan_pass, axis=KDim, forward=False, init=(1, (2, 3)))()
+        return scan(scan_pass, range=(KDim, 0, 9), forward=False, init=(1, (2, 3)))()
 
     @gtx.program
     def testee_forward(out: tuple[cases.KField, tuple[cases.KField, cases.KField]]):
@@ -293,7 +296,7 @@ def test_scan_nested_tuple_input(cartesian_case):
     def simple_scan_operator(
         a: tuple[gtx.Field[[KDim], float], gtx.Field[[KDim], float]],
     ) -> gtx.Field[[KDim], float]:
-        return scan(scan_pass, axis=KDim, forward=True, init=1.0)(a)
+        return scan(scan_pass, range=(KDim, 0, 9), forward=True, init=1.0)(a)
 
     cases.verify(cartesian_case, simple_scan_operator, (inp1, inp2), out=out, ref=expected)
 
@@ -333,7 +336,7 @@ def test_scan_different_domain_in_tuple(cartesian_case):
     def foo(
         inp1: gtx.Field[[IDim, KDim], float], inp2: gtx.Field[[IDim, KDim], float]
     ) -> gtx.Field[[IDim, KDim], float]:
-        return scan(scan_pass, axis=KDim, forward=True, init=1.0)((inp1, inp2))
+        return scan(scan_pass, range=(KDim, 0, 9), forward=True, init=1.0)((inp1, inp2))
 
     cases.verify(cartesian_case, foo, inp1, inp2, out=out, ref=expected)
 
@@ -365,7 +368,7 @@ def test_scan_tuple_field_scalar_mixed(cartesian_case):
 
     @gtx.field_operator
     def foo(inp1: float, inp2: gtx.Field[[IDim, KDim], float]) -> gtx.Field[[IDim, KDim], float]:
-        return scan(scan_pass, axis=KDim, forward=True, init=1.0)((inp1, inp2))
+        return scan(scan_pass, range=(KDim, 0, 9), forward=True, init=1.0)((inp1, inp2))
 
     cases.verify(cartesian_case, foo, 1.0, inp2, out=out, ref=expected)
 
@@ -383,7 +386,7 @@ def test_scan_wrong_return_type(cartesian_case):
 
         @gtx.field_operator
         def testee(qc: cases.IKFloatField) -> cases.IKFloatField:
-            return scan(testee_pass, axis=KDim, forward=True, init=0)()
+            return scan(testee_pass, range=(KDim, 0, 9), forward=True, init=0)()
 
 
 @pytest.mark.uses_scan
@@ -401,7 +404,7 @@ def test_scan_wrong_init_type(cartesian_case):
 
         @gtx.field_operator
         def testee(qc: cases.IKFloatField) -> cases.IKFloatField:
-            return scan(testee_pass, axis=KDim, forward=True, init=0)()
+            return scan(testee_pass, range=(KDim, 0, 9), forward=True, init=0)()
 
 
 @pytest.mark.uses_scan
@@ -417,7 +420,7 @@ def test_scan_without_carry(cartesian_case):
 
         @gtx.field_operator
         def testee(qc: cases.IKFloatField) -> cases.IKFloatField:
-            return scan(testee_pass, axis=KDim, forward=True, init=0.0)()
+            return scan(testee_pass, range=(KDim, 0, 9), forward=True, init=0.0)()
 
 
 @pytest.mark.uses_scan
@@ -428,7 +431,7 @@ def test_scan_call(cartesian_case):
 
     @gtx.field_operator
     def testee(inp: cases.IKFloatField) -> cases.IKFloatField:
-        return scan(add, axis=KDim, forward=True, init=1.0)(inp)
+        return scan(add, range=(KDim, 0, 9), forward=True, init=1.0)(inp)
 
     inp = cases.allocate(cartesian_case, testee, "inp")()
     out = cases.allocate(cartesian_case, testee, cases.RETURN).zeros()()
@@ -437,14 +440,14 @@ def test_scan_call(cartesian_case):
 
 
 @pytest.mark.uses_scan
-def test_scan_call_backward_inferred_axis(cartesian_case):
+def test_scan_call_backward(cartesian_case):
     @gtx.field_operator
     def add(carry: float, inp: float, scalar: float) -> float:
         return carry + inp * scalar
 
     @gtx.field_operator
     def testee(inp: cases.IKFloatField, scalar: float) -> cases.IKFloatField:
-        return scan(add, forward=False, init=-1.0)(inp, scalar) + inp
+        return scan(add, range=(KDim, 0, 9), forward=False, init=-1.0)(inp, scalar) + inp
 
     inp = cases.allocate(cartesian_case, testee, "inp")()
     out = cases.allocate(cartesian_case, testee, cases.RETURN).zeros()()
@@ -463,7 +466,7 @@ def test_scan_call_tuple_carry(cartesian_case):
 
     @gtx.field_operator
     def testee(inp: cases.IKFloatField) -> tuple[cases.IKFloatField, cases.IKField]:
-        return scan(sum_and_count, axis=KDim, init=(0.0, int32(0)))(inp)
+        return scan(sum_and_count, range=(KDim, 0, 9), init=(0.0, int32(0)))(inp)
 
     inp = cases.allocate(cartesian_case, testee, "inp")()
     out = cases.allocate(cartesian_case, testee, cases.RETURN).zeros()()
@@ -490,7 +493,7 @@ def test_scan_call_scalar_init(cartesian_case):
 
     @gtx.field_operator
     def testee(inp: cases.IKFloatField, init: float) -> cases.IKFloatField:
-        return scan(add, axis=KDim, forward=True, init=init)(inp)
+        return scan(add, range=(KDim, 0, 9), forward=True, init=init)(inp)
 
     inp = cases.allocate(cartesian_case, testee, "inp")()
     out = cases.allocate(cartesian_case, testee, cases.RETURN).zeros()()
@@ -508,7 +511,7 @@ def test_scan_call_column_init(cartesian_case):
 
     @gtx.field_operator
     def testee(inp: cases.IKFloatField, init: cases.IFloatField) -> cases.IKFloatField:
-        return scan(add, axis=KDim, forward=False, init=init)(inp)
+        return scan(add, range=(KDim, 0, 9), forward=False, init=init)(inp)
 
     inp = cases.allocate(cartesian_case, testee, "inp")()
     init = cartesian_case.as_field(
@@ -538,7 +541,7 @@ def test_scan_call_tuple_init_mixed(cartesian_case):
     def testee(
         inp: cases.IKFloatField, init: cases.IFloatField
     ) -> tuple[cases.IKFloatField, cases.IKFloatField]:
-        return scan(sum_and_max, axis=KDim, forward=True, init=(1.0, init))(inp)
+        return scan(sum_and_max, range=(KDim, 0, 9), forward=True, init=(1.0, init))(inp)
 
     inp = cases.allocate(cartesian_case, testee, "inp")()
     init = cartesian_case.as_field(
@@ -560,3 +563,74 @@ def test_scan_call_tuple_init_mixed(cartesian_case):
             )[:, 1:],
         ),
     )
+
+
+@pytest.mark.uses_scan
+@pytest.mark.uses_concat_where
+@pytest.mark.parametrize("k_start", [0, 2])
+def test_scan_range_under_concat_where(cartesian_case, k_start):
+    """The scan covers exactly its range, whatever part of it the consumer reads."""
+
+    @gtx.field_operator
+    def add(carry: float, inp: float) -> float:
+        return carry + inp
+
+    @gtx.field_operator
+    def testee(inp: cases.IKFloatField, k_start: int32) -> cases.IKFloatField:
+        return concat_where(
+            KDim >= 2, scan(add, range=(KDim, k_start, 9), forward=True, init=0.0)(inp), -inp
+        )
+
+    inp = cases.allocate(cartesian_case, testee, "inp")()
+    out = cases.allocate(cartesian_case, testee, cases.RETURN).zeros()()
+    inp_np = inp.asnumpy()
+    ref = -inp_np.copy()
+    ref[:, 2:] = np.cumsum(inp_np[:, k_start:], axis=1)[:, 2 - k_start :]
+
+    cases.verify(cartesian_case, testee, inp, k_start, out=out, ref=ref)
+
+
+@pytest.mark.uses_scan
+@pytest.mark.uses_concat_where
+def test_scan_range_runtime_bounds_backward(cartesian_case):
+    @gtx.field_operator
+    def add(carry: float, inp: float) -> float:
+        return carry + inp
+
+    @gtx.field_operator
+    def testee(inp: cases.IKFloatField, k_start: int32, k_end: int32) -> cases.IKFloatField:
+        return concat_where(
+            (KDim >= k_start) & (KDim < k_end),
+            scan(add, range=(KDim, k_start, k_end), forward=False, init=0.0)(inp),
+            inp,
+        )
+
+    inp = cases.allocate(cartesian_case, testee, "inp")()
+    out = cases.allocate(cartesian_case, testee, cases.RETURN).zeros()()
+    inp_np = inp.asnumpy()
+    ref = inp_np.copy()
+    ref[:, 3:7] = np.flip(np.cumsum(np.flip(inp_np[:, 3:7], axis=1), axis=1), axis=1)
+
+    cases.verify(cartesian_case, testee, inp, 3, 7, out=out, ref=ref)
+
+
+@pytest.mark.uses_scan
+def test_scan_range_larger_than_output(cartesian_case):
+    @gtx.field_operator
+    def add(carry: float, inp: float) -> float:
+        return carry + inp
+
+    @gtx.field_operator
+    def testee(inp: cases.IKFloatField) -> cases.IKFloatField:
+        return scan(add, range=(KDim, 0, 9), forward=True, init=0.0)(inp)
+
+    @gtx.program
+    def prog(inp: cases.IKFloatField, out: cases.IKFloatField):
+        testee(inp, out=out, domain={IDim: (0, 5), KDim: (2, 5)})
+
+    inp = cases.allocate(cartesian_case, prog, "inp")()
+    out = cases.allocate(cartesian_case, prog, "out").zeros()()
+    ref = np.zeros_like(inp.asnumpy())
+    ref[:, 2:5] = np.cumsum(inp.asnumpy(), axis=1)[:, 2:5]
+
+    cases.verify(cartesian_case, prog, inp, out, inout=out, ref=ref)
