@@ -204,6 +204,53 @@ def constructed_inside_dataclass_program_with_domain(
     )
 
 
+@pytest.mark.uses_tuple_args
+@pytest.mark.uses_tuple_returns
+def test_direct_call_with_named_collection_out_and_domain(cartesian_case):
+    vel = cases.allocate(cartesian_case, constructed_inside_dataclass, "vel")()
+    out = DataclassNamedCollection(
+        u=cases.allocate(
+            cartesian_case, constructed_inside_dataclass, "vel", strategy=cases.ConstInitializer(7)
+        )()[0],
+        v=cases.allocate(
+            cartesian_case, constructed_inside_dataclass, "vel", strategy=cases.ConstInitializer(7)
+        )()[0],
+    )
+    i_size, j_size = cartesian_case.default_sizes[IDim], cartesian_case.default_sizes[JDim]
+    inner = (slice(1, i_size - 1), slice(2, j_size - 1))
+
+    constructed_inside_dataclass.with_backend(cartesian_case.backend)(
+        vel,
+        out=out,
+        domain={IDim: (1, i_size - 1), JDim: (2, j_size - 1)},
+        offset_provider={},
+    )
+
+    for got, full in (
+        (out.u, vel[0].asnumpy() + vel[1].asnumpy()),
+        (out.v, vel[0].asnumpy() - vel[1].asnumpy()),
+    ):
+        expected = np.full((i_size, j_size), 7, dtype=full.dtype)
+        expected[inner] = full[inner]
+        np.testing.assert_array_equal(got.asnumpy(), expected)
+
+
+@pytest.mark.uses_tuple_args
+@pytest.mark.uses_tuple_returns
+def test_direct_call_returning_named_collection_on_domain(cartesian_case):
+    vel = cases.allocate(cartesian_case, constructed_inside_dataclass, "vel")()
+    i_size, j_size = cartesian_case.default_sizes[IDim], cartesian_case.default_sizes[JDim]
+
+    result = constructed_inside_dataclass.with_backend(cartesian_case.backend)(
+        vel, domain={IDim: (1, i_size - 1), JDim: (2, j_size - 1)}, offset_provider={}
+    )
+
+    assert isinstance(result, DataclassNamedCollection)
+    inner = (slice(1, i_size - 1), slice(2, j_size - 1))
+    np.testing.assert_array_equal(result.u.asnumpy(), (vel[0].asnumpy() + vel[1].asnumpy())[inner])
+    np.testing.assert_array_equal(result.v.asnumpy(), (vel[0].asnumpy() - vel[1].asnumpy())[inner])
+
+
 @pytest.mark.parametrize(
     "testee",
     [
@@ -320,7 +367,10 @@ def scan_dataclass_wrapper(inp: gtx.Field[[KDim], gtx.float32]) -> gtx.Field[[KD
     # Note: the scan result is of a (implicit) type `StateDataclass` with `gtx.float32` replaced by `gtx.Field[[...], gtx.float32]`.
     # Consequently, we need to extract the `value` field as we cannot properly annotate the return type.
     return scan(
-        scan_dataclass, range=(cases.KDim, 0, 9), forward=True, init=StateDataclass(value=float32(0.0))
+        scan_dataclass,
+        range=(cases.KDim, 0, 9),
+        forward=True,
+        init=StateDataclass(value=float32(0.0)),
     )(inp).value
 
 
@@ -337,7 +387,10 @@ def scan_named_tuple_wrapper(inp: gtx.Field[[KDim], gtx.float32]) -> gtx.Field[[
     # Note: the scan result is of a (implicit) type `StateNamedTuple` with `gtx.float32` replaced by `gtx.Field[[...], gtx.float32]`.
     # Consequently, we need to extract the `value` field as we cannot properly annotate the return type.
     return scan(
-        scan_named_tuple, range=(cases.KDim, 0, 9), forward=True, init=StateNamedTuple(value=float32(0.0))
+        scan_named_tuple,
+        range=(cases.KDim, 0, 9),
+        forward=True,
+        init=StateNamedTuple(value=float32(0.0)),
     )(inp).value
 
 

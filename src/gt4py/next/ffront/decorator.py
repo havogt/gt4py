@@ -665,14 +665,21 @@ class FieldOperator(_CompilableGTEntryPointMixin[ffront_stages.DSLFieldOperatorD
                     utils.tree_map(common.domain)(kwargs.pop("domain")),
                     self.backend,
                 )
-                out = arguments.extract(result)
+                out = result
             else:
                 raise errors.MissingArgumentError(None, "out", True)
             if "domain" in kwargs:
                 domain = utils.tree_map(common.domain)(kwargs.pop("domain"))
+                extracted_out = arguments.extract(out)
                 if not isinstance(domain, tuple):
-                    domain = utils.tree_map(lambda _: domain)(out)
-                out = utils.tree_map(lambda f, dom: f[dom])(out, domain)
+                    domain = utils.tree_map(lambda _: domain)(extracted_out)
+                restricted_out = utils.tree_map(lambda f, dom: f[dom])(extracted_out, domain)
+                out_type: Any = type(out)
+                out = (
+                    named_collections.make_named_collection_constructor(out_type)(restricted_out)
+                    if named_collections.is_named_collection_type(out_type)
+                    else restricted_out
+                )
 
             self._compiled_programs(
                 *args,
