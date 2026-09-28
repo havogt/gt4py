@@ -2063,6 +2063,48 @@ def test_jax_jit_premap_with_as_offset_computed_in_trace():
     )
 
 
+def test_premap_row_gather_with_offset_domains():
+    V = Dimension("V")
+    E = Dimension("E")
+    K = Dimension("K", kind=DimensionKind.VERTICAL)
+    E2VDim = Dimension("E2V", kind=DimensionKind.LOCAL)
+    values = np.arange(4 * 5, dtype=np.float64).reshape(4, 5)
+    field = common._field(values, domain=common.domain({V: (2, 6), K: (1, 6)}))
+    table = np.asarray([[2, 5], [3, 3], [5, 4]], dtype=np.int32)
+    e2v = common._connectivity(
+        table, codomain=V, domain=common.domain({E: (10, 13), E2VDim: (0, 2)})
+    )
+
+    result = field.premap(e2v)
+
+    assert result.domain == common.domain({E: (10, 13), E2VDim: (0, 2), K: (1, 6)})
+    np.testing.assert_array_equal(result.asnumpy(), values[table - 2])
+
+
+@pytest.mark.requires_jax
+def test_jax_premap_gathers_whole_rows():
+    import jax
+
+    V = Dimension("V")
+    E = Dimension("E")
+    K = Dimension("K", kind=DimensionKind.VERTICAL)
+    E2VDim = Dimension("E2V", kind=DimensionKind.LOCAL)
+    table = np.asarray([[0, 1], [1, 2], [2, 0]], dtype=np.int32)
+    e2v = common._connectivity(
+        jax.numpy.asarray(table),
+        codomain=V,
+        domain=common.domain({E: (0, 3), E2VDim: (0, 2)}),
+    )
+    values = np.arange(3 * 7, dtype=np.float64).reshape(3, 7)
+    field = common._field(jax.numpy.asarray(values), domain=common.domain({V: (0, 3), K: (0, 7)}))
+
+    premap = jax.jit(lambda field: field.premap(e2v))
+    hlo = premap.lower(field).compile().as_text()
+
+    assert re.findall(r"slice_sizes=\{([^}]*)\}", hlo) == ["1,7"]
+    np.testing.assert_array_equal(premap(field).asnumpy(), values[table])
+
+
 @pytest.mark.requires_jax
 def test_jax_jit_retraces_per_connectivity_buffer():
     import jax

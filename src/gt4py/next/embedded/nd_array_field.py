@@ -790,6 +790,10 @@ def _gather_premap(data: NdArrayField, *connectivities: common.GatherConnectivit
     """`premap` via a single advanced-index gather (dimension-preserving and -introducing cases)."""
     xp = data.array_ns
     new_domain = _gather_output_domain(data.domain, connectivities)
+    if len(connectivities) == 1 and not (
+        set(connectivities[0].domain.dims) & set(data.domain.dims)
+    ):
+        return _row_gather_premap(data, connectivities[0], new_domain)
     conn_by_codomain = {conn.codomain: conn for conn in connectivities}
 
     # one index array per original field dimension (the connectivity's, or identity), broadcast over
@@ -809,6 +813,47 @@ def _gather_premap(data: NdArrayField, *connectivities: common.GatherConnectivit
         return index
 
     new_buffer = data._ndarray[tuple(take_index(dim) for dim in data.domain.dims)]
+    return data.__class__.from_array(new_buffer, domain=new_domain, dtype=data.dtype)
+
+
+def _row_gather_premap(
+    data: NdArrayField, connectivity: common.GatherConnectivity, new_domain: common.Domain
+) -> NdArrayField:
+    """Gather whole rows along the connectivity's codomain, the other dimensions sliced unchanged."""
+    xp = data.array_ns
+    codomain = connectivity.codomain
+    codomain_axis = data.domain.dim_index(codomain, allow_missing=False)
+    start = data.domain[codomain].unit_range.start
+
+    index = (
+        _connectivity_index_array(
+            connectivity,
+            common.Domain(*(new_domain[d] for d in connectivity.domain.dims)),
+            xp,
+            skip_value_replacement=start,
+        )
+        - start
+    )
+    if getattr(connectivity, "_image_unknown", False):
+        index = xp.clip(index, 0, len(data.domain[codomain].unit_range) - 1)
+
+    other_slices = tuple(
+        slice(None)
+        if dim == codomain
+        else slice(
+            new_domain[dim].unit_range.start - data.domain[dim].unit_range.start,
+            new_domain[dim].unit_range.stop - data.domain[dim].unit_range.start,
+        )
+        for dim in data.domain.dims
+    )
+    # a single index array keeps its dimensions in place of the codomain axis
+    gathered = data._ndarray[other_slices][(slice(None),) * codomain_axis + (index,)]
+    gathered_dims = [
+        *data.domain.dims[:codomain_axis],
+        *connectivity.domain.dims,
+        *data.domain.dims[codomain_axis + 1 :],
+    ]
+    new_buffer = xp.transpose(gathered, [gathered_dims.index(d) for d in new_domain.dims])
     return data.__class__.from_array(new_buffer, domain=new_domain, dtype=data.dtype)
 
 
