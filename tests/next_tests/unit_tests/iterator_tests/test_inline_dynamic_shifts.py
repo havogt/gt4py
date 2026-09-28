@@ -117,3 +117,114 @@ def test_inline_dynamic_shift_concat_where_arg(uids):
         testee, offset_provider_type={}, uids=uids
     )
     assert actual == expected
+
+
+def test_inline_dynamic_shift_let_bound_tuple_element(uids):
+    testee = im.let(
+        "t", im.if_("cond", im.make_tuple("inp1", "inp2"), im.make_tuple("inp2", "inp1"))
+    )(
+        im.op_as_fieldop("plus")(
+            im.as_fieldop(dynamic_shift_stencil)(im.tuple_get(1, "t"), "offset_field"),
+            im.tuple_get(0, "t"),
+        )
+    )
+
+    def shifted(it: str):
+        return im.shift(IOff, "_cs_0")(it)
+
+    expected = im.op_as_fieldop("plus")(
+        im.as_fieldop(
+            im.lambda_("cond", "inp2", "inp1", "offset_field")(
+                im.let("_cs_0", im.deref("offset_field"))(
+                    im.if_(
+                        im.deref(shifted("cond")),
+                        im.deref(shifted("inp2")),
+                        im.deref(shifted("inp1")),
+                    )
+                )
+            )
+        )("cond", "inp2", "inp1", "offset_field"),
+        im.if_("cond", "inp1", "inp2"),
+    )
+
+    actual = inline_dynamic_shifts.InlineDynamicShifts.apply(
+        testee, offset_provider_type={}, uids=uids
+    )
+    assert actual == expected
+
+
+def test_inline_dynamic_shift_let_var_shared_between_consumers(uids):
+    testee = im.let("tmp", im.as_fieldop(im.lambda_("x")(im.multiplies_(im.deref("x"), 3)))("inp"))(
+        im.op_as_fieldop("plus")(
+            im.as_fieldop(dynamic_shift_stencil)("tmp", "offset_field1"),
+            im.as_fieldop(dynamic_shift_stencil)("tmp", "offset_field2"),
+        )
+    )
+
+    def expected_consumer(offset_field: str):
+        return im.as_fieldop(
+            im.lambda_("inp", offset_field)(
+                im.multiplies_(im.deref(im.shift(IOff, im.deref(offset_field))("inp")), 3)
+            )
+        )("inp", offset_field)
+
+    expected = im.op_as_fieldop("plus")(
+        expected_consumer("offset_field1"), expected_consumer("offset_field2")
+    )
+
+    actual = inline_dynamic_shifts.InlineDynamicShifts.apply(
+        testee, offset_provider_type={}, uids=uids
+    )
+    assert actual == expected
+
+
+def test_inline_dynamic_shift_if_with_scalar_cond_expr(uids):
+    cond = im.eq(im.ref("m", int_type), 3)
+    testee = im.as_fieldop(dynamic_shift_stencil)(im.if_(cond, "inp1", "inp2"), "offset_field")
+
+    def shifted(it: str):
+        return im.shift(IOff, "_cs_0")(it)
+
+    expected = im.as_fieldop(
+        im.lambda_("__iasfop_0", "inp1", "inp2", "offset_field")(
+            im.let("_cs_0", im.deref("offset_field"))(
+                im.if_(
+                    im.deref(shifted("__iasfop_0")),
+                    im.deref(shifted("inp1")),
+                    im.deref(shifted("inp2")),
+                )
+            )
+        )
+    )(im.eq("m", 3), "inp1", "inp2", "offset_field")
+
+    actual = inline_dynamic_shifts.InlineDynamicShifts.apply(
+        testee, offset_provider_type={}, uids=uids
+    )
+    assert actual == expected
+
+
+def test_inline_dynamic_shift_let_arg(uids):
+    testee = im.as_fieldop(dynamic_shift_stencil)(
+        im.let("x", im.op_as_fieldop("plus")("inp1", "inp2"))(
+            im.op_as_fieldop("multiplies")("x", "x")
+        ),
+        "offset_field",
+    )
+
+    def shifted(it: str):
+        return im.shift(IOff, "_cs_1")(it)
+
+    expected = im.as_fieldop(
+        im.lambda_("inp1", "inp2", "offset_field")(
+            im.let("_cs_1", im.deref("offset_field"))(
+                im.let("_cs_0", im.plus(im.deref(shifted("inp1")), im.deref(shifted("inp2"))))(
+                    im.multiplies_("_cs_0", "_cs_0")
+                )
+            )
+        )
+    )("inp1", "inp2", "offset_field")
+
+    actual = inline_dynamic_shifts.InlineDynamicShifts.apply(
+        testee, offset_provider_type={}, uids=uids
+    )
+    assert actual == expected

@@ -163,3 +163,84 @@ def test_offset_field_of_broadcast(cartesian_case):
     ref = a.asnumpy()[:, np.newaxis] + b.asnumpy()[:, shifted_k]
 
     cases.verify(cartesian_case, testee, a, b, offset_field, out=out, ref=ref)
+
+
+@pytest.mark.uses_dynamic_offsets
+@pytest.mark.uses_dynamic_offsets_on_scalar_inputs
+@pytest.mark.uses_if_stmts
+@pytest.mark.parametrize("cond", [True, False])
+def test_offset_field_of_if_stmt_tuple_element(cartesian_case, cond):
+    @gtx.field_operator
+    def testee(
+        a: cases.IKField, b: cases.IKField, offset_field: cases.IKField, cond: bool
+    ) -> cases.IKField:
+        if cond:
+            x, y = a, b * 2
+        else:
+            x, y = b, a + 1
+        return y(as_offset(Koff, offset_field)) + x
+
+    i_size, k_size = cartesian_case.default_sizes[IDim], cartesian_case.default_sizes[KDim]
+    k_offsets = _offsets_crossing_k_level_2(k_size)
+    offset_field = cartesian_case.as_field(
+        [IDim, KDim], np.broadcast_to(k_offsets, (i_size, k_size)).copy()
+    )
+    a = cases.allocate(cartesian_case, testee, "a")()
+    b = cases.allocate(cartesian_case, testee, "b")()
+    out = cases.allocate(cartesian_case, testee, cases.RETURN)()
+
+    shifted_k = np.arange(k_size) + k_offsets
+    a_np, b_np = a.asnumpy(), b.asnumpy()
+    ref = b_np[:, shifted_k] * 2 + a_np if cond else a_np[:, shifted_k] + 1 + b_np
+
+    cases.verify(cartesian_case, testee, a, b, offset_field, cond, out=out, ref=ref)
+
+
+@pytest.mark.uses_dynamic_offsets
+def test_offset_field_of_shared_producer(cartesian_case):
+    @gtx.field_operator
+    def testee(a: cases.IKField, b: cases.IKField, offset_field: cases.IKField) -> cases.IKField:
+        x = b * 3
+        p = (a + x) * 2
+        q = (b + x) * 4
+        return p(as_offset(Koff, offset_field)) + q(as_offset(Koff, offset_field))
+
+    i_size, k_size = cartesian_case.default_sizes[IDim], cartesian_case.default_sizes[KDim]
+    k_offsets = _offsets_crossing_k_level_2(k_size)
+    offset_field = cartesian_case.as_field(
+        [IDim, KDim], np.broadcast_to(k_offsets, (i_size, k_size)).copy()
+    )
+    a = cases.allocate(cartesian_case, testee, "a")()
+    b = cases.allocate(cartesian_case, testee, "b")()
+    out = cases.allocate(cartesian_case, testee, cases.RETURN)()
+
+    shifted_k = np.arange(k_size) + k_offsets
+    a_s, b_s = a.asnumpy()[:, shifted_k], b.asnumpy()[:, shifted_k]
+    ref = (a_s + 3 * b_s) * 2 + (b_s + 3 * b_s) * 4
+
+    cases.verify(cartesian_case, testee, a, b, offset_field, out=out, ref=ref)
+
+
+@pytest.mark.uses_dynamic_offsets
+@pytest.mark.uses_dynamic_offsets_on_scalar_inputs
+@pytest.mark.parametrize("mode", [1, 3])
+def test_offset_field_of_ternary_with_scalar_cond_expr(cartesian_case, mode):
+    @gtx.field_operator
+    def testee(
+        a: cases.IKField, b: cases.IKField, offset_field: cases.IKField, mode: gtx.int32
+    ) -> cases.IKField:
+        return (a if mode == 3 else b * 2)(as_offset(Koff, offset_field))
+
+    i_size, k_size = cartesian_case.default_sizes[IDim], cartesian_case.default_sizes[KDim]
+    k_offsets = _offsets_crossing_k_level_2(k_size)
+    offset_field = cartesian_case.as_field(
+        [IDim, KDim], np.broadcast_to(k_offsets, (i_size, k_size)).copy()
+    )
+    a = cases.allocate(cartesian_case, testee, "a")()
+    b = cases.allocate(cartesian_case, testee, "b")()
+    out = cases.allocate(cartesian_case, testee, cases.RETURN)()
+
+    shifted_k = np.arange(k_size) + k_offsets
+    ref = a.asnumpy()[:, shifted_k] if mode == 3 else b.asnumpy()[:, shifted_k] * 2
+
+    cases.verify(cartesian_case, testee, a, b, offset_field, gtx.int32(mode), out=out, ref=ref)
