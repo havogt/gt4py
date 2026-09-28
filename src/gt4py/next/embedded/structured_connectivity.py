@@ -9,9 +9,9 @@
 
 A `StructuredConnectivity` replaces an ``(N, max_neighbors)`` integer neighbor
 table with a per-source-color table of Cartesian offsets on the target layout.
-For a classical unstructured access ``inp(Offset[k])`` the gather is computed
-as a ``concat_where``-tree built from the offsets table (one branch per color),
-instead of an indirect table lookup.
+For a classical unstructured access ``inp(Offset[k])`` the gather concatenates,
+along the color dimension, one slab per color of ``inp`` shifted by that color's
+offset, instead of an indirect table lookup.
 
 TODO(havogt): this currently lives under ``embedded/`` because the only
 dispatch site is embedded execution. When the API stabilizes, move the
@@ -22,10 +22,16 @@ embedded expansion here.
 from __future__ import annotations
 
 import dataclasses
-from typing import Iterable
+import functools
+import operator
+from typing import TYPE_CHECKING, Iterable, Optional, Sequence, cast
 
 from gt4py.next import common
-from gt4py.next.ffront.experimental import concat_where
+from gt4py.next.embedded import exceptions as embedded_exceptions
+
+
+if TYPE_CHECKING:
+    from gt4py.next.embedded import nd_array_field
 
 
 @dataclasses.dataclass(frozen=True)
@@ -46,8 +52,8 @@ class StructuredConnectivity:
         )
 
     Single-color connectivities (e.g. V2E on a patch where vertices are one
-    color) use a one-entry ``offsets`` dict; the expansion short-circuits the
-    ``concat_where`` in that case.
+    color) use a one-entry ``offsets`` dict; the expansion is a plain shift in
+    that case.
     """
 
     source_dim: common.Dimension
@@ -79,7 +85,7 @@ class _StructuredConnectivityK:
 
     Produced by ``FieldOffset.__getitem__(k)`` when the offset provider entry
     is a `StructuredConnectivity`, and consumed by the embedded ``premap``
-    dispatch to build the ``concat_where`` tree for the k-th neighbor.
+    dispatch to gather the k-th neighbor.
     """
 
     connectivity: StructuredConnectivity
@@ -107,17 +113,89 @@ def expand_k(inp: common.Field, conn: StructuredConnectivity, k: int) -> common.
     colors = conn.colors
     if len(colors) == 1:
         return _apply_shift(inp, conn.offsets[colors[0]][k])
-
-    # Build the concat_where chain from last → first so the outer-most condition
-    # pins color_dim == colors[0], matching hand-rolled structured examples.
-    result = _apply_shift(inp, conn.offsets[colors[-1]][k])
-    for c in reversed(colors[:-1]):
-        branch = _apply_shift(inp, conn.offsets[c][k])
-        result = concat_where(conn.color_dim == c, branch, result)
-    return result
+    return _gather(cast("nd_array_field.NdArrayField", inp), conn, [k], local_axis=None)
 
 
 def expand_all(inp: common.Field, conn: StructuredConnectivity) -> Iterable[common.Field]:
     """Yield the per-k gathered fields; useful for stacking or summing externally."""
     for k in range(conn.num_neighbors):
         yield expand_k(inp, conn, k)
+
+
+def expand_stacked(
+    inp: nd_array_field.NdArrayField, conn: StructuredConnectivity
+) -> nd_array_field.NdArrayField:
+    """Gather all neighbors, stacked along ``conn.local_dim``.
+
+    The local dimension is placed before the first vertical dimension (or last if there is none).
+    """
+    local_axis = next(
+        (i for i, d in enumerate(inp.domain.dims) if d.kind == common.DimensionKind.VERTICAL),
+        inp.domain.ndim,
+    )
+    return _gather(inp, conn, range(conn.num_neighbors), local_axis=local_axis)
+
+
+def _gather(
+    inp: nd_array_field.NdArrayField,
+    conn: StructuredConnectivity,
+    ks: Sequence[int],
+    local_axis: Optional[int],
+) -> nd_array_field.NdArrayField:
+    """Assemble the neighbors `ks` from per-(color, k) slabs with a single concatenation.
+
+    All shifted fields are intersected in the non-color dimensions. With more than one color,
+    the color dimension spans the colors whose shifted field covers them for every k, and each
+    color slab is taken from its own shifted field.
+    """
+    color_dim = conn.color_dim
+    dims = inp.domain.dims
+    colors = conn.colors
+    multi_color = len(colors) > 1
+    shifted = [[_apply_shift(inp, conn.offsets[c][k]) for k in ks] for c in colors]
+
+    ranges = {}
+    for i, d in enumerate(dims):
+        if multi_color and d == color_dim:
+            continue
+        ranges[d] = functools.reduce(
+            operator.and_, (f.domain.ranges[i] for per_c in shifted for f in per_c)
+        )
+    if multi_color:
+        covered = [
+            c
+            for c, per_c in zip(colors, shifted)
+            if all(c in f.domain[color_dim].unit_range for f in per_c)
+        ]
+        if not covered or covered != list(range(covered[0], covered[-1] + 1)):
+            raise embedded_exceptions.NonContiguousDomain(
+                f"Colors {covered} covered by all shifted fields are not contiguous along '{color_dim}'."
+            )
+        ranges[color_dim] = common.UnitRange(covered[0], covered[-1] + 1)
+        shifted = [shifted[colors.index(c)] for c in covered]
+    domain = common.Domain(*(common.NamedRange(d, ranges[d]) for d in dims))
+
+    xp = inp.array_ns
+    if multi_color:
+        x_axis = domain.dim_index(color_dim, allow_missing=False)
+        pieces = [
+            f.restrict(
+                domain.replace(color_dim, common.NamedRange(color_dim, common.UnitRange(c, c + 1)))
+            ).ndarray
+            for c, per_c in zip(covered, shifted)
+            for f in per_c
+        ]
+        buffer = xp.concatenate(pieces, axis=x_axis)
+        if local_axis is not None:
+            shape = domain.shape
+            buffer = xp.reshape(
+                buffer, (*shape[:x_axis], len(covered), len(ks), *shape[x_axis + 1 :])
+            )
+            buffer = xp.moveaxis(buffer, x_axis + 1, local_axis)
+    else:
+        buffer = xp.stack([f.restrict(domain).ndarray for f in shifted[0]], axis=local_axis)
+
+    if local_axis is not None:
+        local_range = common.NamedRange(conn.local_dim, common.UnitRange(0, len(ks)))
+        domain = common.Domain(*domain[:local_axis], local_range, *domain[local_axis:])
+    return inp.__class__.from_array(buffer, domain=domain, dtype=inp.dtype)

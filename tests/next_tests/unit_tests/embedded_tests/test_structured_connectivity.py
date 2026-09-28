@@ -11,6 +11,7 @@ import pytest
 
 import gt4py.next as gtx
 from gt4py.next import neighbor_sum
+from gt4py.next.embedded import structured_connectivity as structured
 from gt4py.next.embedded.structured_connectivity import StructuredConnectivity
 
 
@@ -21,6 +22,7 @@ C2EDim = gtx.Dimension("C2E", kind=gtx.DimensionKind.LOCAL)
 C2E = gtx.FieldOffset("C2E", source=Edge, target=(Cell, C2EDim))
 
 I = gtx.Dimension("I")
+J = gtx.Dimension("J")
 X = gtx.Dimension("X")
 
 # a row of cell pairs (X in {0, 1}) with three edges per cell index (X in {0, 1, 2})
@@ -87,3 +89,121 @@ def test_structured_neighbor_sum_under_jax_jit():
     result = jax.jit(_call)(edges, weights)
 
     np.testing.assert_allclose(result.asnumpy(), _reference(edges.asnumpy(), weights.asnumpy()))
+
+
+GATHER_CASES = {
+    "one_color": (
+        {0: [{}, {I: 1}, {J: -1}, {I: -1, J: 1}]},
+        {I: (0, 6), J: (-1, 5), X: (0, 1), K: (0, 3)},
+    ),
+    "two_colors": (
+        {0: [{}, {X: 1}, {J: 1, X: 2}], 1: [{X: -1}, {I: 1}, {X: 1}]},
+        {I: (0, 6), J: (0, 5), X: (0, 3), K: (0, 3)},
+    ),
+    "three_colors": (
+        {0: [{}, {J: -1, X: 1}], 1: [{X: -1}, {}], 2: [{X: -2}, {I: 1, X: -1}]},
+        {I: (-2, 5), J: (-1, 4), X: (0, 2), K: (0, 2)},
+    ),
+    "three_colors_without_vertical": (
+        {0: [{}, {J: -1, X: 1}], 1: [{X: -1}, {}], 2: [{X: -2}, {I: 1, X: -1}]},
+        {I: (0, 5), J: (-1, 4), X: (0, 2)},
+    ),
+    "color_dim_between_horizontal_dims": (
+        {0: [{I: 1}, {X: 1}], 1: [{J: -1}, {X: -1}]},
+        {I: (1, 5), X: (0, 2), J: (0, 4), K: (0, 2)},
+    ),
+}
+
+
+def _connectivity(offsets) -> StructuredConnectivity:
+    return StructuredConnectivity(
+        source_dim=Cell, codomain=Edge, color_dim=X, local_dim=C2EDim, offsets=offsets
+    )
+
+
+def _input(input_ranges, xp=np):
+    shape = tuple(stop - start for start, stop in input_ranges.values())
+    data = np.random.default_rng(0).random(shape)
+    return gtx.as_field(gtx.domain(input_ranges), xp.asarray(data), allocator=xp)
+
+
+def _gather_reference(offsets, input_ranges, data, ks):
+    """Plain-numpy gather of the neighbors `ks`, one point at a time."""
+    dims = list(input_ranges)
+    multi_color = len(offsets) > 1
+    out_ranges = {}
+    for d in dims:
+        if multi_color and d == X:
+            out_ranges[d] = (min(offsets), max(offsets) + 1)
+        else:
+            shifted = [
+                (input_ranges[d][0] - off.get(d, 0), input_ranges[d][1] - off.get(d, 0))
+                for per_k in offsets.values()
+                for off in (per_k[k] for k in ks)
+            ]
+            out_ranges[d] = (max(s for s, _ in shifted), min(e for _, e in shifted))
+
+    result = np.empty((*(stop - start for start, stop in out_ranges.values()), len(ks)))
+    for idx in np.ndindex(result.shape[:-1]):
+        point = {d: out_ranges[d][0] + i for d, i in zip(dims, idx)}
+        color = point[X] if multi_color else next(iter(offsets))
+        for local, k in enumerate(ks):
+            off = offsets[color][k]
+            result[(*idx, local)] = data[
+                tuple(point[d] + off.get(d, 0) - input_ranges[d][0] for d in dims)
+            ]
+    return out_ranges, result
+
+
+@pytest.mark.parametrize("case", GATHER_CASES.keys())
+def test_expand_k(case):
+    offsets, input_ranges = GATHER_CASES[case]
+    conn = _connectivity(offsets)
+    inp = _input(input_ranges)
+
+    for k in range(conn.num_neighbors):
+        result = structured.expand_k(inp, conn, k)
+
+        out_ranges, ref = _gather_reference(offsets, input_ranges, inp.asnumpy(), [k])
+        assert result.domain == gtx.domain(out_ranges)
+        np.testing.assert_array_equal(result.asnumpy(), ref[..., 0])
+
+
+@pytest.mark.parametrize("case", GATHER_CASES.keys())
+def test_expand_stacked(case):
+    offsets, input_ranges = GATHER_CASES[case]
+    conn = _connectivity(offsets)
+    inp = _input(input_ranges)
+
+    result = structured.expand_stacked(inp, conn)
+
+    out_ranges, ref = _gather_reference(
+        offsets, input_ranges, inp.asnumpy(), range(conn.num_neighbors)
+    )
+    dims = list(out_ranges)
+    local_axis = dims.index(K) if K in dims else len(dims)
+    expected = {d: out_ranges[d] for d in dims[:local_axis]}
+    expected[C2EDim] = (0, conn.num_neighbors)
+    expected |= {d: out_ranges[d] for d in dims[local_axis:]}
+    assert result.domain == gtx.domain(expected)
+    np.testing.assert_array_equal(result.asnumpy(), np.moveaxis(ref, -1, local_axis))
+
+
+@pytest.mark.requires_jax
+@pytest.mark.parametrize("case", GATHER_CASES.keys())
+def test_expand_under_jax_jit(case):
+    jax = pytest.importorskip("jax")
+    offsets, input_ranges = GATHER_CASES[case]
+    conn = _connectivity(offsets)
+    inp = _input(input_ranges, jax.numpy)
+    np_inp = _input(input_ranges)
+
+    stacked = jax.jit(lambda f: structured.expand_stacked(f, conn))(inp)
+    first = jax.jit(lambda f: structured.expand_k(f, conn, 0))(inp)
+
+    np_stacked = structured.expand_stacked(np_inp, conn)
+    np_first = structured.expand_k(np_inp, conn, 0)
+    assert stacked.domain == np_stacked.domain
+    assert first.domain == np_first.domain
+    np.testing.assert_array_equal(stacked.asnumpy(), np_stacked.asnumpy())
+    np.testing.assert_array_equal(first.asnumpy(), np_first.asnumpy())

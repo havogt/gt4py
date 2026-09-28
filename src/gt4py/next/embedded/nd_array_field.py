@@ -752,38 +752,7 @@ def _structured_premap(
             _structured_conn.expand_k(data, connectivity.connectivity, connectivity.k),
         )
 
-    # TODO(havogt): stacking along `local_dim` is the natural way to let
-    # `neighbor_sum` reduce the structured gather, but the per-k fields may
-    # have slightly different domains under the shift-induced restrictions.
-    # The current implementation intersects domains and stacks; revisit once
-    # domain handling stabilizes.
-    per_k = [
-        _structured_conn.expand_k(data, connectivity, k) for k in range(connectivity.num_neighbors)
-    ]
-
-    common_dims = per_k[0].domain.dims
-    common_ranges = list(per_k[0].domain.ranges)
-    for field in per_k[1:]:
-        for i, d in enumerate(common_dims):
-            r = field.domain[d].unit_range
-            cur = common_ranges[i]
-            common_ranges[i] = common.UnitRange(max(cur.start, r.start), min(cur.stop, r.stop))
-    intersected = common.Domain(
-        *(common.NamedRange(d, r) for d, r in zip(common_dims, common_ranges))
-    )
-    per_k_restricted = [f.restrict(intersected) for f in per_k]
-
-    xp = data.array_ns
-    local_axis = next(
-        (i for i, d in enumerate(common_dims) if d.kind == common.DimensionKind.VERTICAL),
-        len(common_dims),
-    )
-    stacked = xp.stack([f.ndarray for f in per_k_restricted], axis=local_axis)
-    local_range = common.NamedRange(
-        connectivity.local_dim, common.UnitRange(0, connectivity.num_neighbors)
-    )
-    new_domain = common.Domain(*intersected[:local_axis], local_range, *intersected[local_axis:])
-    return data.__class__.from_array(stacked, domain=new_domain, dtype=data.dtype)
+    return _structured_conn.expand_stacked(data, connectivity)
 
 
 def _gather_premap(data: NdArrayField, *connectivities: common.GatherConnectivity) -> NdArrayField:
