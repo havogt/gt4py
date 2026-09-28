@@ -48,6 +48,7 @@ from gt4py.next.iterator.type_system import inference as gtir_type_inference
 from gt4py.next.program_processors.runners.dace import sdfg_args as gtx_dace_args
 from gt4py.next.program_processors.runners.dace.lowering import (
     gtir_domain,
+    gtir_to_sdfg_column_reduce,
     gtir_to_sdfg_concat_where,
     gtir_to_sdfg_primitives,
     gtir_to_sdfg_types,
@@ -57,6 +58,7 @@ from gt4py.next.type_system import type_specifications as ts, type_translation a
 
 
 _BUILTIN_TRANSLATORS: Final[dict[str, gtir_to_sdfg_primitives.PrimitiveTranslator]] = {
+    "column_reduce": gtir_to_sdfg_column_reduce.translate_column_reduce,
     "concat_where": gtir_to_sdfg_concat_where.translate_concat_where,
     "if_": gtir_to_sdfg_primitives.translate_if,
     "index": gtir_to_sdfg_primitives.translate_index,

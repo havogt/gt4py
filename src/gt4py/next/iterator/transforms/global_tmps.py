@@ -351,9 +351,12 @@ def _transform_stmt(
         # transform `if_` call into `IfStmt`
         _transform_if,
         _transform_scan_on_other_domain,
-        # extract applied `as_fieldop` to top-level
+        # extract applied `as_fieldop` and `column_reduce` to top-level
         functools.partial(
-            _transform_by_pattern, predicate=lambda expr, _: cpm.is_applied_as_fieldop(expr)
+            _transform_by_pattern,
+            predicate=lambda expr, _: (
+                cpm.is_applied_as_fieldop(expr) or cpm.is_call_to(expr, "column_reduce")
+            ),
         ),
         # extract if_ call to the top-level
         functools.partial(

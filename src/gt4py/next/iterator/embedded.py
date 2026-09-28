@@ -47,13 +47,14 @@ from gt4py.eve.extended_typing import (
 )
 from gt4py.next import common, field_utils, utils
 from gt4py.next.embedded import (
+    common as embedded_common,
     context as embedded_context,
     exceptions as embedded_exceptions,
     operators,
 )
 from gt4py.next.ffront import fbuiltins
 from gt4py.next.iterator import builtins, runtime
-from gt4py.next.type_system import type_specifications as ts, type_translation
+from gt4py.next.type_system import type_info, type_specifications as ts, type_translation
 
 
 try:
@@ -1811,6 +1812,29 @@ def index(axis: common.Dimension) -> common.Field:
 @builtins.concat_where.register(EMBEDDED)
 def concat_where(*args):
     raise NotImplementedError("To be implemented in frontend embedded.")
+
+
+@builtins.column_reduce.register(EMBEDDED)
+def column_reduce(
+    op: Callable,
+    domain: runtime.CartesianDomain | runtime.UnstructuredDomain,
+    field: common.Field | tuple[common.Field | tuple, ...],
+) -> common.Field | tuple[common.Field | tuple, ...]:
+    ((axis, levels),) = domain.items()
+    leaves = utils.flatten_nested_tuple((field,))
+    out_domain = common.Domain(
+        *(nr for nr in operators._intersect_scan_args(*leaves) if nr.dim != axis)
+    )
+    dtype = type_info.tree_map_type(type_info.extract_dtype)(type_translation.from_value(field))
+    assert isinstance(dtype, (ts.ScalarType, ts.TupleType))
+    out = field_utils.field_from_typespec(dtype, out_domain, field_utils.get_array_ns(*leaves))
+
+    for pos in embedded_common.iterate_domain(out_domain):
+        acc = operators._tuple_at((*pos, common.NamedIndex(axis, levels.start)), field)
+        for k in levels[1:]:
+            acc = op(acc, operators._tuple_at((*pos, common.NamedIndex(axis, k)), field))
+        operators._tuple_assign_value(pos, out, acc)
+    return out
 
 
 def closure(
