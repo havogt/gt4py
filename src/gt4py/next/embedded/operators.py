@@ -21,10 +21,6 @@ from gt4py.next.type_system import type_info, type_specifications as ts, type_tr
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 
-# Levels per iteration of the `jax.lax.scan` of a scan on JAX arrays: on GPU, an iteration
-# costs a few kernel launches independent of its number of levels.
-_JAX_SCAN_BLOCK_SIZE = 4
-
 
 @dataclasses.dataclass(frozen=True)
 class EmbeddedOperator(Generic[_R, _P]):
@@ -40,9 +36,8 @@ class ScanOperator(EmbeddedOperator[xtyping.MaybeNestedInTuple[core_defs.ScalarT
     Embedded execution of a scan.
 
     The scan pass is called once per level on the slices of the arguments orthogonal to the
-    scan dimension, with JAX arrays inside a `jax.lax.scan` over blocks of levels. A scan pass
-    that branches on values (`per_column`) can only be called on scalars, so it is called per
-    column and level.
+    scan dimension, with JAX arrays inside `jax.lax.scan`. A scan pass that branches on values
+    (`per_column`) can only be called on scalars, so it is called per column and level.
     """
 
     forward: bool
@@ -178,7 +173,7 @@ class ScanOperator(EmbeddedOperator[xtyping.MaybeNestedInTuple[core_defs.ScalarT
                 for x, dtype in zip(_leaves(value, lambda _: True), dtypes, strict=True)
             ]
 
-        def step(carry: list[Any], level_arrays: list[Any]) -> list[Any]:
+        def body(carry: list[Any], level_arrays: list[Any]) -> tuple[list[Any], list[Any]]:
             level_iter = iter(level_arrays)
             level_values = [
                 _replace_leaves(
@@ -193,49 +188,22 @@ class ScanOperator(EmbeddedOperator[xtyping.MaybeNestedInTuple[core_defs.ScalarT
                 lambda _: True,
                 iter(common._field(array, domain=non_scan_domain) for array in carry),
             )
-            return carry_arrays(
+            new_carry = carry_arrays(
                 self.fun(
                     acc,
                     *level_values[: len(args)],
                     **dict(zip(kwargs.keys(), level_values[len(args) :])),
                 )
             )
+            return new_carry, new_carry
 
-        def run_levels(
-            carry: list[Any], xs: list[Any], num_levels: int
-        ) -> tuple[list[Any], list[Any]]:
-            results: list[Any] = [None] * num_levels
-            for i in range(num_levels) if self.forward else reversed(range(num_levels)):
-                carry = step(carry, [x[i] for x in xs])
-                results[i] = carry
-            # keeps XLA from fusing the levels into the write of each level's result, which
-            # recomputes the preceding levels of the block for every level
-            results, carry = lax.optimization_barrier((results, carry))
-            return carry, [jnp.stack(leaf) for leaf in zip(*results)]
-
-        xs = [stack(x) for value in values for x in _leaves(value, is_scanned)]
-        num_blocks, rest = divmod(len(self.range.unit_range), _JAX_SCAN_BLOCK_SIZE)
-        blocked_end = num_blocks * _JAX_SCAN_BLOCK_SIZE
-        blocked, remaining = (
-            (slice(0, blocked_end), slice(blocked_end, None))
-            if self.forward
-            else (slice(rest, None), slice(0, rest))
+        _, ys = lax.scan(
+            body,
+            carry_arrays(self.init),
+            [stack(x) for value in values for x in _leaves(value, is_scanned)],
+            length=len(self.range.unit_range),
+            reverse=not self.forward,
         )
-        carry = carry_arrays(self.init)
-        parts = []
-        if num_blocks:
-            carry, blocked_ys = lax.scan(
-                lambda carry, xs: run_levels(carry, xs, _JAX_SCAN_BLOCK_SIZE),
-                carry,
-                [x[blocked].reshape(num_blocks, _JAX_SCAN_BLOCK_SIZE, *x.shape[1:]) for x in xs],
-                length=num_blocks,
-                reverse=not self.forward,
-            )
-            parts.append([y.reshape(blocked_end, *y.shape[2:]) for y in blocked_ys])
-        if rest:
-            _, remaining_ys = run_levels(carry, [x[remaining] for x in xs], rest)
-            parts.insert(len(parts) if self.forward else 0, remaining_ys)
-        ys = [jnp.concatenate(leaf) for leaf in zip(*parts)]
         scan_axis_index = out_domain.dims.index(scan_axis)
         return _replace_leaves(
             self.init,
