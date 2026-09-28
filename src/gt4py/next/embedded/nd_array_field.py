@@ -790,8 +790,8 @@ def _gather_premap(data: NdArrayField, *connectivities: common.GatherConnectivit
     """`premap` via a single advanced-index gather (dimension-preserving and -introducing cases)."""
     xp = data.array_ns
     new_domain = _gather_output_domain(data.domain, connectivities)
-    if len(connectivities) == 1 and not (
-        set(connectivities[0].domain.dims) & set(data.domain.dims)
+    if len(connectivities) == 1 and (
+        set(connectivities[0].domain.dims) & set(data.domain.dims) <= {connectivities[0].codomain}
     ):
         return _row_gather_premap(data, connectivities[0], new_domain)
     conn_by_codomain = {conn.codomain: conn for conn in connectivities}

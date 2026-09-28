@@ -2105,6 +2105,43 @@ def test_jax_premap_gathers_whole_rows():
     np.testing.assert_array_equal(premap(field).asnumpy(), values[table])
 
 
+def test_premap_row_gather_with_codomain_in_connectivity_domain():
+    E = Dimension("E")
+    K = Dimension("K", kind=DimensionKind.VERTICAL)
+    E2EDim = Dimension("E2E", kind=DimensionKind.LOCAL)
+    values = np.arange(5 * 3, dtype=np.float64).reshape(5, 3)
+    field = common._field(values, domain=common.domain({E: (1, 6), K: (0, 3)}))
+    table = np.asarray([[1, 5], [2, 4], [3, 3]], dtype=np.int32)
+    e2e = common._connectivity(table, codomain=E, domain=common.domain({E: (2, 5), E2EDim: (0, 2)}))
+
+    result = field.premap(e2e)
+
+    assert result.domain == common.domain({E: (2, 5), E2EDim: (0, 2), K: (0, 3)})
+    np.testing.assert_array_equal(result.asnumpy(), values[table - 1])
+
+
+@pytest.mark.requires_jax
+def test_jax_premap_with_codomain_in_connectivity_domain_gathers_whole_rows():
+    import jax
+
+    E = Dimension("E")
+    K = Dimension("K", kind=DimensionKind.VERTICAL)
+    E2EDim = Dimension("E2E", kind=DimensionKind.LOCAL)
+    table = np.asarray([[1, 2], [2, 0], [0, 1]], dtype=np.int32)
+    e2e = common._connectivity(
+        jax.numpy.asarray(table), codomain=E, domain=common.domain({E: (0, 3), E2EDim: (0, 2)})
+    )
+    values = np.arange(3 * 7, dtype=np.float64).reshape(3, 7)
+    field = common._field(jax.numpy.asarray(values), domain=common.domain({E: (0, 3), K: (0, 7)}))
+
+    premap = jax.jit(lambda field: field.premap(e2e))
+
+    assert re.findall(r"slice_sizes=\{([^}]*)\}", premap.lower(field).compile().as_text()) == [
+        "1,7"
+    ]
+    np.testing.assert_array_equal(premap(field).asnumpy(), values[table])
+
+
 @pytest.mark.parametrize("false_range", [(0, 6), (2, 6)], ids=["covering", "partial"])
 def test_concat_where_select_matches_concatenation(false_range):
     K = Dimension("K", kind=DimensionKind.VERTICAL)
