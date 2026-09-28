@@ -264,12 +264,16 @@ def split_overlapping_map_range(
                 return splitted_ranges
 
             # split the ranges into sub-ranges based on the overlapping range
-            first_map_splitted_dict[param] = _split_range(
-                first_map_range, overlap_range_start, overlap_range_stop, step
-            )
-            second_map_splitted_dict[param] = _split_range(
-                second_map_range, overlap_range_start, overlap_range_stop, step
-            )
+            try:
+                first_map_splitted_dict[param] = _split_range(
+                    first_map_range, overlap_range_start, overlap_range_stop, step
+                )
+                second_map_splitted_dict[param] = _split_range(
+                    second_map_range, overlap_range_start, overlap_range_stop, step
+                )
+            except TypeError:
+                # cannot determine truth value of Relational
+                return None
 
     first_map_combined_ranges = (first_map_splitted_dict[param] for param in first_map.params)
     second_map_combined_ranges = (second_map_splitted_dict[param] for param in second_map.params)

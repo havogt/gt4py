@@ -79,6 +79,12 @@ def test_copy_map_graph():
         ({"i": "0:N"}, {"i": "1:N"}, {"0", "1:N"}, {"1:N"}),  # partially overlapping
         ({"i": "0:M"}, {"i": "1:N"}, {}, {}),  # symbolic ndrange, no splitting
         (
+            {"i": "Max(0, N - 2):N"},
+            {"i": "0:N"},
+            {},
+            {},
+        ),  # overlap start decidable, split undecidable, no splitting
+        (
             {"i": "0:M", "j": "0:N-1"},
             {"i": "1:M", "j": "0:N"},
             {"0,0:N-1", "1:M,0:N-1"},
