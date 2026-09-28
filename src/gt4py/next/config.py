@@ -153,6 +153,11 @@ EMBEDDED_CONCAT_WHERE_WITHOUT_CONCATENATE: bool = env_flag_to_bool(
 )
 
 
+#: Levels per iteration of the `jax.lax.scan` of an embedded scan on JAX arrays: on GPU, an
+#: iteration costs a few kernel launches independent of its number of levels.
+EMBEDDED_JAX_SCAN_BLOCK_SIZE: int = env_flag_to_int("GT4PY_EMBEDDED_JAX_SCAN_BLOCK_SIZE", default=4)
+
+
 #: Add GPU trace markers (NVTX, ROC-TX) to the generated code, at compile time.
 ADD_GPU_TRACE_MARKERS: bool = env_flag_to_bool("GT4PY_ADD_GPU_TRACE_MARKERS", default=False)
 

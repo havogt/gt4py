@@ -11,7 +11,7 @@ from typing import Any, Callable, Generic, Iterator, Optional, ParamSpec, Sequen
 
 from gt4py._core import definitions as core_defs
 from gt4py.eve import extended_typing as xtyping
-from gt4py.next import common, errors, field_utils, named_collections, utils
+from gt4py.next import common, config, errors, field_utils, named_collections, utils
 from gt4py.next.embedded import common as embedded_common, context as embedded_context
 from gt4py.next.field_utils import get_array_ns
 from gt4py.next.otf import arguments
@@ -20,10 +20,6 @@ from gt4py.next.type_system import type_info, type_specifications as ts, type_tr
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
-
-# Levels per iteration of the `jax.lax.scan` of a scan on JAX arrays: on GPU, an iteration
-# costs a few kernel launches independent of its number of levels.
-_JAX_SCAN_BLOCK_SIZE = 4
 
 
 @dataclasses.dataclass(frozen=True)
@@ -214,8 +210,9 @@ class ScanOperator(EmbeddedOperator[xtyping.MaybeNestedInTuple[core_defs.ScalarT
             return carry, [jnp.stack(leaf) for leaf in zip(*results)]
 
         xs = [stack(x) for value in values for x in _leaves(value, is_scanned)]
-        num_blocks, rest = divmod(len(self.range.unit_range), _JAX_SCAN_BLOCK_SIZE)
-        blocked_end = num_blocks * _JAX_SCAN_BLOCK_SIZE
+        block_size = config.EMBEDDED_JAX_SCAN_BLOCK_SIZE
+        num_blocks, rest = divmod(len(self.range.unit_range), block_size)
+        blocked_end = num_blocks * block_size
         blocked, remaining = (
             (slice(0, blocked_end), slice(blocked_end, None))
             if self.forward
@@ -225,9 +222,9 @@ class ScanOperator(EmbeddedOperator[xtyping.MaybeNestedInTuple[core_defs.ScalarT
         parts = []
         if num_blocks:
             carry, blocked_ys = lax.scan(
-                lambda carry, xs: run_levels(carry, xs, _JAX_SCAN_BLOCK_SIZE),
+                lambda carry, xs: run_levels(carry, xs, block_size),
                 carry,
-                [x[blocked].reshape(num_blocks, _JAX_SCAN_BLOCK_SIZE, *x.shape[1:]) for x in xs],
+                [x[blocked].reshape(num_blocks, block_size, *x.shape[1:]) for x in xs],
                 length=num_blocks,
                 reverse=not self.forward,
             )
