@@ -31,6 +31,12 @@ def _dynamic_shift_args(node: itir.Expr) -> list[bool] | None:
     return dynamic_shifts
 
 
+def _is_index_expr(node: itir.Expr) -> bool:
+    if cpm.is_call_to(node, "make_tuple"):
+        return all(_is_index_expr(arg) for arg in node.args)
+    return cpm.is_call_to(node, "index")
+
+
 @dataclasses.dataclass
 class InlineDynamicShifts(eve.NodeTranslator, eve.VisitorWithSymbolTableTrait):
     offset_provider_type: common.OffsetProviderType
@@ -65,16 +71,17 @@ class InlineDynamicShifts(eve.NodeTranslator, eve.VisitorWithSymbolTableTrait):
                 )
 
         # Fusing one producer can expose another one behind it (e.g. a chain of shifts split
-        # across multiple `as_fieldop`s), so repeat until no dynamically shifted argument that is
-        # not a `SymRef` is left. A let-bound producer shared between two dynamically shifted
-        # consumers is therefore left behind, see #2839.
-        # This terminates: each iteration either replaces an `as_fieldop` or `if_` argument by
-        # strict subterms of itself, or drops a tuple-of-literals argument entirely.
+        # across multiple `as_fieldop`s), so repeat until every dynamically shifted argument is a
+        # `SymRef` or an `index` field. A let-bound producer shared between two dynamically
+        # shifted consumers is therefore left behind, see #2839.
+        # This terminates: each iteration either replaces an `as_fieldop`, `if_`, `broadcast` or
+        # `concat_where` argument by strict subterms of itself and `index` fields, or drops a
+        # tuple-of-literals argument entirely.
         expr: itir.Expr = node
         while dynamic_shift_args := _dynamic_shift_args(expr):
             assert isinstance(expr, itir.FunCall) and len(expr.fun.args) in [1, 2]  # type: ignore[attr-defined]  # ensured by is_applied_as_fieldop in _dynamic_shift_args
             fuse_args = [
-                not isinstance(inp, itir.SymRef) and dynamic_shift_arg
+                not isinstance(inp, itir.SymRef) and not _is_index_expr(inp) and dynamic_shift_arg
                 for inp, dynamic_shift_arg in zip(expr.args, dynamic_shift_args, strict=True)
             ]
             if not any(fuse_args):

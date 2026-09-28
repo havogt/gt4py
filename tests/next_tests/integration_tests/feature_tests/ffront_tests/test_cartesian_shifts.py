@@ -10,7 +10,8 @@ import numpy as np
 import pytest
 
 import gt4py.next as gtx
-from gt4py.next.ffront.experimental import as_offset
+from gt4py.next import broadcast
+from gt4py.next.ffront.experimental import as_offset, concat_where
 
 from next_tests.integration_tests import cases
 from next_tests.integration_tests.cases import (
@@ -113,3 +114,52 @@ def test_offset_field_of_chained_ops(cartesian_case):
         out=out,
         ref=(a.asnumpy()[:, 1:] + 1) * 2,
     )
+
+
+def _offsets_crossing_k_level_2(k_size: int) -> np.ndarray:
+    return np.where(np.arange(k_size) < 2, 2, -2).astype(np.int32)
+
+
+@pytest.mark.uses_dynamic_offsets
+@pytest.mark.uses_concat_where
+@pytest.mark.uses_concat_where_with_dynamic_offsets
+def test_offset_field_of_concat_where(cartesian_case):
+    @gtx.field_operator
+    def testee(a: cases.IKField, b: cases.IKField, offset_field: cases.IKField) -> cases.IKField:
+        return concat_where(KDim < 2, a, b)(as_offset(Koff, offset_field))
+
+    i_size, k_size = cartesian_case.default_sizes[IDim], cartesian_case.default_sizes[KDim]
+    k_offsets = _offsets_crossing_k_level_2(k_size)
+    offset_field = cartesian_case.as_field(
+        [IDim, KDim], np.broadcast_to(k_offsets, (i_size, k_size)).copy()
+    )
+    a = cases.allocate(cartesian_case, testee, "a")()
+    b = cases.allocate(cartesian_case, testee, "b")()
+    out = cases.allocate(cartesian_case, testee, cases.RETURN)()
+
+    shifted_k = np.arange(k_size) + k_offsets
+    ref = np.where(shifted_k < 2, a.asnumpy()[:, shifted_k], b.asnumpy()[:, shifted_k])
+
+    cases.verify(cartesian_case, testee, a, b, offset_field, out=out, ref=ref)
+
+
+@pytest.mark.uses_dynamic_offsets
+@pytest.mark.uses_broadcast_with_dynamic_offsets
+def test_offset_field_of_broadcast(cartesian_case):
+    @gtx.field_operator
+    def testee(a: cases.IField, b: cases.IKField, offset_field: cases.IKField) -> cases.IKField:
+        return (broadcast(a, (IDim, KDim)) + b)(as_offset(Koff, offset_field))
+
+    i_size, k_size = cartesian_case.default_sizes[IDim], cartesian_case.default_sizes[KDim]
+    k_offsets = _offsets_crossing_k_level_2(k_size)
+    offset_field = cartesian_case.as_field(
+        [IDim, KDim], np.broadcast_to(k_offsets, (i_size, k_size)).copy()
+    )
+    a = cases.allocate(cartesian_case, testee, "a")()
+    b = cases.allocate(cartesian_case, testee, "b")()
+    out = cases.allocate(cartesian_case, testee, cases.RETURN)()
+
+    shifted_k = np.arange(k_size) + k_offsets
+    ref = a.asnumpy()[:, np.newaxis] + b.asnumpy()[:, shifted_k]
+
+    cases.verify(cartesian_case, testee, a, b, offset_field, out=out, ref=ref)

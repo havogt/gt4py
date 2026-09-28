@@ -34,7 +34,15 @@ def test_in_helper():
             im.less(im.tuple_get(1, pos), bounds[JDim][1]),
         ),
     )
-    actual = _in(pos, im.domain(common.GridType.CARTESIAN, bounds))
+    actual = _in(pos, [IDim, JDim], im.domain(common.GridType.CARTESIAN, bounds))
+    assert actual == expected
+
+
+def test_in_helper_comparison():
+    pos = im.make_tuple(0, 1)
+    cond = im.or_(im.less(im.axis_literal(JDim), 3), im.greater_equal("n", im.axis_literal(IDim)))
+    expected = im.or_(im.less(im.tuple_get(1, pos), 3), im.greater_equal("n", im.tuple_get(0, pos)))
+    actual = _in(pos, [IDim, JDim], cond)
     assert actual == expected
 
 
@@ -47,7 +55,7 @@ def test_trivial():
     expected = im.as_fieldop(
         im.lambda_("__tcw_pos", "__tcw_arg0", "__tcw_arg1")(
             im.if_(
-                _in(im.deref("__tcw_pos"), cond),
+                _in(im.deref("__tcw_pos"), [IDim], cond),
                 im.deref("__tcw_arg0"),
                 im.deref("__tcw_arg1"),
             )
@@ -72,6 +80,7 @@ def test_capturing_cond():
             im.if_(
                 _in(
                     im.deref("__tcw_pos"),
+                    [IDim],
                     im.domain(
                         common.GridType.CARTESIAN, {IDim: (im.deref("start"), im.deref("stop"))}
                     ),

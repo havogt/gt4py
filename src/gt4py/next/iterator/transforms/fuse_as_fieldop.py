@@ -24,6 +24,7 @@ from gt4py.next.iterator.ir_utils import (
     misc as ir_misc,
 )
 from gt4py.next.iterator.transforms import (
+    concat_where,
     cse,
     fixed_point_transformation,
     inline_center_deref_lift_vars,
@@ -149,8 +150,12 @@ def fuse_as_fieldop(
                 arg = im.op_as_fieldop("if_")(*arg.args)
             elif _is_tuple_expr_of_literals(arg):
                 arg = im.op_as_fieldop(im.lambda_()(arg))()
+            elif cpm.is_call_to(arg, "broadcast"):
+                arg = im.as_fieldop("deref")(arg.args[0])
+            elif cpm.is_call_to(arg, "concat_where"):
+                arg = concat_where.concat_where_to_as_fieldop(arg)
             else:
-                raise NotImplementedError()
+                raise NotImplementedError(f"Fusing argument '{arg}' is not supported.")
 
             inline_expr, extracted_args = _inline_as_fieldop_arg(arg, uids=uids)
 
