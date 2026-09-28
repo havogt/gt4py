@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 import gt4py.next as gtx
-from gt4py.next import common, config, scan
+from gt4py.next import common, scan
 from gt4py.next.embedded import operators
 from gt4py.next.ffront import fbuiltins
 
@@ -158,9 +158,9 @@ def test_jax_tuple_carry(ijk_fields):
     "num_levels",
     [
         1,
-        config.EMBEDDED_JAX_SCAN_BLOCK_SIZE,
-        config.EMBEDDED_JAX_SCAN_BLOCK_SIZE + 1,
-        2 * config.EMBEDDED_JAX_SCAN_BLOCK_SIZE + 3,
+        operators._JAX_SCAN_BLOCK_SIZE,
+        operators._JAX_SCAN_BLOCK_SIZE + 1,
+        2 * operators._JAX_SCAN_BLOCK_SIZE + 3,
     ],
 )
 def test_jax_matches_numpy_blocks_and_remainder(forward, num_levels):
@@ -186,7 +186,7 @@ def test_jax_scan_iterates_over_blocks_of_levels(forward):
     import jax
     import jax.numpy as jnp
 
-    num_levels = 3 * config.EMBEDDED_JAX_SCAN_BLOCK_SIZE + 1
+    num_levels = 3 * operators._JAX_SCAN_BLOCK_SIZE + 1
     domain = {IDim: (0, 2), KDim: (0, num_levels)}
 
     def testee(array):
