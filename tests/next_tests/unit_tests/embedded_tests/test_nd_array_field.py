@@ -32,7 +32,7 @@ from gt4py.next.embedded import (
     nd_array_field,
 )
 from gt4py.next.embedded.nd_array_field import _get_slices_from_domain_slice
-from gt4py.next.ffront import fbuiltins
+from gt4py.next.ffront import experimental, fbuiltins
 from gt4py.next.ffront.experimental import as_offset
 
 from next_tests.integration_tests.feature_tests.math_builtin_test_data import math_builtin_test_data
@@ -2103,6 +2103,37 @@ def test_jax_premap_gathers_whole_rows():
 
     assert re.findall(r"slice_sizes=\{([^}]*)\}", hlo) == ["1,7"]
     np.testing.assert_array_equal(premap(field).asnumpy(), values[table])
+
+
+@pytest.mark.parametrize("false_range", [(0, 6), (2, 6)], ids=["covering", "partial"])
+def test_concat_where_select_matches_concatenation(false_range):
+    K = Dimension("K", kind=DimensionKind.VERTICAL)
+    true_values = np.arange(6, dtype=np.float64)
+    false_values = -np.arange(*false_range, dtype=np.float64)
+    true_field = common._field(true_values, domain=common.domain({K: (0, 6)}))
+    false_field = common._field(false_values, domain=common.domain({K: false_range}))
+
+    result = experimental.concat_where(common.domain({K: (0, 3)}), true_field, false_field)
+
+    assert result.domain == common.domain({K: (0, 6)})
+    np.testing.assert_array_equal(result.asnumpy(), [0.0, 1.0, 2.0, -3.0, -4.0, -5.0])
+
+
+@pytest.mark.requires_jax
+def test_jax_concat_where_on_covering_branches_is_a_select():
+    import jax
+
+    K = Dimension("K", kind=DimensionKind.VERTICAL)
+    domain = common.domain({K: (0, 6)})
+    true_field = common._field(jax.numpy.arange(6, dtype=np.float64), domain=domain)
+    false_field = common._field(-jax.numpy.arange(6, dtype=np.float64), domain=domain)
+
+    select = jax.jit(lambda t, f: experimental.concat_where(common.domain({K: (0, 3)}), t, f))
+
+    assert "concatenate(" not in select.lower(true_field, false_field).compile().as_text()
+    np.testing.assert_array_equal(
+        select(true_field, false_field).asnumpy(), [0.0, 1.0, 2.0, -3.0, -4.0, -5.0]
+    )
 
 
 @pytest.mark.requires_jax
