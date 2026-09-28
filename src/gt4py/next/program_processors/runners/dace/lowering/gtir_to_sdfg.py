@@ -596,8 +596,7 @@ class GTIRToSDFG(eve.NodeVisitor, SDFGBuilder):
         return gtir_to_sdfg_types.FieldopData(data_node, field_type, field_origin)
 
     def is_column_axis(self, dim: gtx_common.Dimension) -> bool:
-        assert self.column_axis
-        return dim == self.column_axis
+        return dim.kind == gtx_common.DimensionKind.VERTICAL
 
     def setup_nested_context(
         self,

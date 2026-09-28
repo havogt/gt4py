@@ -18,6 +18,7 @@ from gt4py.next import common, utils
 from gt4py.next.iterator import ir as itir
 from gt4py.next.iterator.ir_utils import (
     common_pattern_matcher as cpm,
+    domain_utils,
     ir_makers as im,
     misc as ir_utils_misc,
 )
@@ -601,6 +602,7 @@ class GTFN_lowering(eve.NodeTranslator, eve.VisitorWithSymbolTableTrait):
                 isinstance(execution, ScanExecution)
                 and isinstance(res[-1], ScanExecution)
                 and execution.backend == res[-1].backend
+                and execution.axis == res[-1].axis
             ):
                 res[-1] = merge(res[-1], execution)
             else:
@@ -672,8 +674,11 @@ class GTFN_lowering(eve.NodeTranslator, eve.VisitorWithSymbolTableTrait):
                 inputs=[i + 1 for i, _ in enumerate(inputs)],
                 init=self.visit(stencil.args[2], **kwargs),
             )
-            column_axis = self.column_axis
-            assert isinstance(column_axis, common.Dimension)
+            (column_axis,) = (
+                dim
+                for dim in domain_utils.SymbolicDomain.from_expr(domain).ranges
+                if dim.kind == common.DimensionKind.VERTICAL
+            )
             return ScanExecution(
                 backend=backend,
                 scans=[scan],

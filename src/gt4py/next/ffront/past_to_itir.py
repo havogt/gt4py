@@ -160,39 +160,20 @@ def past_to_gtir_factory(
 
 
 def _column_axis(all_closure_vars: dict[str, Any]) -> Optional[common.Dimension]:
-    # construct mapping from column axis to scan operators defined on
-    #  that dimension. only one column axis is allowed, but we can use
-    #  this mapping to provide good error messages.
-    scanops_per_axis: dict[common.Dimension, list[str]] = {}
-    for name, gt_callable in transform_utils._filter_closure_vars_by_type(
+    """Return the axis of the first scan in the closure's field operators, `None` if there is none.
+
+    Backends take the axis of each scan from its domain; this only marks column execution.
+    """
+    for gt_callable in transform_utils._filter_closure_vars_by_type(
         all_closure_vars, gtcallable.GTCallable
-    ).items():
+    ).values():
         if isinstance(
             foast_stage := getattr(gt_callable, "foast_stage", None), ffront_stages.FOASTOperatorDef
         ):
-            for scan_call in (
-                foast_stage.foast_node.walk_values()
-                .if_isinstance(foast.Call)
-                .filter(lambda call: isinstance(call.type, ts_ffront.ScanOperatorType))
-            ):
-                scanops_per_axis.setdefault(scan_call.type.axis, []).append(
-                    f"scan in '{name}' (line {scan_call.location.line})"
-                )
-
-    if len(scanops_per_axis.values()) == 0:
-        return None
-
-    if len(scanops_per_axis.values()) != 1:
-        scanops_per_axis_str = "\n".join(
-            f"- {dim.value}: {', '.join(scanops)}" for dim, scanops in scanops_per_axis.items()
-        )
-
-        raise TypeError(
-            "Only scans along the same axis "
-            f"can be used in a 'Program', found:\n{scanops_per_axis_str}\n"
-        )
-
-    return iter(scanops_per_axis.keys()).__next__()
+            for call in foast_stage.foast_node.walk_values().if_isinstance(foast.Call):
+                if isinstance(call.type, ts_ffront.ScanOperatorType):
+                    return call.type.axis
+    return None
 
 
 def _compute_field_slice(node: past.Subscript) -> list[past.Slice]:

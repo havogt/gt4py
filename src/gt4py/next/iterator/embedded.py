@@ -1725,17 +1725,21 @@ def _compute_at_position(
     return sten(*ins_iters)
 
 
-def _extract_column_range(domain) -> common.NamedRange | eve.NothingType:
+def _extract_column_range(
+    domain: runtime.CartesianDomain | runtime.UnstructuredDomain,
+) -> common.NamedRange | eve.NothingType:
     if (col_range_placeholder := embedded_context.get_closure_column_range(None)) is not None:
         assert (
             col_range_placeholder.unit_range.is_empty()
         )  # check it's just the placeholder with empty range
-        column_axis = col_range_placeholder.dim
-        if column_axis is not None and column_axis.value in domain:
-            return common.NamedRange(
-                column_axis,
-                common.UnitRange(domain[column_axis.value].start, domain[column_axis.value].stop),
-            )
+        if col_range_placeholder.dim is not None:
+            vertical_dims = [dim for dim in domain if dim.kind == common.DimensionKind.VERTICAL]
+            if vertical_dims:
+                (column_axis,) = vertical_dims
+                return common.NamedRange(
+                    column_axis,
+                    common.UnitRange(domain[column_axis].start, domain[column_axis].stop),
+                )
     return eve.NOTHING
 
 
@@ -1745,7 +1749,7 @@ def _get_output_type(
     args: tuple[Any, ...],
 ) -> ts.TypeSpec:
     domain = _dimension_to_tag(domain_)
-    col_range = _extract_column_range(domain)
+    col_range = _extract_column_range(domain_)
 
     col_dim: Optional[common.Dimension] = None
     if isinstance(col_range, common.NamedRange):
@@ -1822,7 +1826,7 @@ def closure(
     if not (isinstance(out, common.Field) or is_tuple_of_field(out)):
         raise TypeError("'Out' needs to be a located field.")
 
-    column_range: common.NamedRange | eve.NothingType = _extract_column_range(domain)
+    column_range: common.NamedRange | eve.NothingType = _extract_column_range(domain_)
 
     column_dim = None
     if isinstance(column_range, common.NamedRange):
