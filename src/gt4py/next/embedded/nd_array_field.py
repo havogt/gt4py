@@ -30,7 +30,7 @@ from gt4py.eve.extended_typing import (
     TypeVar,
     cast,
 )
-from gt4py.next import common
+from gt4py.next import common, config
 from gt4py.next.embedded import (
     common as embedded_common,
     context as embedded_context,
@@ -1116,7 +1116,7 @@ def _concat_where(
         # no data to concatenate, return an empty field
         nd_array_class = _get_nd_array_class(true_field, false_field)
         return _size0_field(nd_array_class, dims=t_broadcasted.domain.dims, dtype=true_field.dtype)
-    if t_slices and f_slices:
+    if config.EMBEDDED_CONCAT_WHERE_WITHOUT_CONCATENATE and t_slices and f_slices:
         pieces = (*t_slices, *f_slices)
         result_range = common.UnitRange(
             min(p.domain[domain_dim].unit_range.start for p in pieces),

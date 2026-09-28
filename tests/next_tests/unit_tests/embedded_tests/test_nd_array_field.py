@@ -2179,6 +2179,26 @@ def test_concat_where_with_one_covering_branch(condition, true_range, false_rang
     np.testing.assert_array_equal(false_field.asnumpy(), false_values)
 
 
+@pytest.mark.requires_jax
+def test_jax_concat_where_fast_paths_can_be_disabled(monkeypatch):
+    import jax
+
+    from gt4py.next import config
+
+    K = Dimension("K", kind=DimensionKind.VERTICAL)
+    domain = common.domain({K: (0, 6)})
+    true_field = common._field(jax.numpy.arange(6, dtype=np.float64), domain=domain)
+    false_field = common._field(-jax.numpy.arange(6, dtype=np.float64), domain=domain)
+    monkeypatch.setattr(config, "EMBEDDED_CONCAT_WHERE_WITHOUT_CONCATENATE", False)
+
+    select = jax.jit(lambda t, f: experimental.concat_where(common.domain({K: (0, 3)}), t, f))
+
+    assert " concatenate(" in select.lower(true_field, false_field).compile().as_text()
+    np.testing.assert_array_equal(
+        select(true_field, false_field).asnumpy(), [0.0, 1.0, 2.0, -3.0, -4.0, -5.0]
+    )
+
+
 def test_concat_where_with_gap_still_raises():
     K = Dimension("K", kind=DimensionKind.VERTICAL)
     true_field = common._field(np.zeros(1), domain=common.domain({K: (0, 1)}))

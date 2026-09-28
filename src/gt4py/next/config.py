@@ -146,6 +146,13 @@ UNSTRUCTURED_HORIZONTAL_HAS_UNIT_STRIDE: bool = env_flag_to_bool(
 )
 
 
+#: Embedded `concat_where`: select or update in place instead of concatenating when a branch
+#: covers the result range. Disable to always concatenate.
+EMBEDDED_CONCAT_WHERE_WITHOUT_CONCATENATE: bool = env_flag_to_bool(
+    "GT4PY_EMBEDDED_CONCAT_WHERE_WITHOUT_CONCATENATE", default=True
+)
+
+
 #: Add GPU trace markers (NVTX, ROC-TX) to the generated code, at compile time.
 ADD_GPU_TRACE_MARKERS: bool = env_flag_to_bool("GT4PY_ADD_GPU_TRACE_MARKERS", default=False)
 
