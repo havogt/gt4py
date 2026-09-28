@@ -17,7 +17,9 @@ from gt4py.eve.concepts import SymbolName
 from gt4py.next import common, utils
 from gt4py.next.iterator import ir as itir
 from gt4py.next.iterator.ir_utils import (
+    column_reduce as ir_column_reduce,
     common_pattern_matcher as cpm,
+    domain_utils,
     ir_makers as im,
     misc as ir_utils_misc,
 )
@@ -314,6 +316,39 @@ def _process_elements(
 
 
 @dataclasses.dataclass(frozen=True)
+class _ColumnReduceToScan(eve.NodeTranslator):
+    """
+    Rewrite `out @ D ← column_reduce(op, reduce_domain, field)` into a forward scan.
+
+    The scan runs on `D` extended by the vertical range of `reduce_domain` and writes into `out`,
+    which has no vertical dimension: its vertical stride is zero, so every level overwrites the
+    same element and the value of the last level, the reduction, remains. The carry is
+    `(is_initialized, value)`, seeded with the first level.
+    """
+
+    offset_provider_type: common.OffsetProviderType
+
+    def visit_SetAt(self, node: itir.SetAt) -> itir.SetAt:
+        projector, reduce_expr = ir_utils_misc.extract_projector(node.expr)
+        if not cpm.is_call_to(reduce_expr, "column_reduce"):
+            return node
+        expr = ir_column_reduce.as_scan(
+            reduce_expr, domain_utils.SymbolicDomain.from_expr(node.domain)
+        )
+        if projector is not None:
+            expr = im.call(projector)(expr)
+        infer = functools.partial(
+            itir_type_inference.infer,
+            offset_provider_type=self.offset_provider_type,
+            allow_undeclared_symbols=True,
+        )
+        expr = infer(expr)
+        _, scan = ir_utils_misc.extract_projector(expr)
+        assert cpm.is_applied_as_fieldop(scan)
+        return itir.SetAt(target=node.target, domain=scan.fun.args[1], expr=expr)
+
+
+@dataclasses.dataclass(frozen=True)
 class GTFN_lowering(eve.NodeTranslator, eve.VisitorWithSymbolTableTrait):
     _binary_op_map: ClassVar[dict[str, str]] = {
         "plus": "+",
@@ -355,6 +390,7 @@ class GTFN_lowering(eve.NodeTranslator, eve.VisitorWithSymbolTableTrait):
             raise TypeError(f"Expected a 'Program', got '{type(node).__name__}'.")
 
         node = itir_type_inference.infer(node, offset_provider_type=offset_provider_type)
+        node = _ColumnReduceToScan(offset_provider_type=offset_provider_type).visit(node)
         grid_type = ir_utils_misc.grid_type_from_program(node)
         if grid_type == common.GridType.UNSTRUCTURED:
             node = _CannonicalizeUnstructuredDomain.apply(node)
@@ -612,6 +648,7 @@ class GTFN_lowering(eve.NodeTranslator, eve.VisitorWithSymbolTableTrait):
                 isinstance(execution, ScanExecution)
                 and isinstance(res[-1], ScanExecution)
                 and execution.backend == res[-1].backend
+                and execution.axis == res[-1].axis
             ):
                 res[-1] = merge(res[-1], execution)
             else:
@@ -683,8 +720,11 @@ class GTFN_lowering(eve.NodeTranslator, eve.VisitorWithSymbolTableTrait):
                 inputs=[i + 1 for i, _ in enumerate(inputs)],
                 init=self.visit(stencil.args[2], **kwargs),
             )
-            column_axis = self.column_axis
-            assert isinstance(column_axis, common.Dimension)
+            (column_axis,) = (
+                dim
+                for dim in domain_utils.SymbolicDomain.from_expr(domain).ranges
+                if dim.kind == common.DimensionKind.VERTICAL
+            )
             return ScanExecution(
                 backend=backend,
                 scans=[scan],
