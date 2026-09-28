@@ -6,6 +6,7 @@
 # Please, refer to the LICENSE file in the root directory.
 # SPDX-License-Identifier: BSD-3-Clause
 
+import re
 from typing import NamedTuple
 
 import numpy as np
@@ -149,6 +150,52 @@ def test_jax_tuple_carry(ijk_fields):
 
     for expected_el, result_el in zip(_as_numpy(expected), _as_numpy(result), strict=True):
         np.testing.assert_allclose(result_el, expected_el)
+
+
+@pytest.mark.requires_jax
+@pytest.mark.parametrize("forward", [True, False])
+@pytest.mark.parametrize(
+    "num_levels",
+    [
+        1,
+        operators._JAX_SCAN_BLOCK_SIZE,
+        operators._JAX_SCAN_BLOCK_SIZE + 1,
+        2 * operators._JAX_SCAN_BLOCK_SIZE + 3,
+    ],
+)
+def test_jax_matches_numpy_blocks_and_remainder(forward, num_levels):
+    import jax.numpy as jnp
+
+    rng = np.random.default_rng(0)
+    domain = {IDim: (0, 3), KDim: (-1, num_levels + 1)}
+    inp = _field(rng.normal(size=(3, num_levels + 2)), domain)
+    column_init = _field(rng.normal(size=(3,)), {IDim: (0, 3)})
+    to_jax = lambda f: common._field(jnp.asarray(f.ndarray), domain=f.domain)
+    k_range = (0, num_levels)
+
+    expected = _scan(_sum_and_max, forward, (column_init, 1.0), k_range, True, inp)
+    result = _scan(_sum_and_max, forward, (to_jax(column_init), 1.0), k_range, False, to_jax(inp))
+
+    for expected_el, result_el in zip(_as_numpy(expected), _as_numpy(result), strict=True):
+        np.testing.assert_allclose(result_el, expected_el)
+
+
+@pytest.mark.requires_jax
+@pytest.mark.parametrize("forward", [True, False])
+def test_jax_scan_iterates_over_blocks_of_levels(forward):
+    import jax
+    import jax.numpy as jnp
+
+    num_levels = 3 * operators._JAX_SCAN_BLOCK_SIZE + 1
+    domain = {IDim: (0, 2), KDim: (0, num_levels)}
+
+    def testee(array):
+        return _scan(
+            _sum_and_max, forward, (0.0, 1.0), (0, num_levels), False, _field(array, domain)
+        )[0].ndarray
+
+    jaxpr = str(jax.make_jaxpr(testee)(jnp.zeros((2, num_levels))))
+    assert re.findall(r"\blength=(\d+)", jaxpr) == ["3"]
 
 
 @pytest.mark.requires_jax
