@@ -64,6 +64,21 @@ def test_concat_where(cartesian_case, static_domains: bool):
     )
 
 
+def test_concat_where_with_domain_used_twice(cartesian_case, static_domains: bool):
+    @gtx.field_operator(static_domains=static_domains)
+    def testee(ground: cases.IJKField, air: cases.IJKField) -> cases.IJKField:
+        lower = KDim < 2
+        return concat_where(lower, ground, air) * 2 + concat_where(lower, air, ground)
+
+    k = np.arange(0, cartesian_case.default_sizes[KDim])
+    lower = k[np.newaxis, np.newaxis, :] < 2
+    cases.verify_with_default_data(
+        cartesian_case,
+        testee,
+        lambda ground, air: np.where(lower, ground, air) * 2 + np.where(lower, air, ground),
+    )
+
+
 def test_concat_where_non_overlapping(cartesian_case, static_domains: bool):
     """Fields only defined in their respective region in concat_where."""
 

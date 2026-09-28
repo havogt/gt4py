@@ -6,9 +6,9 @@
 # Please, refer to the LICENSE file in the root directory.
 # SPDX-License-Identifier: BSD-3-Clause
 
-from typing import Optional
+from typing import Optional, TypeVar
 
-from gt4py.eve import PreserveLocationVisitor
+from gt4py.eve import NodeTranslator, PreserveLocationVisitor
 from gt4py.next.iterator import ir as itir
 from gt4py.next.iterator.ir_utils import (
     common_pattern_matcher as cpm,
@@ -16,7 +16,7 @@ from gt4py.next.iterator.ir_utils import (
     ir_makers as im,
 )
 from gt4py.next.iterator.ir_utils.domain_utils import SymbolicDomain
-from gt4py.next.iterator.transforms import fixed_point_transformation
+from gt4py.next.iterator.transforms import fixed_point_transformation, inline_lambdas
 
 
 def _range_complement(
@@ -126,4 +126,26 @@ class _CanonicalizeDomainArgument(
         return None
 
 
-canonicalize_domain_argument = _CanonicalizeDomainArgument.apply
+def _is_domain_expr(expr: itir.Expr) -> bool:
+    if cpm.is_call_to(expr, ("cartesian_domain", "unstructured_domain")):
+        return True
+    return cpm.is_call_to(expr, ("and_", "or_")) and all(_is_domain_expr(a) for a in expr.args)
+
+
+class _InlineDomainLets(PreserveLocationVisitor, NodeTranslator):
+    """Inline let-bound domains, so that every `concat_where` gets its domain as an expression."""
+
+    def visit_FunCall(self, node: itir.FunCall) -> itir.Node:
+        node = self.generic_visit(node)
+        if cpm.is_let(node):
+            eligible_params = [_is_domain_expr(arg) for arg in node.args]
+            if any(eligible_params):
+                return inline_lambdas.inline_lambda(node, eligible_params=eligible_params)
+        return node
+
+
+_N = TypeVar("_N", bound=itir.Node)
+
+
+def canonicalize_domain_argument(node: _N) -> _N:
+    return _CanonicalizeDomainArgument.apply(_InlineDomainLets().visit(node))

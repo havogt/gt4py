@@ -66,3 +66,14 @@ def test_nested_concat_where(testee, expected):
     actual = inline_lambdas.InlineLambdas.apply(actual, opcount_preserving=True)
 
     assert actual == expected
+
+
+def test_let_bound_domain_used_twice():
+    domain = im.domain(common.GridType.CARTESIAN, {IDim: (itir.InfinityLiteral.NEGATIVE, 2)})
+    testee = im.let("d", domain)(
+        im.plus(im.concat_where("d", "a", "b"), im.concat_where("d", "b", "a"))
+    )
+
+    actual = concat_where.canonicalize_domain_argument(testee)
+
+    assert actual == im.plus(im.concat_where(domain, "a", "b"), im.concat_where(domain, "b", "a"))
