@@ -1133,7 +1133,35 @@ def _concat_where(
                 domain,
                 result_range,
             )
+        tiled = sum(len(p.domain[domain_dim].unit_range) for p in pieces) == len(result_range)
+        for covering, partial_pieces in ((f_broadcasted, t_slices), (t_broadcasted, f_slices)):
+            covering_range = covering.domain[domain_dim].unit_range
+            if (
+                tiled
+                and covering_range.start <= result_range.start
+                and (result_range.stop <= covering_range.stop)
+            ):
+                return _update_on_range(
+                    cast(NdArrayField, covering), partial_pieces, domain_dim, result_range
+                )
     return _concat(*f_slices, *t_slices, dim=domain_dim)
+
+
+def _update_on_range(
+    covering: NdArrayField,
+    pieces: Sequence[common.Field],
+    dim: common.Dimension,
+    result_range: common.UnitRange,
+) -> NdArrayField:
+    """`concat_where` where one branch covers `result_range`: write the other branch's pieces into it."""
+    result_domain = covering.domain.replace(dim, common.NamedRange(dim, result_range))
+    xp = covering.array_ns
+    result = covering.__class__.from_array(
+        xp.array(covering[result_domain].ndarray, copy=True), domain=result_domain
+    )
+    for piece in pieces:
+        result[piece.domain] = piece
+    return result
 
 
 def _where_on_range(

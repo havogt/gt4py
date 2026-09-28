@@ -2156,6 +2156,53 @@ def test_concat_where_select_matches_concatenation(false_range):
     np.testing.assert_array_equal(result.asnumpy(), [0.0, 1.0, 2.0, -3.0, -4.0, -5.0])
 
 
+@pytest.mark.parametrize(
+    "condition, true_range, false_range, expected",
+    [
+        ((1, 4), (1, 4), (0, 6), [-0.0, 1.0, 2.0, 3.0, -4.0, -5.0]),
+        ((1, 4), (0, 6), (4, 6), [1.0, 2.0, 3.0, -4.0, -5.0]),
+        ((2, 4), (0, 6), (1, 5), [-1.0, 2.0, 3.0, -4.0]),
+    ],
+    ids=["partial-true", "partial-false", "two-false-pieces"],
+)
+def test_concat_where_with_one_covering_branch(condition, true_range, false_range, expected):
+    K = Dimension("K", kind=DimensionKind.VERTICAL)
+    true_values = np.arange(*true_range, dtype=np.float64)
+    false_values = -np.arange(*false_range, dtype=np.float64)
+    true_field = common._field(true_values.copy(), domain=common.domain({K: true_range}))
+    false_field = common._field(false_values.copy(), domain=common.domain({K: false_range}))
+
+    result = experimental.concat_where(common.domain({K: condition}), true_field, false_field)
+
+    np.testing.assert_array_equal(result.asnumpy(), expected)
+    np.testing.assert_array_equal(true_field.asnumpy(), true_values)
+    np.testing.assert_array_equal(false_field.asnumpy(), false_values)
+
+
+def test_concat_where_with_gap_still_raises():
+    K = Dimension("K", kind=DimensionKind.VERTICAL)
+    true_field = common._field(np.zeros(1), domain=common.domain({K: (0, 1)}))
+    false_field = common._field(np.ones(6), domain=common.domain({K: (0, 6)}))
+
+    with pytest.raises(embedded_exceptions.NonContiguousDomain):
+        experimental.concat_where(common.domain({K: (0, 3)}), true_field, false_field)
+
+
+@pytest.mark.requires_jax
+def test_jax_concat_where_with_one_covering_branch_updates_in_place():
+    import jax
+
+    C = Dimension("C")
+    K = Dimension("K", kind=DimensionKind.VERTICAL)
+    partial = common._field(jax.numpy.ones((2, 4)), domain=common.domain({C: (0, 2), K: (1, 5)}))
+    covering = common._field(jax.numpy.zeros((2, 6)), domain=common.domain({C: (0, 2), K: (0, 6)}))
+
+    select = jax.jit(lambda t, f: experimental.concat_where(common.domain({K: (1, 5)}), t, f))
+
+    assert " concatenate(" not in select.lower(partial, covering).compile().as_text()
+    np.testing.assert_array_equal(select(partial, covering).asnumpy(), [[0.0, 1, 1, 1, 1, 0]] * 2)
+
+
 @pytest.mark.requires_jax
 def test_jax_concat_where_on_covering_branches_is_a_select():
     import jax
