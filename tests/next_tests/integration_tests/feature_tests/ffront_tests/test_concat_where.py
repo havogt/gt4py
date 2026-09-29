@@ -22,9 +22,10 @@ from next_tests.integration_tests.cases import (
 )
 from gt4py import next as gtx
 from gt4py.next import broadcast, common, neighbor_sum
-from gt4py.next.ffront.experimental import concat_where
+from gt4py.next.ffront.experimental import as_offset, concat_where
 from next_tests.integration_tests import cases
 from next_tests.integration_tests.cases_utils import (
+    Koff,
     exec_alloc_descriptor,
     mesh_descriptor,
 )
@@ -504,6 +505,78 @@ def test_with_local_field_3d(unstructured_case_3d, static_domains: bool):
             where=(v2e_table != common._DEFAULT_SKIP_VALUE)[:, :, np.newaxis],
         ),
     )
+
+
+def _offsets_crossing_k_level_2(k_size: int) -> np.ndarray:
+    return np.where(np.arange(k_size) < 2, 2, -2).astype(np.int32)
+
+
+@pytest.mark.uses_unstructured_shift
+@pytest.mark.uses_dynamic_offsets
+def test_neighbor_of_concat_where_with_dynamic_offsets(unstructured_case_3d):
+    case = unstructured_case_3d
+
+    @gtx.field_operator
+    def testee(
+        a: gtx.Field[[Edge, KDim], np.int32],
+        b: gtx.Field[[Edge, KDim], np.int32],
+        offset_field: gtx.Field[[Vertex, KDim], np.int32],
+    ) -> gtx.Field[[Vertex, KDim], np.int32]:
+        return concat_where(KDim < 2, a, b)(V2E[0])(as_offset(Koff, offset_field))
+
+    num_vertices, k_size = case.default_sizes[Vertex], case.default_sizes[KDim]
+    k_offsets = _offsets_crossing_k_level_2(k_size)
+    offset_field = case.as_field(
+        [Vertex, KDim], np.broadcast_to(k_offsets, (num_vertices, k_size)).copy()
+    )
+    a = cases.allocate(case, testee, "a")()
+    b = cases.allocate(case, testee, "b")()
+    out = cases.allocate(case, testee, cases.RETURN)()
+
+    v2e_0 = case.offset_provider["V2E"].asnumpy()[:, 0]
+    shifted_k = np.arange(k_size) + k_offsets
+    ref = np.where(
+        shifted_k < 2, a.asnumpy()[v2e_0][:, shifted_k], b.asnumpy()[v2e_0][:, shifted_k]
+    )
+
+    cases.verify(case, testee, a, b, offset_field, out=out, ref=ref)
+
+
+@pytest.mark.uses_unstructured_shift
+@pytest.mark.uses_dynamic_offsets
+def test_neighbor_sum_of_concat_where_with_dynamic_offsets(unstructured_case_3d):
+    case = unstructured_case_3d
+
+    @gtx.field_operator
+    def testee(
+        a: gtx.Field[[Edge, KDim], np.int32],
+        b: gtx.Field[[Edge, KDim], np.int32],
+        offset_field: gtx.Field[[Edge, KDim], np.int32],
+    ) -> gtx.Field[[Vertex, KDim], np.int32]:
+        return neighbor_sum(
+            concat_where(KDim < 2, a, b)(as_offset(Koff, offset_field))(V2E), axis=V2EDim
+        )
+
+    num_edges, k_size = case.default_sizes[Edge], case.default_sizes[KDim]
+    k_offsets = _offsets_crossing_k_level_2(k_size)
+    offset_field = case.as_field(
+        [Edge, KDim], np.broadcast_to(k_offsets, (num_edges, k_size)).copy()
+    )
+    a = cases.allocate(case, testee, "a")()
+    b = cases.allocate(case, testee, "b")()
+    out = cases.allocate(case, testee, cases.RETURN)()
+
+    v2e_table = case.offset_provider["V2E"].asnumpy()
+    shifted_k = np.arange(k_size) + k_offsets
+    shifted = np.where(shifted_k < 2, a.asnumpy()[:, shifted_k], b.asnumpy()[:, shifted_k])
+    ref = np.sum(
+        shifted[v2e_table],
+        axis=1,
+        initial=0,
+        where=(v2e_table != common._DEFAULT_SKIP_VALUE)[:, :, np.newaxis],
+    )
+
+    cases.verify(case, testee, a, b, offset_field, out=out, ref=ref)
 
 
 @pytest.mark.uses_unstructured_shift

@@ -1776,14 +1776,23 @@ class LambdaToDataflow(eve.NodeVisitor):
         if not isinstance(it, (IteratorExpr, IndexIteratorExpr)):
             # a scalar has the same value at every position
             return it
+        offset_provider_type: gtx_common.NeighborConnectivityType | None = None
         if isinstance(offset_provider_arg, gtir.CartesianOffset):
-            field_dims = {dim for dim, _ in it.field_domain}
-            if field_dims.isdisjoint(
-                itir_misc.dim_from_axis_literal(axis)
-                for axis in (offset_provider_arg.domain, offset_provider_arg.codomain)
-            ):
-                # the field is constant along the shifted dimension
-                return it
+            shifted_dims = {
+                itir_misc.dim_from_axis_literal(offset_provider_arg.domain),
+                itir_misc.dim_from_axis_literal(offset_provider_arg.codomain),
+            }
+        else:
+            assert isinstance(offset_provider_arg, gtir.OffsetLiteral)
+            assert isinstance(offset_provider_arg.value, str)
+            offset_provider_type = self.subgraph_builder.get_offset_provider_type(
+                offset_provider_arg.value
+            )
+            assert isinstance(offset_provider_type, gtx_common.NeighborConnectivityType)
+            shifted_dims = {offset_provider_type.source_dim, offset_provider_type.codomain}
+        if shifted_dims.isdisjoint(dim for dim, _ in it.field_domain):
+            # the field is constant along the shifted dimensions
+            return it
 
         # second argument should be the offset value, which could be a symbolic expression or a dynamic offset
         offset_expr = (
@@ -1792,21 +1801,17 @@ class LambdaToDataflow(eve.NodeVisitor):
             else self.visit(offset_value_arg)
         )
 
-        if isinstance(offset_provider_arg, gtir.CartesianOffset):
+        if offset_provider_type is None:
+            assert isinstance(offset_provider_arg, gtir.CartesianOffset)
             return self._make_cartesian_shift(it, offset_provider_arg, offset_expr)
         else:
             assert isinstance(offset_provider_arg, gtir.OffsetLiteral)
-            assert isinstance(offset_provider_arg.value, str)
-            offset_provider_type = self.subgraph_builder.get_offset_provider_type(
-                offset_provider_arg.value
-            )
-            assert isinstance(offset_provider_type, gtx_common.NeighborConnectivityType)
             # a named offset → unstructured shift; the offset value may be a static
             # `OffsetLiteral` or a dynamic offset (handled by `_make_unstructured_shift`).
             # initially, the storage for the connectivity tables is created as transient;
             # when the tables are used, the storage is changed to non-transient,
             # so the corresponding arrays are supposed to be allocated by the SDFG caller
-            offset_table = gtx_dace_args.connectivity_identifier(offset_provider_arg.value)
+            offset_table = gtx_dace_args.connectivity_identifier(str(offset_provider_arg.value))
             self.sdfg.arrays[offset_table].transient = False
             offset_table_node = self.state.add_access(offset_table)
 
