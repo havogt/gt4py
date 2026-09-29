@@ -42,6 +42,7 @@ from gt4py.next import (
     named_collections,
     utils as gt_utils,
 )
+from gt4py.next.embedded import nd_array_field
 from gt4py.next.ffront import decorator
 from gt4py.next.type_system import type_specifications as ts, type_translation
 from gt4py.next.otf import arguments
@@ -425,9 +426,12 @@ def tree_mapped_np_allclose(
 ) -> bool:
     """Compare two arrays or nested tuples of arrays using np.allclose."""
     if (is_tuple := isinstance(ref, tuple)) == isinstance(data, tuple):
-        allclose_with_tols = functools.partial(
-            np.allclose, rtol=rtol, atol=atol, equal_nan=equal_nan
-        )
+
+        def allclose_with_tols(a: Any, b: Any) -> bool:
+            return np.allclose(
+                _torch_to_numpy(a), _torch_to_numpy(b), rtol=rtol, atol=atol, equal_nan=equal_nan
+            )
+
         if is_tuple:
             allclose_results = gt_utils.tree_map(allclose_with_tols)(ref, data)
             return all(gt_utils.flatten_nested_tuple(allclose_results))
@@ -435,6 +439,13 @@ def tree_mapped_np_allclose(
             return allclose_with_tols(ref, data)
 
     return False
+
+
+def _torch_to_numpy(value: Any) -> Any:
+    torch = nd_array_field.torch
+    if torch is not None and isinstance(value, torch.Tensor):
+        return value.detach().cpu().numpy()
+    return value
 
 
 def verify(

@@ -53,6 +53,11 @@ except ImportError:
     jnp: Optional[ModuleType] = None  # type: ignore[no-redef]
 
 try:
+    import torch
+except ImportError:
+    torch: Optional[ModuleType] = None  # type: ignore[no-redef]
+
+try:
     import dace
 except ImportError:
     dace: Optional[ModuleType] = None  # type: ignore[no-redef]
@@ -121,6 +126,8 @@ def _get_builtin(xp: ModuleType, name: str) -> Callable:
                 import jax.scipy.special
 
                 return jax.scipy.special.gamma
+            if (gamma := getattr(xp, "gamma", None)) is not None:
+                return gamma
             raise NotImplementedError(
                 f"'gamma' is not implemented for array namespace '{xp.__name__}'."
             )
@@ -175,15 +182,23 @@ class NdArrayField(
         array = xp.asarray(data, dtype=xp_dtype)
 
         if dtype is not None:
-            assert array.dtype.type == core_defs.dtype(dtype).scalar_type
+            assert cls._scalar_type_of(array) == core_defs.dtype(dtype).scalar_type
 
-        assert issubclass(array.dtype.type, core_defs.SCALAR_TYPES)
+        assert issubclass(cls._scalar_type_of(array), core_defs.SCALAR_TYPES)
 
         assert all(isinstance(d, common.Dimension) for d in domain.dims), domain
         assert len(domain) == array.ndim
         assert all(s == 1 or len(r) == s for r, s in zip(domain.ranges, array.shape))
 
         return cls(domain, array)
+
+    @staticmethod
+    def _scalar_type_of(array: core_defs.NDArrayObject) -> type[core_defs.Scalar]:
+        return array.dtype.type
+
+    @staticmethod
+    def _astype(array: core_defs.NDArrayObject, type_: type) -> core_defs.NDArrayObject:
+        return array.astype(type_)
 
     @functools.cached_property
     def __gt_origin__(self) -> tuple[int, ...]:
@@ -218,7 +233,7 @@ class NdArrayField(
 
     @functools.cached_property
     def dtype(self) -> core_defs.DType[core_defs.ScalarT]:
-        return core_defs.dtype(self._ndarray.dtype.type)
+        return core_defs.dtype(self._scalar_type_of(self._ndarray))
 
     @property
     def ndarray(self) -> core_defs.NDArrayObject:
@@ -414,7 +429,12 @@ class NdArrayField(
             value = value.ndarray
 
         assert hasattr(self.ndarray, "__setitem__")
-        self._ndarray[target_slice] = value  # type: ignore[index] # np and cp allow index assignment, jax overrides
+        self._ndarray[target_slice] = self._as_assignable(value)  # type: ignore[index] # np and cp allow index assignment, jax overrides
+
+    def _as_assignable(
+        self, value: core_defs.NDArrayObject | core_defs.ScalarT
+    ) -> core_defs.NDArrayObject | core_defs.ScalarT:
+        return value
 
     __abs__ = _make_builtin("abs", "abs")
 
@@ -554,9 +574,9 @@ class NdArrayConnectivityField(
         array = xp.asarray(data, dtype=xp_dtype)
 
         if dtype is not None:
-            assert array.dtype.type == core_defs.dtype(dtype).scalar_type
+            assert cls._scalar_type_of(array) == core_defs.dtype(dtype).scalar_type
 
-        assert issubclass(array.dtype.type, core_defs.INTEGRAL_TYPES)
+        assert issubclass(cls._scalar_type_of(array), core_defs.INTEGRAL_TYPES)
 
         assert all(isinstance(d, common.Dimension) for d in domain.dims), domain
         assert len(domain) == array.ndim
@@ -1047,7 +1067,9 @@ def _size0_field(
     nd_array_class: type[NdArrayField], dims: tuple[common.Dimension, ...], dtype: core_defs.DType
 ) -> NdArrayField:
     return nd_array_class.from_array(
-        nd_array_class.array_ns.empty((0,) * len(dims), dtype=dtype.scalar_type),
+        nd_array_class.array_ns.empty(
+            (0,) * len(dims), dtype=nd_array_class.array_ns.dtype(dtype.scalar_type)
+        ),
         domain=common.Domain(dims=dims, ranges=(common.UnitRange(0, 0),) * len(dims)),
     )
 
@@ -1431,6 +1453,187 @@ if jnp:
         _unflatten_jax_connectivity,
     )
 
+# PyTorch
+if torch:
+    import array_api_compat.torch as _torch_compat
+
+    _NUMPY_TO_TORCH_DTYPE: dict[type, torch.dtype] = {
+        np.bool_: torch.bool,
+        np.int8: torch.int8,
+        np.int16: torch.int16,
+        np.int32: torch.int32,
+        np.int64: torch.int64,
+        np.uint8: torch.uint8,
+        np.uint16: torch.uint16,
+        np.uint32: torch.uint32,
+        np.uint64: torch.uint64,
+        np.float32: torch.float32,
+        np.float64: torch.float64,
+    }
+    _TORCH_TO_NUMPY_DTYPE: dict[torch.dtype, type] = {
+        v: k for k, v in _NUMPY_TO_TORCH_DTYPE.items()
+    }
+
+    def _to_torch_dtype(dtype: Any) -> Optional[torch.dtype]:
+        if dtype is None or isinstance(dtype, torch.dtype):
+            return dtype
+        return _NUMPY_TO_TORCH_DTYPE[np.dtype(dtype).type]
+
+    def _torch_cbrt(x: torch.Tensor) -> torch.Tensor:
+        return torch.sign(x) * torch.abs(x) ** (1.0 / 3.0)
+
+    def _torch_gamma(x: torch.Tensor) -> torch.Tensor:
+        # 'torch' only provides 'lgamma' (log of the absolute value): gamma is negative
+        # for negative arguments with an odd floor
+        sign = torch.where((x < 0) & (torch.floor(x) % 2 == 1), -1.0, 1.0).to(x.dtype)
+        return sign * torch.exp(torch.lgamma(x))
+
+    class _TorchNamespace(ModuleType):
+        """
+        NumPy-like namespace for 'torch' tensors on one device kind.
+
+        Based on 'array_api_compat.torch', with the NumPy names used by 'NdArrayField'.
+        Array creation functions default to the namespace device (the current device for CUDA),
+        and accept NumPy dtypes.
+        """
+
+        def __init__(self, device_type: str) -> None:
+            super().__init__(f"torch_{device_type}")
+            self.device_type = device_type
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(_torch_compat, name)
+
+        @property
+        def default_device(self) -> torch.device:
+            if self.device_type == "cuda":
+                return torch.device("cuda", torch.cuda.current_device())
+            return torch.device(self.device_type)
+
+        def _device(self, obj: Any, device: Any) -> Any:
+            if device is not None:
+                return device
+            if isinstance(obj, torch.Tensor) and obj.device.type == self.device_type:
+                return obj.device
+            return self.default_device
+
+        newaxis = None
+
+        @staticmethod
+        def dtype(dtype: Any) -> torch.dtype:
+            result = _to_torch_dtype(dtype)
+            assert result is not None
+            return result
+
+        def asarray(
+            self, obj: Any, /, *, dtype: Any = None, device: Any = None, copy: Optional[bool] = None
+        ) -> torch.Tensor:
+            return _torch_compat.asarray(
+                obj, dtype=_to_torch_dtype(dtype), device=self._device(obj, device), copy=copy
+            )
+
+        def arange(
+            self,
+            start: int,
+            /,
+            stop: Optional[int] = None,
+            step: int = 1,
+            *,
+            dtype: Any = None,
+            device: Any = None,
+        ) -> torch.Tensor:
+            return _torch_compat.arange(
+                start,
+                stop,
+                step,
+                dtype=_to_torch_dtype(dtype),
+                device=self._device(None, device),
+            )
+
+        def empty(
+            self, shape: tuple[int, ...], *, dtype: Any = None, device: Any = None
+        ) -> torch.Tensor:
+            return _torch_compat.empty(
+                shape, dtype=_to_torch_dtype(dtype), device=self._device(None, device)
+            )
+
+        @staticmethod
+        def logical_and(x1: Any, x2: Any, /) -> torch.Tensor:
+            return torch.logical_and(torch.as_tensor(x1), torch.as_tensor(x2))
+
+        @staticmethod
+        def logical_or(x1: Any, x2: Any, /) -> torch.Tensor:
+            return torch.logical_or(torch.as_tensor(x1), torch.as_tensor(x2))
+
+        @staticmethod
+        def logical_xor(x1: Any, x2: Any, /) -> torch.Tensor:
+            return torch.logical_xor(torch.as_tensor(x1), torch.as_tensor(x2))
+
+        power = staticmethod(_torch_compat.pow)
+        mod = staticmethod(_torch_compat.remainder)
+        invert = staticmethod(_torch_compat.bitwise_invert)
+        transpose = staticmethod(_torch_compat.permute_dims)
+        cbrt = staticmethod(_torch_cbrt)
+        gamma = staticmethod(_torch_gamma)
+
+    _torch_cpu_ns = _TorchNamespace("cpu")
+    _torch_cuda_ns = _TorchNamespace("cuda")
+    _nd_array_implementations.append(_torch_cpu_ns)
+    if torch.cuda.is_available():
+        _nd_array_implementations.append(_torch_cuda_ns)
+
+    class _TorchArrayFieldMixin:
+        @staticmethod
+        def _scalar_type_of(array: core_defs.NDArrayObject) -> type[core_defs.Scalar]:
+            return _TORCH_TO_NUMPY_DTYPE[array.dtype]
+
+        @staticmethod
+        def _astype(array: core_defs.NDArrayObject, type_: type) -> core_defs.NDArrayObject:
+            return array.to(_to_torch_dtype(type_))  # type: ignore[attr-defined] # `NDArrayObject` typing is not complete
+
+        @property
+        def __gt_buffer_info__(self) -> common.BufferInfo:
+            raise NotImplementedError("'__gt_buffer_info__' for torch fields not yet implemented.")
+
+        def _as_assignable(self, value: Any) -> torch.Tensor:
+            return self.array_ns.asarray(value)  # type: ignore[attr-defined] # mixin of 'NdArrayField'
+
+        def asnumpy(self) -> np.ndarray:
+            return self._ndarray.detach().cpu().numpy()  # type: ignore[attr-defined] # `NDArrayObject` typing is not complete
+
+    @dataclasses.dataclass(frozen=True, eq=False)
+    class TorchArrayField(_TorchArrayFieldMixin, NdArrayField):
+        array_ns: ClassVar[ModuleType] = _torch_cpu_ns
+
+    @dataclasses.dataclass(frozen=True, eq=False)
+    class TorchCUDAArrayField(_TorchArrayFieldMixin, NdArrayField):
+        array_ns: ClassVar[ModuleType] = _torch_cuda_ns
+
+    @dataclasses.dataclass(frozen=True, eq=False)
+    class TorchArrayConnectivityField(_TorchArrayFieldMixin, NdArrayConnectivityField):
+        array_ns: ClassVar[ModuleType] = _torch_cpu_ns
+
+    @dataclasses.dataclass(frozen=True, eq=False)
+    class TorchCUDAArrayConnectivityField(_TorchArrayFieldMixin, NdArrayConnectivityField):
+        array_ns: ClassVar[ModuleType] = _torch_cuda_ns
+
+    def _torch_field(data: torch.Tensor, /, **kwargs: Any) -> NdArrayField:
+        cls = TorchCUDAArrayField if data.device.type == "cuda" else TorchArrayField
+        return cls.from_array(data, **kwargs)
+
+    def _torch_connectivity(
+        data: torch.Tensor, /, *args: Any, **kwargs: Any
+    ) -> NdArrayConnectivityField:
+        cls = (
+            TorchCUDAArrayConnectivityField
+            if data.device.type == "cuda"
+            else TorchArrayConnectivityField
+        )
+        return cls.from_array(data, *args, **kwargs)
+
+    common._field.register(torch.Tensor, _torch_field)
+    common._connectivity.register(torch.Tensor, _torch_connectivity)
+
 
 def _broadcast(field: common.Field, new_dimensions: Sequence[common.Dimension]) -> common.Field:
     if field.domain.dims == new_dimensions:
@@ -1460,7 +1663,7 @@ NdArrayField.register_builtin_func(fbuiltins.broadcast, _builtins_broadcast)
 
 def _astype(field: common.Field | core_defs.ScalarT | tuple, type_: type) -> NdArrayField:
     if isinstance(field, NdArrayField):
-        return field.__class__.from_array(field.ndarray.astype(type_), domain=field.domain)
+        return field.__class__.from_array(field._astype(field.ndarray, type_), domain=field.domain)
     raise AssertionError("This is the NdArrayField implementation of 'fbuiltins.astype'.")
 
 

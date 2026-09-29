@@ -45,3 +45,52 @@ def test_get_device_translator(array_ns, gt4py_device, expected_device):
 )
 def test_is_array_namespace(array_ns):
     assert ndarray_utils.is_array_namespace(array_ns)
+
+
+@pytest.mark.requires_torch
+@pytest.mark.parametrize(
+    "gt4py_device, expected_device",
+    [
+        (None, None),
+        (definitions.Device(definitions.DeviceType.CPU, 0), "cpu"),
+        (definitions.Device(definitions.DeviceType.CUDA, 1), "cuda:1"),
+        (definitions.Device(definitions.DeviceType.ROCM, 0), "cuda:0"),
+    ],
+)
+def test_get_device_translator_torch(gt4py_device, expected_device):
+    import torch
+
+    translator = ndarray_utils.get_device_translator(torch)
+    expected = None if expected_device is None else torch.device(expected_device)
+    assert translator(gt4py_device) == expected
+
+
+@pytest.mark.requires_torch
+def test_is_array_namespace_torch():
+    import torch
+
+    assert ndarray_utils.is_array_namespace(torch)
+
+
+@pytest.mark.requires_torch
+@pytest.mark.parametrize(
+    "name",
+    [
+        "bool",
+        "int8",
+        "int16",
+        "int32",
+        "int64",
+        "uint8",
+        "uint16",
+        "uint32",
+        "uint64",
+        "float32",
+        "float64",
+    ],
+)
+def test_dtype_from_torch(name):
+    import numpy as np
+    import torch
+
+    assert definitions.dtype(getattr(torch, name)) == definitions.dtype(getattr(np, name))

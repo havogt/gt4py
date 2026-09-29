@@ -354,7 +354,12 @@ DTypeLike = Union[DType, npt.DTypeLike]
 
 def dtype(dtype_like: DTypeLike) -> DType:
     """Return the DType corresponding to the given dtype-like object."""
-    return dtype_like if isinstance(dtype_like, DType) else DType(np.dtype(dtype_like).type)
+    if isinstance(dtype_like, DType):
+        return dtype_like
+    if type(dtype_like).__module__ == "torch":
+        # 'torch.dtype' names match the NumPy names, e.g. 'torch.float64'
+        dtype_like = str(dtype_like).removeprefix("torch.")
+    return DType(np.dtype(dtype_like).type)
 
 
 # -- Custom protocols  --
