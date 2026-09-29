@@ -46,6 +46,35 @@ def test_external_local_field(unstructured_case):
     )
 
 
+@pytest.mark.uses_unstructured_shift
+@pytest.mark.uses_tuple_args
+def test_external_local_field_in_tuple(unstructured_case):
+    @gtx.field_operator
+    def testee(
+        inp: tuple[gtx.Field[[Vertex, V2EDim], int32], gtx.Field[[Vertex, V2EDim], int32]],
+        ones: gtx.Field[[Edge], int32],
+    ) -> gtx.Field[[Vertex], int32]:
+        return neighbor_sum(inp[0] * ones(V2E), axis=V2EDim) - neighbor_sum(
+            inp[1] * ones(V2E), axis=V2EDim
+        )
+
+    v2e_table = unstructured_case.offset_provider["V2E"].asnumpy()
+    inp = (
+        unstructured_case.as_field([Vertex, V2EDim], 3 * v2e_table),
+        unstructured_case.as_field([Vertex, V2EDim], v2e_table),
+    )
+    ones = cases.allocate(unstructured_case, testee, "ones").strategy(cases.ConstInitializer(1))()
+
+    cases.verify(
+        unstructured_case,
+        testee,
+        inp,
+        ones,
+        out=cases.allocate(unstructured_case, testee, cases.RETURN)(),
+        ref=np.sum(2 * v2e_table, axis=1, initial=0, where=v2e_table != common._DEFAULT_SKIP_VALUE),
+    )
+
+
 def test_index_external_local_field(request, unstructured_case):
     if request.node.get_closest_marker(pytest.mark.uses_mesh_with_skip_values.name):
         pytest.skip("This test only works with non-skip value meshes.")

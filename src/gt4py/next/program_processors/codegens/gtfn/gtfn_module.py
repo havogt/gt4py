@@ -34,6 +34,34 @@ def get_param_description(name: str, type_: Any) -> interface.Parameter:
     return interface.Parameter(name, type_)
 
 
+def _local_dims_to_tuple_like(
+    arg: str, type_: ts.TypeSpec, offset_provider_type: common.OffsetProviderType
+) -> str:
+    if isinstance(type_, ts.TupleType):
+        elems = [f"gridtools::tuple_util::get<{i}>({arg})" for i in range(len(type_.types))]
+        converted = [
+            _local_dims_to_tuple_like(elem, el_type, offset_provider_type)
+            for elem, el_type in zip(elems, type_.types, strict=True)
+        ]
+        if converted == elems:
+            return arg
+        return f"gridtools::fn::make_tuple({', '.join(converted)})"
+    if isinstance(type_, ts.FieldType):
+        for dim in type_.dims:
+            if (
+                isinstance(
+                    dim, fbuiltins.FieldOffset
+                )  # TODO(havogt): remove support for FieldOffset as Dimension
+                or dim.kind is common.DimensionKind.LOCAL
+            ):
+                dim_name = dim.value
+                connectivity = common.get_offset_type(offset_provider_type, dim_name)
+                assert isinstance(connectivity, common.NeighborConnectivityType)
+                size = connectivity.max_neighbors
+                arg = f"gridtools::sid::dimension_to_tuple_like<generated::{dim_name}_t, {size}>({arg})"
+    return arg
+
+
 @dataclasses.dataclass(frozen=True)
 class GTFNTranslationStep(
     workflow.ReplaceEnabledWorkflowMixin[
@@ -78,22 +106,7 @@ class GTFNTranslationStep(
             parameters.append(parameter)
 
             arg = f"std::forward<decltype({parameter.name})>({parameter.name})"
-
-            if isinstance(parameter.type_, ts.FieldType):
-                for dim in parameter.type_.dims:
-                    if (
-                        isinstance(
-                            dim, fbuiltins.FieldOffset
-                        )  # TODO(havogt): remove support for FieldOffset as Dimension
-                        or dim.kind is common.DimensionKind.LOCAL
-                    ):
-                        # translate sparse dimensions to tuple dtype
-                        dim_name = dim.value
-                        connectivity = common.get_offset_type(offset_provider_type, dim_name)
-                        assert isinstance(connectivity, common.NeighborConnectivityType)
-                        size = connectivity.max_neighbors
-                        arg = f"gridtools::sid::dimension_to_tuple_like<generated::{dim_name}_t, {size}>({arg})"
-            arg_exprs.append(arg)
+            arg_exprs.append(_local_dims_to_tuple_like(arg, parameter.type_, offset_provider_type))
         return parameters, arg_exprs
 
     def _process_connectivity_args(
