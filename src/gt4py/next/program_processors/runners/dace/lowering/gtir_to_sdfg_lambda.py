@@ -2072,9 +2072,9 @@ def translate_lambda_to_dataflow(
 
     # remove access nodes to lambda symbols which were not used
     flat_arg_nodes = (
-        x.field if isinstance(x, IteratorExpr) else x.dc_node  # type: ignore[attr-defined]
+        x.field if isinstance(x, IteratorExpr) else x.dc_node
         for x in gtx_utils.flatten_nested_tuple(tuple(args))
-        if not isinstance(x, IndexIteratorExpr)
+        if isinstance(x, (IteratorExpr, MemletExpr, ValueExpr))
     )
     state.remove_nodes_from([node for node in flat_arg_nodes if state.degree(node) == 0])
 

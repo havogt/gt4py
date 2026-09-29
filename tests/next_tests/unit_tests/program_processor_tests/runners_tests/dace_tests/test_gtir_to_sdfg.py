@@ -2102,6 +2102,45 @@ def test_gtir_if_values():
     assert np.allclose(c, np.where(a < b, a, b))
 
 
+def test_gtir_if_values_with_let_bound_literal():
+    testee = gtir.Program(
+        id="if_values_with_let_bound_literal",
+        function_definitions=[],
+        params=[
+            gtir.Sym(id="x", type=IFTYPE),
+            gtir.Sym(id="y", type=IFTYPE),
+            gtir.Sym(id="z", type=IFTYPE),
+        ],
+        declarations=[],
+        body=[
+            gtir.SetAt(
+                expr=im.as_fieldop(
+                    im.lambda_("a", "b")(
+                        im.let("c", 2.0)(
+                            im.if_(
+                                im.less(im.deref("a"), im.deref("b")),
+                                im.multiplies_(im.deref("a"), "c"),
+                                im.deref("b"),
+                            )
+                        )
+                    )
+                )("x", "y"),
+                domain=im.get_field_domain(gtx_common.GridType.CARTESIAN, "z", [IDim]),
+                target=gtir.SymRef(id="z"),
+            )
+        ],
+    )
+
+    a = np.random.rand(N)
+    b = np.random.rand(N)
+    c = np.empty_like(a)
+
+    sdfg = build_dace_sdfg(testee, CARTESIAN_OFFSETS)
+
+    sdfg(a, b, c, **FSYMBOLS)
+    assert np.allclose(c, np.where(a < b, a * 2.0, b))
+
+
 def test_gtir_index():
     MARGIN = 2
     assert (MARGIN * 2) < N
