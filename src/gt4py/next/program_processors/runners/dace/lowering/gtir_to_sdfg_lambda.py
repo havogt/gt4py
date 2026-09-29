@@ -191,7 +191,27 @@ class IteratorExpr:
         )
 
 
-VisitResult: TypeAlias = MaybeNestedInTuple[IteratorExpr | DataExpr]
+@dataclasses.dataclass(frozen=True)
+class IndexIteratorExpr:
+    """
+    Iterator over an `index` field, whose values are computed from the iterator position.
+
+    Args:
+        dim: The dimension of the `index` field.
+        gt_dtype: GT4Py data type of the index values.
+        indices: Maps each dimension to an index value, same as in `IteratorExpr`.
+    """
+
+    dim: gtx_common.Dimension
+    gt_dtype: ts.ScalarType
+    indices: dict[gtx_common.Dimension, DataExpr]
+
+    @property
+    def field_domain(self) -> list[tuple[gtx_common.Dimension, dace.symbolic.SymbolicType]]:
+        return [(self.dim, 0)]
+
+
+VisitResult: TypeAlias = MaybeNestedInTuple[IteratorExpr | IndexIteratorExpr | DataExpr]
 """Result of visiting an expression in a lambda body (i.e. in the iterator view of GTIR)."""
 
 
@@ -421,7 +441,7 @@ class LambdaToDataflow(eve.NodeVisitor):
     input_edges: list[DataflowInputEdge] = dataclasses.field(default_factory=lambda: [])
     symbol_map: dict[
         str,
-        MaybeNestedInTuple[IteratorExpr | DataExpr],
+        MaybeNestedInTuple[IteratorExpr | IndexIteratorExpr | DataExpr],
     ] = dataclasses.field(default_factory=dict)
     # Dispatch tables for `FunCall`, built in `__post_init__` so the handlers can
     # be referenced as bound methods (instead of a table of method names resolved
@@ -622,6 +642,15 @@ class LambdaToDataflow(eve.NodeVisitor):
         assert len(node.args) == 1
         arg_expr = self.visit(node.args[0])
 
+        if isinstance(arg_expr, IndexIteratorExpr):
+            index = arg_expr.indices[arg_expr.dim]
+            if isinstance(index, MemletExpr):
+                # neighbor index read from a connectivity table
+                return MemletExpr(
+                    index.dc_node, ts.FieldType(dims=[], dtype=arg_expr.gt_dtype), index.subset
+                )
+            return index
+
         if not isinstance(arg_expr, IteratorExpr):
             # dereferencing a scalar or a literal node results in the node itself
             return arg_expr
@@ -710,10 +739,10 @@ class LambdaToDataflow(eve.NodeVisitor):
         sdfg: dace.SDFG,
         state: dace.SDFGState,
         param_name: str,
-        arg: IteratorExpr | DataExpr,
+        arg: IteratorExpr | IndexIteratorExpr | DataExpr,
         deref_on_input_memlet: bool,
         input_memlets: dict[str, MemletExpr | ValueExpr],
-    ) -> IteratorExpr | ValueExpr:
+    ) -> IteratorExpr | IndexIteratorExpr | ValueExpr:
         """
         Helper method to be called by `_visit_if_branch()` to visit the input arguments.
 
@@ -725,6 +754,13 @@ class LambdaToDataflow(eve.NodeVisitor):
             deref_on_input_memlet: When True, the given iterator argument can be dereferenced on the input memlet.
             input_memlets: The memlets that provide input data to the SDFG, will be updated inside this function.
         """
+        if isinstance(arg, IndexIteratorExpr):
+            if not all(isinstance(index, SymbolExpr) for index in arg.indices.values()):
+                raise NotImplementedError(
+                    "Dynamic indices of 'index' iterator in if-branch are not supported."
+                )
+            return arg
+
         use_full_shape = False
         if isinstance(arg, (MemletExpr, ValueExpr)):
             field_dims = []
@@ -820,11 +856,11 @@ class LambdaToDataflow(eve.NodeVisitor):
         """
         assert state in sdfg.states()
 
-        lambda_args: list[MaybeNestedInTuple[IteratorExpr | DataExpr]] = []
+        lambda_args: list[MaybeNestedInTuple[IteratorExpr | IndexIteratorExpr | DataExpr]] = []
         lambda_params: list[gtir.Sym] = []
         for pname in symbol_ref_utils.collect_symbol_refs(expr, self.symbol_map.keys()):
             arg = self.symbol_map[pname]
-            inner_arg: MaybeNestedInTuple[IteratorExpr | DataExpr]
+            inner_arg: MaybeNestedInTuple[IteratorExpr | IndexIteratorExpr | DataExpr]
             if isinstance(arg, SymbolExpr):
                 psymbol = im.sym(pname, gtx_dace_args.as_itir_type(arg.dc_dtype))
                 inner_arg = arg
@@ -1084,6 +1120,8 @@ class LambdaToDataflow(eve.NodeVisitor):
         assert isinstance(conn_type, gtx_common.NeighborConnectivityType)
 
         it = self.visit(node.args[1])
+        if isinstance(it, IndexIteratorExpr):
+            raise NotImplementedError("Neighbors of 'index' iterator are not supported.")
         assert isinstance(it, IteratorExpr)
         if not all(isinstance(index, SymbolExpr) for index in it.indices.values()):
             raise NotImplementedError("Dynamic indices in neighbors expression are not supported.")
@@ -1547,7 +1585,7 @@ class LambdaToDataflow(eve.NodeVisitor):
 
     def _visit_shift_multidim(
         self, iterator: gtir.Expr, shift_args: list[gtir.Expr]
-    ) -> tuple[gtir.Expr, gtir.Expr, IteratorExpr]:
+    ) -> tuple[gtir.Expr, gtir.Expr, IteratorExpr | IndexIteratorExpr]:
         """Transforms a multi-dimensional shift into recursive shift calls, each in a single dimension."""
         (offset_provider_arg, offset_value_arg), tail = self._split_shift_args(shift_args)
         if tail:
@@ -1559,12 +1597,15 @@ class LambdaToDataflow(eve.NodeVisitor):
         else:
             it = self.visit(iterator)
 
-        assert isinstance(it, IteratorExpr)
+        assert isinstance(it, (IteratorExpr, IndexIteratorExpr))
         return offset_provider_arg, offset_value_arg, it
 
     def _make_cartesian_shift(
-        self, it: IteratorExpr, offset: gtir.CartesianOffset, offset_expr: DataExpr
-    ) -> IteratorExpr:
+        self,
+        it: IteratorExpr | IndexIteratorExpr,
+        offset: gtir.CartesianOffset,
+        offset_expr: DataExpr,
+    ) -> IteratorExpr | IndexIteratorExpr:
         """Implements cartesian shift along one dimension."""
         old_dim = itir_misc.dim_from_axis_literal(offset.domain)
         new_dim = itir_misc.dim_from_axis_literal(offset.codomain)
@@ -1636,7 +1677,7 @@ class LambdaToDataflow(eve.NodeVisitor):
             (new_dim, new_index) if dim == old_dim else (dim, index)
             for dim, index in it.indices.items()
         )
-        return IteratorExpr(it.field, it.gt_dtype, it.field_domain, shifted_indices)
+        return dataclasses.replace(it, indices=shifted_indices)
 
     def _make_dynamic_neighbor_offset(
         self,
@@ -1686,11 +1727,11 @@ class LambdaToDataflow(eve.NodeVisitor):
 
     def _make_unstructured_shift(
         self,
-        it: IteratorExpr,
+        it: IteratorExpr | IndexIteratorExpr,
         conn_type: gtx_common.NeighborConnectivityType,
         conn_node: dace_nodes.AccessNode,
         offset_expr: DataExpr,
-    ) -> IteratorExpr:
+    ) -> IteratorExpr | IndexIteratorExpr:
         """Implements shift in unstructured domain by means of a neighbor table."""
         # make sure that the field can be dereferenced with the given connectivity type
         assert any(dim == conn_type.codomain for dim, _ in it.field_domain)
@@ -1722,9 +1763,9 @@ class LambdaToDataflow(eve.NodeVisitor):
                 offset_expr, conn_node, conn_source_index
             )
 
-        return IteratorExpr(it.field, it.gt_dtype, it.field_domain, shifted_indices)
+        return dataclasses.replace(it, indices=shifted_indices)
 
-    def _visit_shift(self, node: gtir.FunCall) -> IteratorExpr:
+    def _visit_shift(self, node: gtir.FunCall) -> IteratorExpr | IndexIteratorExpr:
         assert cpm.is_applied_shift(node)
         # the iterator to be shifted is the node argument, while the shift arguments
         # are provided by the nested function call; the shift arguments consist of
@@ -1931,7 +1972,9 @@ class LambdaToDataflow(eve.NodeVisitor):
     def visit_OffsetLiteral(self, node: gtir.OffsetLiteral) -> SymbolExpr:
         return SymbolExpr(node.value, gtir_to_sdfg_types.INDEX_DTYPE)
 
-    def visit_SymRef(self, node: gtir.SymRef) -> MaybeNestedInTuple[IteratorExpr | DataExpr]:
+    def visit_SymRef(
+        self, node: gtir.SymRef
+    ) -> MaybeNestedInTuple[IteratorExpr | IndexIteratorExpr | DataExpr]:
         param = str(node.id)
         if param in self.symbol_map:
             return self.symbol_map[param]
@@ -1945,7 +1988,7 @@ def translate_lambda_to_dataflow(
     state: dace.SDFGState,
     subgraph_builder: gtir_to_sdfg.DataflowBuilder,
     node: gtir.Lambda,
-    args: Sequence[MaybeNestedInTuple[IteratorExpr | DataExpr]],
+    args: Sequence[MaybeNestedInTuple[IteratorExpr | IndexIteratorExpr | DataExpr]],
 ) -> tuple[list[DataflowInputEdge], MaybeNestedInTuple[DataflowOutputEdge]]:
     """
     Entry point to visit a `Lambda` node and lower it to a dataflow graph,
@@ -1977,6 +2020,7 @@ def translate_lambda_to_dataflow(
     flat_arg_nodes = (
         x.field if isinstance(x, IteratorExpr) else x.dc_node  # type: ignore[attr-defined]
         for x in gtx_utils.flatten_nested_tuple(tuple(args))
+        if not isinstance(x, IndexIteratorExpr)
     )
     state.remove_nodes_from([node for node in flat_arg_nodes if state.degree(node) == 0])
 

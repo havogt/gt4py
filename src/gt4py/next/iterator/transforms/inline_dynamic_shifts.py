@@ -39,12 +39,6 @@ def _dynamic_shift_args(node: itir.Expr) -> list[bool] | None:
     return dynamic_shifts
 
 
-def _is_index_expr(node: itir.Expr) -> bool:
-    if cpm.is_call_to(node, "make_tuple"):
-        return all(_is_index_expr(arg) for arg in node.args)
-    return cpm.is_call_to(node, "index")
-
-
 def _is_scalar(node: itir.Expr) -> bool:
     type_inference.reinfer(node)
     return isinstance(node.type, ts.ScalarType)
@@ -130,7 +124,7 @@ class InlineDynamicShifts(eve.NodeTranslator, eve.VisitorWithSymbolTableTrait):
             fuse_args = [
                 dynamic_shift_arg
                 and not _is_symbol_element(inp)
-                and not _is_index_expr(inp)
+                and not cpm.is_call_to(inp, "index")
                 and not _is_scalar(inp)
                 for inp, dynamic_shift_arg in zip(expr.args, dynamic_shift_args, strict=True)
             ]

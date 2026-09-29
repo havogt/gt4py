@@ -61,28 +61,28 @@ def concat_where_to_as_fieldop(
     """
     Transform a `concat_where` call into an `as_fieldop` selecting the branch by position.
 
-    The position is an argument of the `as_fieldop` (a tuple of `index` fields), hence when the
-    result is shifted the condition is evaluated at the shifted position.
+    The position is passed to the `as_fieldop` as one `index` field per dimension, hence when
+    the result is shifted the condition is evaluated at the shifted position.
     """
     assert cpm.is_call_to(node, "concat_where")
     cond, true_branch, false_branch = node.args
     assert isinstance(cond.type, ts.DomainType)
     dims = cond.type.dims
-    position = [im.index(dim) for dim in dims]
+    position_params = [f"__tcw_pos_{dim.value}" for dim in dims]
     refs = symbol_ref_utils.collect_symbol_refs(cond)
 
     return im.as_fieldop(
-        im.lambda_("__tcw_pos", "__tcw_arg0", "__tcw_arg1", *refs)(
+        im.lambda_(*position_params, "__tcw_arg0", "__tcw_arg1", *refs)(
             im.let(*zip(refs, map(im.deref, refs), strict=True))(
                 im.if_(
-                    _in(im.deref("__tcw_pos"), dims, cond),
+                    _in(im.make_tuple(*map(im.deref, position_params)), dims, cond),
                     im.deref("__tcw_arg0"),
                     im.deref("__tcw_arg1"),
                 )
             )
         ),
         domain,
-    )(im.make_tuple(*position), true_branch, false_branch, *refs)
+    )(*(im.index(dim) for dim in dims), true_branch, false_branch, *refs)
 
 
 class _TransformToAsFieldop(PreserveLocationVisitor, NodeTranslator):

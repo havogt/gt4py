@@ -103,7 +103,7 @@ def test_inline_dynamic_shift_concat_where_arg(uids):
             im.let("_cs_0", im.deref("offset_field"))(
                 im.if_(
                     im.less(
-                        im.tuple_get(0, im.deref(shifted("__iasfop_0"))),
+                        im.tuple_get(0, im.make_tuple(im.deref(shifted("__iasfop_0")))),
                         im.deref(shifted("n")),
                     ),
                     im.deref(shifted("inp1")),
@@ -111,7 +111,7 @@ def test_inline_dynamic_shift_concat_where_arg(uids):
                 )
             )
         )
-    )(im.make_tuple(im.index(IDim)), "inp1", "inp2", "n", "offset_field")
+    )(im.index(IDim), "inp1", "inp2", "n", "offset_field")
 
     actual = inline_dynamic_shifts.InlineDynamicShifts.apply(
         testee, offset_provider_type={}, uids=uids

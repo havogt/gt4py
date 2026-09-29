@@ -290,7 +290,6 @@ markers = [
   'uses_concat_where: tests that use the concat_where builtin',
   'uses_broadcast_with_dynamic_offsets: tests that read the result of broadcast through a dynamic offset',
   'uses_dynamic_offsets_on_scalar_inputs: tests that read, through a dynamic offset, a field computed from scalar arguments',
-  'uses_concat_where_with_dynamic_offsets: tests that read the result of concat_where through a dynamic offset',
   'embedded_concat_where_infinite_domain: tests with concat_where resulting in an infinite domain',
   'embedded_concat_where_non_contiguous_domain: tests with concat_where on non-contiguous domains',
   'uses_program_metrics: tests that require backend support for program metrics',

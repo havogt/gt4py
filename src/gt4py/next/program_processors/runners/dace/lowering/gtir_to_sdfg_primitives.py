@@ -69,11 +69,28 @@ def _parse_fieldop_arg(
     ctx: gtir_to_sdfg.SubgraphContext,
     sdfg_builder: gtir_to_sdfg.SDFGBuilder,
     domain: gtir_domain.FieldopDomain,
-) -> gtir_to_sdfg_lambda.IteratorExpr | gtir_to_sdfg_lambda.MemletExpr:
+) -> (
+    gtir_to_sdfg_lambda.IteratorExpr
+    | gtir_to_sdfg_lambda.IndexIteratorExpr
+    | gtir_to_sdfg_lambda.MemletExpr
+):
     """
     Helper method to visit an expression passed as argument to a field operator
     and create the local view for the field argument.
     """
+    if cpm.is_call_to(node, "index"):
+        assert isinstance(node.type, ts.FieldType) and isinstance(node.type.dtype, ts.ScalarType)
+        domain_dims = [domain_range.dim for domain_range in domain]
+        domain_indices = gtir_domain.get_element_subset(domain_dims, origin=None).min_element()
+        return gtir_to_sdfg_lambda.IndexIteratorExpr(
+            dim=node.type.dims[0],
+            gt_dtype=node.type.dtype,
+            indices={
+                dim: gtir_to_sdfg_lambda.SymbolExpr(index, gtir_to_sdfg_types.INDEX_DTYPE)
+                for dim, index in zip(domain_dims, domain_indices, strict=True)
+            },
+        )
+
     arg = sdfg_builder.visit(node, ctx=ctx)
 
     if not isinstance(arg, gtir_to_sdfg_types.FieldopData):

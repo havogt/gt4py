@@ -53,15 +53,15 @@ def test_trivial():
     testee = im.concat_where(cond, "true_branch", "false_branch")
     testee.annex.domain = domain_utils.SymbolicDomain.from_expr(domain)
     expected = im.as_fieldop(
-        im.lambda_("__tcw_pos", "__tcw_arg0", "__tcw_arg1")(
+        im.lambda_("__tcw_pos_IDim", "__tcw_arg0", "__tcw_arg1")(
             im.if_(
-                _in(im.deref("__tcw_pos"), [IDim], cond),
+                _in(im.make_tuple(im.deref("__tcw_pos_IDim")), [IDim], cond),
                 im.deref("__tcw_arg0"),
                 im.deref("__tcw_arg1"),
             )
         ),
         domain,
-    )(im.make_tuple(im.index(IDim)), "true_branch", "false_branch")
+    )(im.index(IDim), "true_branch", "false_branch")
 
     actual = concat_where.transform_to_as_fieldop(testee)
     actual = inline_lambdas.InlineLambdas.apply(actual)  # simplify
@@ -76,10 +76,10 @@ def test_capturing_cond():
     testee = im.concat_where(cond, "true_branch", "false_branch")
     testee.annex.domain = domain_utils.SymbolicDomain.from_expr(domain)
     expected = im.as_fieldop(
-        im.lambda_("__tcw_pos", "__tcw_arg0", "__tcw_arg1", "start", "stop")(
+        im.lambda_("__tcw_pos_IDim", "__tcw_arg0", "__tcw_arg1", "start", "stop")(
             im.if_(
                 _in(
-                    im.deref("__tcw_pos"),
+                    im.make_tuple(im.deref("__tcw_pos_IDim")),
                     [IDim],
                     im.domain(
                         common.GridType.CARTESIAN, {IDim: (im.deref("start"), im.deref("stop"))}
@@ -90,7 +90,7 @@ def test_capturing_cond():
             )
         ),
         domain,
-    )(im.make_tuple(im.index(IDim)), "true_branch", "false_branch", "start", "stop")
+    )(im.index(IDim), "true_branch", "false_branch", "start", "stop")
 
     actual = concat_where.transform_to_as_fieldop(testee)
     actual = inline_lambdas.InlineLambdas.apply(actual)  # simplify

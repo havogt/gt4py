@@ -122,7 +122,6 @@ def _offsets_crossing_k_level_2(k_size: int) -> np.ndarray:
 
 @pytest.mark.uses_dynamic_offsets
 @pytest.mark.uses_concat_where
-@pytest.mark.uses_concat_where_with_dynamic_offsets
 def test_offset_field_of_concat_where(cartesian_case):
     @gtx.field_operator
     def testee(a: cases.IKField, b: cases.IKField, offset_field: cases.IKField) -> cases.IKField:
