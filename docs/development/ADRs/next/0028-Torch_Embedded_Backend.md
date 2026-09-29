@@ -51,7 +51,8 @@ Unlike JAX, tensors are mutable, so in-place `__setitem__` works as for NumPy.
   `_core.ndarray_utils`. The translator matches `torch` by module name, so importing
   `gt4py._core` does not import `torch`.
 - Testing: two embedded entries in the test matrix, `EmbeddedTorch` and `EmbeddedTorchCUDA`,
-  with a `requires_torch` marker. `torch` is added to the `internal` nox sessions next to `jax`.
+  with a `requires_torch` marker. For now `torch` is not installed in the nox sessions, and
+  `requires_torch` tests are deselected there, so CI does not run them.
 
 ## Consequences
 
