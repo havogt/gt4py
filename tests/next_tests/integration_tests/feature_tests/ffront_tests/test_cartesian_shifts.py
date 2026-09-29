@@ -143,6 +143,27 @@ def test_offset_field_of_concat_where(cartesian_case):
 
 
 @pytest.mark.uses_dynamic_offsets
+@pytest.mark.uses_concat_where
+def test_offset_field_of_concat_where_of_shifts(cartesian_case):
+    @gtx.field_operator
+    def testee(a: cases.IKField, offset_field: cases.IKField) -> cases.IKField:
+        return concat_where(KDim < 2, a(KDim + 1), a(KDim + 2))(as_offset(Koff, offset_field))
+
+    i_size, k_size = cartesian_case.default_sizes[IDim], cartesian_case.default_sizes[KDim]
+    k_offsets = _offsets_crossing_k_level_2(k_size)
+    offset_field = cartesian_case.as_field(
+        [IDim, KDim], np.broadcast_to(k_offsets, (i_size, k_size)).copy()
+    )
+    a = cases.allocate(cartesian_case, testee, "a").extend({KDim: (0, 2)})()
+    out = cases.allocate(cartesian_case, testee, cases.RETURN)()
+
+    shifted_k = np.arange(k_size) + k_offsets
+    ref = np.where(shifted_k < 2, a.asnumpy()[:, shifted_k + 1], a.asnumpy()[:, shifted_k + 2])
+
+    cases.verify(cartesian_case, testee, a, offset_field, out=out, ref=ref)
+
+
+@pytest.mark.uses_dynamic_offsets
 def test_offset_field_of_broadcast(cartesian_case):
     @gtx.field_operator
     def testee(a: cases.IField, b: cases.IKField, offset_field: cases.IKField) -> cases.IKField:

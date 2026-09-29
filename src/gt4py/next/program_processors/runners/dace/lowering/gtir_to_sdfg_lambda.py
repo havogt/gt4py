@@ -755,11 +755,12 @@ class LambdaToDataflow(eve.NodeVisitor):
             input_memlets: The memlets that provide input data to the SDFG, will be updated inside this function.
         """
         if isinstance(arg, IndexIteratorExpr):
-            if not all(isinstance(index, SymbolExpr) for index in arg.indices.values()):
-                raise NotImplementedError(
-                    "Dynamic indices of 'index' iterator in if-branch are not supported."
-                )
-            return arg
+            return dataclasses.replace(
+                arg,
+                indices=self._visit_if_branch_indices(
+                    sdfg, state, param_name, arg.indices, input_memlets
+                ),
+            )
 
         use_full_shape = False
         if isinstance(arg, (MemletExpr, ValueExpr)):
@@ -769,7 +770,9 @@ class LambdaToDataflow(eve.NodeVisitor):
         elif isinstance(arg, IteratorExpr):
             field_dims = [dim for dim, _ in arg.field_domain]
             arg_desc = arg.field.desc(self.sdfg)
-            if deref_on_input_memlet:
+            if deref_on_input_memlet and all(
+                isinstance(arg.indices[dim], SymbolExpr) for dim, _ in arg.field_domain
+            ):
                 # If the iterator is just dereferenced inside the branch state,
                 # we can access the array outside the nested SDFG and pass the
                 # local data. This approach makes the data dependencies of nested
@@ -825,9 +828,44 @@ class LambdaToDataflow(eve.NodeVisitor):
 
         inner_node = state.add_access(param_name)
         if isinstance(arg, IteratorExpr) and use_full_shape:
-            return IteratorExpr(inner_node, arg.gt_dtype, arg.field_domain, arg.indices)
+            return IteratorExpr(
+                inner_node,
+                arg.gt_dtype,
+                arg.field_domain,
+                self._visit_if_branch_indices(sdfg, state, param_name, arg.indices, input_memlets),
+            )
         else:
             return ValueExpr(inner_node, arg.gt_dtype)
+
+    def _visit_if_branch_indices(
+        self,
+        sdfg: dace.SDFG,
+        state: dace.SDFGState,
+        param_name: str,
+        indices: dict[gtx_common.Dimension, DataExpr],
+        input_memlets: dict[str, MemletExpr | ValueExpr],
+    ) -> dict[gtx_common.Dimension, DataExpr]:
+        """
+        Helper method to be called by `_visit_if_branch_arg()` to pass the iterator indices
+        computed outside the nested SDFG, i.e. dynamic offsets or neighbor indices, as scalar inputs.
+        """
+        inner_indices: dict[gtx_common.Dimension, DataExpr] = {}
+        for dim, index in indices.items():
+            if isinstance(index, SymbolExpr):
+                inner_indices[dim] = index
+                continue
+            index_data = f"{param_name}_{dim.value}_index"
+            if index_data not in sdfg.arrays:
+                sdfg.add_scalar(index_data, index.dc_node.desc(self.sdfg).dtype)
+                input_memlets[index_data] = index
+            index_dtype = (
+                index.gt_dtype.element_type
+                if isinstance(index.gt_dtype, ts.ListType)
+                else index.gt_dtype
+            )
+            assert isinstance(index_dtype, ts.ScalarType)
+            inner_indices[dim] = ValueExpr(state.add_access(index_data), index_dtype)
+        return inner_indices
 
     def _visit_if_branch(
         self,
