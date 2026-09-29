@@ -1488,6 +1488,19 @@ if torch:
         sign = torch.where((x < 0) & (torch.floor(x) % 2 == 1), -1.0, 1.0).to(x.dtype)
         return sign * torch.exp(torch.lgamma(x))
 
+    def _with_tensor_operands(func: Callable[..., torch.Tensor]) -> Callable[..., torch.Tensor]:
+        # these 'torch' functions reject Python and NumPy scalar operands
+        def wrapper(*args: Any) -> torch.Tensor:
+            device = next((a.device for a in args if isinstance(a, torch.Tensor)), None)
+            return func(
+                *(
+                    a if isinstance(a, torch.Tensor) else torch.as_tensor(a, device=device)
+                    for a in args
+                )
+            )
+
+        return wrapper
+
     class _TorchNamespace(ModuleType):
         """
         NumPy-like namespace for 'torch' tensors on one device kind.
@@ -1562,18 +1575,18 @@ if torch:
                 shape, dtype=_to_torch_dtype(dtype), device=self._device(None, device)
             )
 
-        @staticmethod
-        def logical_and(x1: Any, x2: Any, /) -> torch.Tensor:
-            return torch.logical_and(torch.as_tensor(x1), torch.as_tensor(x2))
-
-        @staticmethod
-        def logical_or(x1: Any, x2: Any, /) -> torch.Tensor:
-            return torch.logical_or(torch.as_tensor(x1), torch.as_tensor(x2))
-
-        @staticmethod
-        def logical_xor(x1: Any, x2: Any, /) -> torch.Tensor:
-            return torch.logical_xor(torch.as_tensor(x1), torch.as_tensor(x2))
-
+        equal = staticmethod(_with_tensor_operands(_torch_compat.equal))
+        not_equal = staticmethod(_with_tensor_operands(_torch_compat.not_equal))
+        greater = staticmethod(_with_tensor_operands(_torch_compat.greater))
+        greater_equal = staticmethod(_with_tensor_operands(_torch_compat.greater_equal))
+        less = staticmethod(_with_tensor_operands(_torch_compat.less))
+        less_equal = staticmethod(_with_tensor_operands(_torch_compat.less_equal))
+        minimum = staticmethod(_with_tensor_operands(_torch_compat.minimum))
+        maximum = staticmethod(_with_tensor_operands(_torch_compat.maximum))
+        fmod = staticmethod(_with_tensor_operands(torch.fmod))
+        logical_and = staticmethod(_with_tensor_operands(torch.logical_and))
+        logical_or = staticmethod(_with_tensor_operands(torch.logical_or))
+        logical_xor = staticmethod(_with_tensor_operands(torch.logical_xor))
         power = staticmethod(_torch_compat.pow)
         mod = staticmethod(_torch_compat.remainder)
         invert = staticmethod(_torch_compat.bitwise_invert)

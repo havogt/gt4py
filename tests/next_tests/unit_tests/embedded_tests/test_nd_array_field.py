@@ -227,6 +227,27 @@ def test_binary_arithmetic_ops(binary_arithmetic_op, nd_array_implementation, lh
 
 
 @pytest.mark.parametrize(
+    "builtin, np_func",
+    [
+        (fbuiltins.minimum, np.minimum),
+        (fbuiltins.maximum, np.maximum),
+        (fbuiltins.fmod, np.fmod),
+        (operator.lt, operator.lt),
+        (operator.eq, operator.eq),
+    ],
+)
+@pytest.mark.parametrize("scalar_first", [True, False])
+def test_binary_builtin_with_scalar(builtin, np_func, scalar_first, nd_array_implementation):
+    field = _make_field_or_scalar([1.0, -2.0, 3.0], nd_array_implementation)
+    args = (0.5, field) if scalar_first else (field, 0.5)
+
+    expected = np_func(*(a.asnumpy() if isinstance(a, common.Field) else a for a in args))
+    result = builtin(*args)
+
+    assert np.allclose(result.asnumpy(), expected)
+
+
+@pytest.mark.parametrize(
     "lhs, rhs",
     [
         ([True, True, False, False], [True, False, True, False]),
