@@ -1301,6 +1301,9 @@ if cp:
     class CuPyArrayField(NdArrayField):
         array_ns: ClassVar[ModuleType] = cp
 
+        def _as_assignable(self, value: Any) -> cp.ndarray:
+            return cp.asarray(value)
+
     common._field.register(cp.ndarray, CuPyArrayField.from_array)
 
     @dataclasses.dataclass(frozen=True, eq=False)
