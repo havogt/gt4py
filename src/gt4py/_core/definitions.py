@@ -223,6 +223,8 @@ class DType(Generic[ScalarT]):
     @functools.cached_property
     def dtype(self) -> np.dtype:
         """The NumPy dtype corresponding to this DType."""
+        if not self.tensor_shape:
+            return np.dtype(self.scalar_type)
         return np.dtype(f"{self.tensor_shape}{np.dtype(self.scalar_type).name}")
 
     @functools.cached_property
