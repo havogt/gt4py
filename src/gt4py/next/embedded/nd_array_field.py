@@ -1532,6 +1532,11 @@ if torch:
                 obj, dtype=_to_torch_dtype(dtype), device=self._device(obj, device), copy=copy
             )
 
+        def array(
+            self, obj: Any, /, *, dtype: Any = None, device: Any = None, copy: bool = True
+        ) -> torch.Tensor:
+            return self.asarray(obj, dtype=dtype, device=device, copy=copy)
+
         def arange(
             self,
             start: int,
