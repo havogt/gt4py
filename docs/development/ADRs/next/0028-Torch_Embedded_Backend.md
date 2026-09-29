@@ -63,7 +63,9 @@ Unlike JAX, tensors are mutable, so in-place `__setitem__` works as for NumPy.
 - `__gt_buffer_info__` is not implemented, as for JAX, so torch fields cannot be passed to
   compiled backends yet.
 - Out of scope, possible follow-ups: `torch.compile` of embedded programs, autograd through
-  fields, and zero-copy passing of torch fields to gtfn/dace via DLPack.
+  fields, zero-copy passing of torch fields to gtfn/dace via DLPack, and a torch
+  `FieldBufferAllocator` for components that accept only an allocator (`allocator=torch`
+  alone allocates on the CPU).
 
 ## Alternatives considered
 
