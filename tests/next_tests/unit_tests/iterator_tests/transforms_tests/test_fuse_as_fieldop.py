@@ -351,6 +351,66 @@ def test_chained_fusion(uids: utils.IDGeneratorPool):
     assert actual == expected
 
 
+def test_let_bound_shifted_arg(uids: utils.IDGeneratorPool):
+    d = im.domain("cartesian_domain", {IDim: (0, 1)})
+    testee = im.as_fieldop(
+        im.lambda_("x", "off")(
+            im.let("y", im.shift(IOff, im.deref("off"))("x"))(
+                im.plus(im.deref(im.shift(IOff, 1)("y")), im.deref(im.shift(IOff, -1)("y")))
+            )
+        ),
+        d,
+    )(im.op_as_fieldop("plus", d)(im.ref("a", field_type), 1), im.ref("off", field_type))
+    expected = im.as_fieldop(
+        im.lambda_("a", "off")(
+            im.plus(
+                im.plus(im.deref(im.shift(IOff, 1)(im.shift(IOff, im.deref("off"))("a"))), 1),
+                im.plus(im.deref(im.shift(IOff, -1)(im.shift(IOff, im.deref("off"))("a"))), 1),
+            )
+        ),
+        d,
+    )(im.ref("a", field_type), im.ref("off", field_type))
+    actual = fuse_as_fieldop.fuse_as_fieldop(
+        testee, [True, False], uids=uids, offset_provider_type={}, enable_cse=False
+    )
+    assert actual == expected
+
+
+def test_let_bound_shifted_arg_passed_to_lambda(uids: utils.IDGeneratorPool):
+    d = im.domain("cartesian_domain", {IDim: (0, 1)})
+
+    def square(it: str) -> itir.Expr:
+        return im.multiplies_(im.deref(it), im.deref(it))
+
+    testee = im.as_fieldop(
+        im.lambda_("x", "off")(
+            im.let("y", im.shift(IOff, im.deref("off"))("x"))(
+                im.call(im.lambda_("p", "q")(im.plus(square("p"), square("q"))))(
+                    im.shift(IOff, 1)("y"), im.shift(IOff, -1)("y")
+                )
+            )
+        ),
+        d,
+    )(im.op_as_fieldop("plus", d)(im.ref("a", field_type), 1), im.ref("off", field_type))
+
+    def shifted_plus_one(offset: int) -> itir.Expr:
+        return im.plus(im.deref(im.shift(IOff, offset)(im.shift(IOff, im.deref("off"))("a"))), 1)
+
+    expected = im.as_fieldop(
+        im.lambda_("a", "off")(
+            im.plus(
+                im.multiplies_(shifted_plus_one(1), shifted_plus_one(1)),
+                im.multiplies_(shifted_plus_one(-1), shifted_plus_one(-1)),
+            )
+        ),
+        d,
+    )(im.ref("a", field_type), im.ref("off", field_type))
+    actual = fuse_as_fieldop.fuse_as_fieldop(
+        testee, [True, False], uids=uids, offset_provider_type={}, enable_cse=False
+    )
+    assert actual == expected
+
+
 def test_inline_as_fieldop_with_list_dtype(uids: utils.IDGeneratorPool):
     list_field_type = ts.FieldType(
         dims=[IDim],

@@ -240,3 +240,27 @@ def test_offset_field_of_ternary_with_scalar_cond_expr(cartesian_case, mode):
     ref = a.asnumpy()[:, shifted_k] if mode == 3 else b.asnumpy()[:, shifted_k] * 2
 
     cases.verify(cartesian_case, testee, a, b, offset_field, gtx.int32(mode), out=out, ref=ref)
+
+
+@pytest.mark.uses_dynamic_offsets
+def test_offset_field_of_shifted_difference(cartesian_case):
+    @gtx.field_operator
+    def testee(a: cases.IKField, offset_field: cases.IKField) -> cases.IKField:
+        x = a + 1
+        d = x(KDim + 2) - x(KDim + 1)
+        return d(as_offset(Koff, offset_field))
+
+    out = cases.allocate(cartesian_case, testee, cases.RETURN)()
+    a = cases.allocate(cartesian_case, testee, "a").extend({KDim: (0, 3)})()
+    offset_field = cases.allocate(
+        cartesian_case, testee, "offset_field", strategy=cases.ConstInitializer(1)
+    )()
+
+    cases.verify(
+        cartesian_case,
+        testee,
+        a,
+        offset_field,
+        out=out,
+        ref=a.asnumpy()[:, 3:] - a.asnumpy()[:, 2:-1],
+    )

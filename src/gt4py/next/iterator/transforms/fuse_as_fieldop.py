@@ -55,6 +55,13 @@ def _is_tuple_expr_of_literals(expr: itir.Expr):
     return isinstance(expr, itir.Literal)
 
 
+def _has_lift_arg(expr: itir.Expr) -> bool:
+    return any(
+        isinstance(call.fun, itir.Lambda) and any(cpm.is_applied_lift(arg) for arg in call.args)
+        for call in expr.pre_walk_values().if_isinstance(itir.FunCall)
+    )
+
+
 def _inline_as_fieldop_arg(
     arg: itir.Expr, *, uids: utils.IDGeneratorPool
 ) -> tuple[itir.Expr, dict[str, itir.Expr]]:
@@ -188,10 +195,17 @@ def fuse_as_fieldop(
         new_stencil, is_stencil=True, uids=uids
     )  # to keep the tree small
     new_stencil = merge_let.MergeLet().visit(new_stencil)
-    new_stencil = inline_lambdas.InlineLambdas.apply(
-        new_stencil, opcount_preserving=True, force_inline_lift_args=True
-    )
-    new_stencil = inline_lifts.InlineLifts().visit(new_stencil)
+    # propagating a shift into a lift turns a shifted lift argument into a lift argument, which
+    # is only inlined in the next iteration
+    for _ in range(10):
+        new_stencil = inline_lambdas.InlineLambdas.apply(
+            new_stencil, opcount_preserving=True, force_inline_lift_args=True
+        )
+        new_stencil = inline_lifts.InlineLifts().visit(new_stencil)
+        if not _has_lift_arg(new_stencil):
+            break
+    else:
+        raise RuntimeError("Inlining lifted arguments did not converge.")
 
     new_node = im.as_fieldop(new_stencil, domain)(*new_args.values())
     if enable_cse:
