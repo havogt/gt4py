@@ -25,7 +25,7 @@ from gt4py.next.program_processors.runners.dace import (
     sdfg_args as gtx_dace_args,
     transformations as gtx_transformations,
 )
-from gt4py.next.program_processors.runners.dace.workflow import common as gtx_wfdcommon
+from gt4py.next.program_processors.runners.dace.workflow import common as gtx_wfdcommon, pass_timing
 from gt4py.next.type_system import type_specifications as ts
 
 
@@ -340,6 +340,11 @@ def make_sdfg_call_sync(sdfg: dace.SDFG, gpu: bool) -> None:
     )
 
 
+def _serialize_sdfg_as_json(sdfg: dace.SDFG) -> dict[str, Any]:
+    with pass_timing.timed("serialize_sdfg_as_json"):
+        return gtx_wfdcommon.serialize_sdfg_as_json(sdfg)
+
+
 @dataclasses.dataclass(frozen=True)
 class DaCeTranslator(
     workflow.ChainableWorkflowMixin[
@@ -376,16 +381,21 @@ class DaCeTranslator(
         offset_provider: common.OffsetProvider,
         column_axis: Optional[common.Dimension],
     ) -> dace.SDFG:
+        pass_timing.enable_from_env()
         if not self.disable_itir_transforms:
-            ir = itir_transforms.apply_fieldview_transforms(
-                ir,
-                use_max_domain_range_on_unstructured_shift=self.use_max_domain_range_on_unstructured_shift,
-                offset_provider=offset_provider,
-            )
+            with pass_timing.timed(f"apply_fieldview_transforms({ir.id})"):
+                ir = itir_transforms.apply_fieldview_transforms(
+                    ir,
+                    use_max_domain_range_on_unstructured_shift=self.use_max_domain_range_on_unstructured_shift,
+                    offset_provider=offset_provider,
+                )
         offset_provider_type = common.offset_provider_to_type(offset_provider)
         on_gpu = self.device_type != core_defs.DeviceType.CPU
 
-        sdfg = gtx_dace_lowering.lower_program_to_sdfg(ir, offset_provider_type, column_axis)
+        with pass_timing.timed(f"lower_program_to_sdfg({ir.id})"):
+            sdfg = gtx_dace_lowering.lower_program_to_sdfg(ir, offset_provider_type, column_axis)
+        if pass_timing.enabled():
+            pass_timing.log(f"lowered SDFG: {pass_timing.sdfg_stats(sdfg)}")
 
         constant_symbols = find_constant_symbols(
             ir,
@@ -462,7 +472,7 @@ class DaCeTranslator(
 
         module: artifacts.ProgramSource[artifacts.SDFGCodeSpec] = artifacts.ProgramSource(
             entry_point=interface.Function(program.id, program_parameters),
-            source_code=gtx_wfdcommon.serialize_sdfg_as_json(sdfg),  # type: ignore[arg-type] # The source code is typed as a `str`, but we assign a JSON dictionary.
+            source_code=_serialize_sdfg_as_json(sdfg),  # type: ignore[arg-type] # The source code is typed as a `str`, but we assign a JSON dictionary.
             library_deps=tuple(),
             code_spec=artifacts.SDFGCodeSpec(),
         )

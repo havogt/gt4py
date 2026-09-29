@@ -28,6 +28,7 @@ from gt4py.next.otf.compilation import cache as gtx_cache
 from gt4py.next.program_processors.runners.dace.workflow import (
     common as gtx_wfdcommon,
     decoration as gtx_wfddecoration,
+    pass_timing,
 )
 
 
@@ -300,6 +301,7 @@ class DaCeCompiler(
             object.__setattr__(self, "dace_config_nondefaults", dace.Config._data.nondefaults())
 
     def __call__(self, inp: SDFGExtensionSource) -> DaCeCompilationArtifact:
+        pass_timing.enable_from_env()
         with gtx_wfdcommon.dace_context(
             device_type=self.device_type,
             cmake_build_type=self.cmake_build_type,
@@ -354,7 +356,8 @@ class DaCeCompiler(
                 # set there, and with it off dace rebuilds over the existing library.
                 if not (dace.Config.get_bool("compiler", "use_cache") and library_path.is_file()):
                     marker.unlink(missing_ok=True)
-                sdfg.compile(validate=False, return_program_handle=False)
+                with pass_timing.timed(f"SDFG.compile({sdfg.name})"):
+                    sdfg.compile(validate=False, return_program_handle=False)
                 marker.touch()
 
         assert inp.binding_source is not None
