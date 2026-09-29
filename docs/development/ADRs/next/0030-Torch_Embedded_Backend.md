@@ -47,8 +47,10 @@ Unlike JAX, tensors are mutable, so in-place `__setitem__` works as for NumPy.
   `_astype(array, type_)` for the NumPy dtype assumptions, and `_as_assignable(value)` for
   `__setitem__`, because torch does not accept NumPy scalars or arrays as assigned values.
 - `core_defs.dtype()` accepts `torch.dtype` by name, without importing `torch`.
-- `constructors` accept `allocator=torch` with a `device`, through a device translator in
-  `_core.ndarray_utils`. The translator matches `torch` by module name, so importing
+- `constructors` accept `allocator=torch`. Without `device`, tensors are allocated on the torch
+  default device (`torch.set_default_device`, or a `with torch.device(...)` block), as
+  `allocator=jax.numpy` allocates on the JAX default device. An explicit `device` goes through a
+  device translator in `_core.ndarray_utils`. The translator matches `torch` by module name, so importing
   `gt4py._core` does not import `torch`.
 - Testing: two embedded entries in the test matrix, `EmbeddedTorch` and `EmbeddedTorchCUDA`,
   with a `requires_torch` marker. For now `torch` is not installed in the nox sessions, and
@@ -63,9 +65,7 @@ Unlike JAX, tensors are mutable, so in-place `__setitem__` works as for NumPy.
 - `__gt_buffer_info__` is not implemented, as for JAX, so torch fields cannot be passed to
   compiled backends yet.
 - Out of scope, possible follow-ups: `torch.compile` of embedded programs, autograd through
-  fields, zero-copy passing of torch fields to gtfn/dace via DLPack, and a torch
-  `FieldBufferAllocator` for components that accept only an allocator (`allocator=torch`
-  alone allocates on the CPU).
+  fields, and zero-copy passing of torch fields to gtfn/dace via DLPack.
 
 ## Alternatives considered
 
