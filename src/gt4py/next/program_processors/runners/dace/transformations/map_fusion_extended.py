@@ -743,12 +743,7 @@ class VerticalSplitMapRange(SplitMapRange):
                 access_node=intermediate_to_split,
             ):
                 gtx_transformations.SplitAccessNode.apply_to(
-                    sdfg=sdfg,
-                    options={},
-                    # The split does not change any Map scope, thus no Memlet has to be
-                    #  propagated.
-                    annotate=False,
-                    access_node=intermediate_to_split,
+                    sdfg=sdfg, options={}, access_node=intermediate_to_split
                 )
                 has_performed_a_split = True
 

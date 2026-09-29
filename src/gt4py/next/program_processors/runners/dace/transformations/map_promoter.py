@@ -340,8 +340,6 @@ class MapPromoter(dace_transformation.SingleStateTransformation):
                 # This will not run `MapFusionVertical.can_be_applied()`, thus we scan the
                 #  SDFG only once instead of twice for every intermediate.
                 verify=False,
-                # `MapFusionVertical` propagates the Memlets of the fused Map itself.
-                annotate=False,
                 first_map_exit=first_map_exit,
                 array=access_node,
                 second_map_entry=second_map_entry,

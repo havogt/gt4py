@@ -1022,8 +1022,6 @@ class TrivialGPUMapElimination(dace_transformation.SingleStateTransformation):
                 array=access_node,
                 second_map_entry=second_map_entry,
                 verify=False,  # Do not rerun `can_be_applied()`.
-                # `MapFusionVertical` propagates the Memlets of the fused Map itself.
-                annotate=False,
             )
 
     def _promote_map(

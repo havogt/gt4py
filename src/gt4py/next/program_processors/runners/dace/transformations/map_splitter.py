@@ -214,8 +214,6 @@ class MapSplitter(dace_transformation.SingleStateTransformation):
                 "assume_single_use_data": True,  # Was tested in `can_be_applied()`.
             },
             verify=True,
-            # The split does not change any Map scope, thus no Memlet has to be propagated.
-            annotate=False,
             access_node=access_node,
         )
 
