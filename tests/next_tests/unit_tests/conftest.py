@@ -105,6 +105,12 @@ def nd_array_implementation_params():
             yield pytest.param(
                 (xp, core_defs.CUPY_DEVICE_TYPE), id=xp.__name__, marks=pytest.mark.requires_gpu
             )
+        elif getattr(xp, "device_type", None) == "cuda":
+            yield pytest.param(
+                (xp, core_defs.DeviceType.CUDA),
+                id=xp.__name__,
+                marks=(pytest.mark.requires_torch, pytest.mark.requires_gpu),
+            )
         else:
             yield pytest.param((xp, core_defs.DeviceType.CPU), id=xp.__name__)
 

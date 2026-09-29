@@ -146,7 +146,7 @@ def test_math_function_builtins(builtin_name: str, inputs, nd_array_implementati
     builtin = getattr(fbuiltins, builtin_name)
     result = builtin(*field_inputs)
 
-    assert np.allclose(result.ndarray, expected)
+    assert np.allclose(result.asnumpy(), expected)
 
 
 def test_where_builtin(nd_array_implementation):
@@ -155,12 +155,13 @@ def test_where_builtin(nd_array_implementation):
     false_ = np.asarray([3.0, 4.0], dtype=np.float32)
 
     field_inputs = [
-        _make_field_or_scalar(inp, nd_array_implementation) for inp in [cond, true_, false_]
+        _make_field_or_scalar(cond, nd_array_implementation, dtype=bool),
+        *(_make_field_or_scalar(inp, nd_array_implementation) for inp in [true_, false_]),
     ]
     expected = np.where(cond, true_, false_)
 
     result = fbuiltins.where(*field_inputs)
-    assert np.allclose(result.ndarray, expected)
+    assert np.allclose(result.asnumpy(), expected)
 
 
 def test_where_builtin_different_domain(nd_array_implementation):
@@ -180,7 +181,7 @@ def test_where_builtin_different_domain(nd_array_implementation):
     expected = np.where(cond[np.newaxis, :], true_[:, 1:], false_[np.newaxis, 1:-1])
 
     result = fbuiltins.where(cond_field, true_field, false_field)
-    assert np.allclose(result.ndarray, expected)
+    assert np.allclose(result.asnumpy(), expected)
 
 
 def test_where_builtin_with_tuple(nd_array_implementation):
@@ -202,8 +203,8 @@ def test_where_builtin_with_tuple(nd_array_implementation):
     )
 
     result = fbuiltins.where(cond_field, field_true, field_false)
-    assert np.allclose(result[0].ndarray, expected0)
-    assert np.allclose(result[1].ndarray, expected1)
+    assert np.allclose(result[0].asnumpy(), expected0)
+    assert np.allclose(result[1].asnumpy(), expected1)
 
 
 @pytest.mark.parametrize(
@@ -222,7 +223,28 @@ def test_binary_arithmetic_ops(binary_arithmetic_op, nd_array_implementation, lh
 
     result = binary_arithmetic_op(*field_inputs)
 
-    assert np.allclose(result.ndarray, expected)
+    assert np.allclose(result.asnumpy(), expected)
+
+
+@pytest.mark.parametrize(
+    "builtin, np_func",
+    [
+        (fbuiltins.minimum, np.minimum),
+        (fbuiltins.maximum, np.maximum),
+        (fbuiltins.fmod, np.fmod),
+        (operator.lt, operator.lt),
+        (operator.eq, operator.eq),
+    ],
+)
+@pytest.mark.parametrize("scalar_first", [True, False])
+def test_binary_builtin_with_scalar(builtin, np_func, scalar_first, nd_array_implementation):
+    field = _make_field_or_scalar([1.0, -2.0, 3.0], nd_array_implementation)
+    args = (0.5, field) if scalar_first else (field, 0.5)
+
+    expected = np_func(*(a.asnumpy() if isinstance(a, common.Field) else a for a in args))
+    result = builtin(*args)
+
+    assert np.allclose(result.asnumpy(), expected)
 
 
 @pytest.mark.parametrize(
@@ -244,7 +266,7 @@ def test_binary_logical_ops(binary_logical_op, nd_array_implementation, lhs, rhs
 
     result = binary_logical_op(*field_inputs)
 
-    assert np.allclose(result.ndarray, expected)
+    assert np.allclose(result.asnumpy(), expected)
 
 
 def test_unary_logical_ops(unary_logical_op, nd_array_implementation):
@@ -256,7 +278,7 @@ def test_unary_logical_ops(unary_logical_op, nd_array_implementation):
 
     result = unary_logical_op(field_input)
 
-    assert np.allclose(result.ndarray, expected)
+    assert np.allclose(result.asnumpy(), expected)
 
 
 def test_unary_arithmetic_ops(unary_arithmetic_op, nd_array_implementation):
@@ -268,7 +290,7 @@ def test_unary_arithmetic_ops(unary_arithmetic_op, nd_array_implementation):
 
     result = unary_arithmetic_op(field_input)
 
-    assert np.allclose(result.ndarray, expected)
+    assert np.allclose(result.asnumpy(), expected)
 
 
 @pytest.mark.parametrize(
@@ -288,7 +310,7 @@ def test_binary_operations_with_intersection(binary_arithmetic_op, dims, expecte
     expected_result = binary_arithmetic_op(arr1[expected_indices[0], expected_indices[1]], arr2)
 
     assert op_result.ndarray.shape == (5, 5)
-    assert np.allclose(op_result.ndarray, expected_result)
+    assert np.allclose(op_result.asnumpy(), expected_result)
 
 
 def test_as_scalar(nd_array_implementation):
@@ -305,7 +327,11 @@ def product_nd_array_implementation_params():
     for xp1 in nd_array_field._nd_array_implementations:
         for xp2 in nd_array_field._nd_array_implementations:
             marks = ()
-            if any(hasattr(nd_array_field, "cp") and xp == nd_array_field.cp for xp in (xp1, xp2)):
+            if any(
+                (hasattr(nd_array_field, "cp") and xp == nd_array_field.cp)
+                or getattr(xp, "device_type", None) == "cuda"
+                for xp in (xp1, xp2)
+            ):
                 marks = pytest.mark.requires_gpu
             yield pytest.param((xp1, xp2), id=f"{xp1.__name__}-{xp2.__name__}", marks=marks)
 
@@ -319,6 +345,10 @@ def test_mixed_fields(product_nd_array_implementation):
     first_impl, second_impl = product_nd_array_implementation
     if "numpy" in first_impl.__name__ and "cupy" in second_impl.__name__:
         pytest.skip("Binary operation between NumPy and CuPy requires explicit conversion.")
+    if first_impl is not second_impl and any(
+        "torch" in impl.__name__ for impl in (first_impl, second_impl)
+    ):
+        pytest.skip("Binary operation between torch and other arrays requires explicit conversion.")
 
     inp_a = [-1.0, 4.2, 42]
     inp_b = [2.0, 3.0, -3.0]
@@ -329,7 +359,7 @@ def test_mixed_fields(product_nd_array_implementation):
     field_inp_b = _make_field_or_scalar(inp_b, second_impl)
 
     result = field_inp_a + field_inp_b
-    assert np.allclose(result.ndarray, expected)
+    assert np.allclose(result.asnumpy(), expected)
 
 
 def test_non_dispatched_function():
@@ -348,7 +378,7 @@ def test_non_dispatched_function():
     field_inp_c = _make_field_or_scalar(inp_c, np)
 
     result = fma(field_inp_a, field_inp_b, field_inp_c)
-    assert np.allclose(result.ndarray, expected)
+    assert np.allclose(result.asnumpy(), expected)
 
 
 def test_domain_premap():
@@ -1261,7 +1291,7 @@ def test_setitem(index, value):
 
     field[index] = value
 
-    assert np.allclose(field.ndarray, expected)
+    assert np.allclose(field.asnumpy(), expected)
 
 
 def test_setitem_wrong_domain():

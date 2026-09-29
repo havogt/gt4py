@@ -11,11 +11,15 @@
 import dataclasses
 import enum
 import importlib
+import types
 from typing import Final
+
+import numpy as np
 import pytest
 
+from gt4py._core import definitions as core_defs
+from gt4py.next import common, constructors
 from gt4py.next.embedded import nd_array_field
-from gt4py.next import constructors
 
 # Skip definitions
 XFAIL = pytest.xfail
@@ -60,12 +64,41 @@ class EmbeddedDummyBackend:
 numpy_execution = EmbeddedDummyBackend("EmbeddedNumPy", nd_array_field.np)
 cupy_execution = EmbeddedDummyBackend("EmbeddedCuPy", nd_array_field.cp)
 jax_numpy_execution = EmbeddedDummyBackend("EmbeddedJaxNumPy", nd_array_field.jnp)
+torch_execution = EmbeddedDummyBackend("EmbeddedTorch", nd_array_field.torch)
+
+
+class _TorchCUDAAllocator:
+    """Field buffer allocator returning 'torch' tensors on the current CUDA device."""
+
+    __gt_device_type__ = core_defs.DeviceType.CUDA
+
+    def __gt_allocate__(
+        self,
+        domain: common.Domain,
+        dtype: core_defs.DType,
+        device_id: int = 0,
+        aligned_index: object = None,
+    ) -> types.SimpleNamespace:
+        torch = nd_array_field.torch
+        assert torch is not None
+        return types.SimpleNamespace(
+            ndarray=torch.empty(
+                domain.shape,
+                dtype=getattr(torch, np.dtype(dtype.scalar_type).name),
+                device=torch.device("cuda", device_id),
+            )
+        )
+
+
+torch_cuda_execution = EmbeddedDummyBackend("EmbeddedTorchCUDA", _TorchCUDAAllocator())
 
 
 class EmbeddedIds(_PythonObjectIdMixin, str, enum.Enum):
     NUMPY_EXECUTION = "next_tests.definitions.numpy_execution"
     CUPY_EXECUTION = "next_tests.definitions.cupy_execution"
     JAX_NUMPY_EXECUTION = "next_tests.definitions.jax_numpy_execution"
+    TORCH_EXECUTION = "next_tests.definitions.torch_execution"
+    TORCH_CUDA_EXECUTION = "next_tests.definitions.torch_cuda_execution"
 
 
 class OptionalProgramBackendId(_PythonObjectIdMixin, str, enum.Enum):
@@ -250,6 +283,8 @@ BACKEND_SKIP_TEST_MATRIX = {
     EmbeddedIds.NUMPY_EXECUTION: EMBEDDED_SKIP_LIST,
     EmbeddedIds.CUPY_EXECUTION: EMBEDDED_SKIP_LIST,
     EmbeddedIds.JAX_NUMPY_EXECUTION: JAX_EMBEDDED_SKIP_LIST,
+    EmbeddedIds.TORCH_EXECUTION: EMBEDDED_SKIP_LIST,
+    EmbeddedIds.TORCH_CUDA_EXECUTION: EMBEDDED_SKIP_LIST,
     OptionalProgramBackendId.DACE_CPU: DACE_SKIP_TEST_LIST,
     OptionalProgramBackendId.DACE_GPU: DACE_SKIP_TEST_LIST,
     OptionalProgramBackendId.DACE_CPU_NO_OPT: DACE_SKIP_TEST_LIST,
