@@ -1776,6 +1776,14 @@ class LambdaToDataflow(eve.NodeVisitor):
         if not isinstance(it, (IteratorExpr, IndexIteratorExpr)):
             # a scalar has the same value at every position
             return it
+        if isinstance(offset_provider_arg, gtir.CartesianOffset):
+            field_dims = {dim for dim, _ in it.field_domain}
+            if field_dims.isdisjoint(
+                itir_misc.dim_from_axis_literal(axis)
+                for axis in (offset_provider_arg.domain, offset_provider_arg.codomain)
+            ):
+                # the field is constant along the shifted dimension
+                return it
 
         # second argument should be the offset value, which could be a symbolic expression or a dynamic offset
         offset_expr = (

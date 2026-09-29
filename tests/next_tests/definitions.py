@@ -129,7 +129,6 @@ USES_MESH_WITH_SKIP_VALUES = "uses_mesh_with_skip_values"
 USES_PROGRAM_METRICS = "uses_program_metrics"
 USES_SCALAR_IN_DOMAIN_AND_FO = "uses_scalar_in_domain_and_fo"
 USES_CONCAT_WHERE = "uses_concat_where"
-USES_BROADCAST_WITH_DYNAMIC_OFFSETS = "uses_broadcast_with_dynamic_offsets"
 EMBEDDED_CONCAT_WHERE_INFINITE_DOMAIN = "embedded_concat_where_infinite_domain"
 EMBEDDED_CONCAT_WHERE_NON_CONTIGUOUS_DOMAIN = "embedded_concat_where_non_contiguous_domain"
 USES_PROGRAM_WITH_SLICED_OUT_ARGUMENTS = "uses_program_with_sliced_out_arguments"
@@ -253,8 +252,7 @@ BACKEND_SKIP_TEST_MATRIX = {
     EmbeddedIds.JAX_NUMPY_EXECUTION: JAX_EMBEDDED_SKIP_LIST,
     OptionalProgramBackendId.DACE_CPU: DACE_SKIP_TEST_LIST,
     OptionalProgramBackendId.DACE_GPU: DACE_SKIP_TEST_LIST,
-    OptionalProgramBackendId.DACE_CPU_NO_OPT: DACE_SKIP_TEST_LIST
-    + [(USES_BROADCAST_WITH_DYNAMIC_OFFSETS, XFAIL, UNSUPPORTED_MESSAGE)],
+    OptionalProgramBackendId.DACE_CPU_NO_OPT: DACE_SKIP_TEST_LIST,
     ProgramBackendId.GTFN_CPU: GTFN_SKIP_TEST_LIST
     + [(USES_SCAN_NESTED, XFAIL, UNSUPPORTED_MESSAGE)],
     ProgramBackendId.GTFN_GPU: GTFN_SKIP_TEST_LIST

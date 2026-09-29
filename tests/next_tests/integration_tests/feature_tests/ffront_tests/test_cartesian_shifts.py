@@ -143,7 +143,6 @@ def test_offset_field_of_concat_where(cartesian_case):
 
 
 @pytest.mark.uses_dynamic_offsets
-@pytest.mark.uses_broadcast_with_dynamic_offsets
 def test_offset_field_of_broadcast(cartesian_case):
     @gtx.field_operator
     def testee(a: cases.IField, b: cases.IKField, offset_field: cases.IKField) -> cases.IKField:
