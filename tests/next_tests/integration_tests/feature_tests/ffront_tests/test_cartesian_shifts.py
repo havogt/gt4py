@@ -165,7 +165,6 @@ def test_offset_field_of_broadcast(cartesian_case):
 
 
 @pytest.mark.uses_dynamic_offsets
-@pytest.mark.uses_dynamic_offsets_on_scalar_inputs
 @pytest.mark.uses_if_stmts
 @pytest.mark.parametrize("cond", [True, False])
 def test_offset_field_of_if_stmt_tuple_element(cartesian_case, cond):
@@ -221,7 +220,6 @@ def test_offset_field_of_shared_producer(cartesian_case):
 
 
 @pytest.mark.uses_dynamic_offsets
-@pytest.mark.uses_dynamic_offsets_on_scalar_inputs
 @pytest.mark.parametrize("mode", [1, 3])
 def test_offset_field_of_ternary_with_scalar_cond_expr(cartesian_case, mode):
     @gtx.field_operator

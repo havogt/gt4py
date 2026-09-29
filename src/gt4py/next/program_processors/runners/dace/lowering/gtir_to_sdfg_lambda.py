@@ -1585,7 +1585,7 @@ class LambdaToDataflow(eve.NodeVisitor):
 
     def _visit_shift_multidim(
         self, iterator: gtir.Expr, shift_args: list[gtir.Expr]
-    ) -> tuple[gtir.Expr, gtir.Expr, IteratorExpr | IndexIteratorExpr]:
+    ) -> tuple[gtir.Expr, gtir.Expr, IteratorExpr | IndexIteratorExpr | DataExpr]:
         """Transforms a multi-dimensional shift into recursive shift calls, each in a single dimension."""
         (offset_provider_arg, offset_value_arg), tail = self._split_shift_args(shift_args)
         if tail:
@@ -1597,7 +1597,7 @@ class LambdaToDataflow(eve.NodeVisitor):
         else:
             it = self.visit(iterator)
 
-        assert isinstance(it, (IteratorExpr, IndexIteratorExpr))
+        assert isinstance(it, (IteratorExpr, IndexIteratorExpr, MemletExpr, ValueExpr, SymbolExpr))
         return offset_provider_arg, offset_value_arg, it
 
     def _make_cartesian_shift(
@@ -1765,7 +1765,7 @@ class LambdaToDataflow(eve.NodeVisitor):
 
         return dataclasses.replace(it, indices=shifted_indices)
 
-    def _visit_shift(self, node: gtir.FunCall) -> IteratorExpr | IndexIteratorExpr:
+    def _visit_shift(self, node: gtir.FunCall) -> IteratorExpr | IndexIteratorExpr | DataExpr:
         assert cpm.is_applied_shift(node)
         # the iterator to be shifted is the node argument, while the shift arguments
         # are provided by the nested function call; the shift arguments consist of
@@ -1773,6 +1773,9 @@ class LambdaToDataflow(eve.NodeVisitor):
         offset_provider_arg, offset_value_arg, it = self._visit_shift_multidim(
             node.args[0], node.fun.args
         )
+        if not isinstance(it, (IteratorExpr, IndexIteratorExpr)):
+            # a scalar has the same value at every position
+            return it
 
         # second argument should be the offset value, which could be a symbolic expression or a dynamic offset
         offset_expr = (
