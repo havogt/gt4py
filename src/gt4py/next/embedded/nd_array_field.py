@@ -13,6 +13,7 @@ import dataclasses
 import functools
 import itertools
 import math
+import operator
 import weakref
 from collections.abc import Callable, Sequence
 from types import ModuleType
@@ -1330,6 +1331,12 @@ def _make_reduction(
         # TODO(havogt): unify reduction dispatch once StructuredConnectivity
         # conforms to the common.Connectivity protocol.
         if isinstance(offset_definition, _structured_conn.StructuredConnectivity):
+            if (
+                array_builtin_name == "sum"
+                and (views := _neighbor_views(field)) is not None
+                and views[0] == axis
+            ):
+                return functools.reduce(operator.add, views[1])
             new_domain = common.Domain(*[nr for nr in field.domain if nr.dim != axis])
             return field.__class__.from_array(
                 getattr(xp, array_builtin_name)(field.ndarray, axis=reduce_dim_index),
