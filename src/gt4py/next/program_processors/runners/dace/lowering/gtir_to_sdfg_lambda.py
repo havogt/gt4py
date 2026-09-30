@@ -64,6 +64,18 @@ from gt4py.next.type_system import (
 _CONST_DIM: Final = gtx_common.Dimension(value="_CONST_DIM", kind=gtx_common.DimensionKind.LOCAL)
 
 
+def _neighbor_table_type(
+    conn_type: gtx_common.OffsetProviderTypeElem | gtx_common.StructuredConnectivityType,
+    offset: str,
+) -> gtx_common.NeighborConnectivityType:
+    if not isinstance(conn_type, gtx_common.NeighborConnectivityType):
+        raise ValueError(
+            f"Offset '{offset}' is not a neighbor table (got '{type(conn_type).__name__}');"
+            " structured connectivities must be resolved by 'StructuredToCartesian'."
+        )
+    return conn_type
+
+
 @dataclasses.dataclass(frozen=True)
 class ValueExpr:
     """
@@ -808,7 +820,7 @@ class LambdaToDataflow(eve.NodeVisitor):
             assert local_dim is not None
             assert isinstance(
                 self.subgraph_builder.get_offset_provider_type(local_dim.value),
-                gtx_common.NeighborConnectivityType,
+                (gtx_common.NeighborConnectivityType, gtx_common.StructuredConnectivityType),
             )
             # find position of the local dimension in the field layout
             assert isinstance(arg_desc, dace.data.Array)
@@ -1156,8 +1168,9 @@ class LambdaToDataflow(eve.NodeVisitor):
         assert isinstance(node.args[0], gtir.OffsetLiteral)
         offset = node.args[0].value
         assert isinstance(offset, str)
-        conn_type = self.subgraph_builder.get_offset_provider_type(offset)
-        assert isinstance(conn_type, gtx_common.NeighborConnectivityType)
+        conn_type = _neighbor_table_type(
+            self.subgraph_builder.get_offset_provider_type(offset), offset
+        )
 
         it = self.visit(node.args[1])
         if isinstance(it, IndexIteratorExpr):
@@ -1305,7 +1318,7 @@ class LambdaToDataflow(eve.NodeVisitor):
             assert index_arg.dc_dtype in dace.dtypes.INTEGER_TYPES
             src_subset = (
                 dace_subsets.Range(src_subset[:local_dim_index])
-                + dace_subsets.Range.from_string(index_arg.value)
+                + dace_subsets.Range.from_string(str(index_arg.value))
                 + dace_subsets.Range(src_subset[local_dim_index + 1 :])
             )
             if isinstance(src_arg, MemletExpr):
@@ -1392,9 +1405,10 @@ class LambdaToDataflow(eve.NodeVisitor):
             if offset_type == _CONST_DIM:
                 # this input argument is the result of `make_const_list`
                 continue
-            offset_provider_t = self.subgraph_builder.get_offset_provider_type(offset_type.value)
-            assert isinstance(offset_provider_t, gtx_common.NeighborConnectivityType)
-            input_conn_types[offset_type] = offset_provider_t
+            input_conn_types[offset_type] = _neighbor_table_type(
+                self.subgraph_builder.get_offset_provider_type(offset_type.value),
+                offset_type.value,
+            )
 
         if len(input_conn_types) == 0:
             raise ValueError(f"Missing information on local dimension for map node {node}.")
@@ -1510,7 +1524,10 @@ class LambdaToDataflow(eve.NodeVisitor):
         offset_provider_t = self.subgraph_builder.get_offset_provider_type(
             list_type.offset_type.value
         )
-        assert isinstance(offset_provider_t, gtx_common.NeighborConnectivityType)
+        assert isinstance(
+            offset_provider_t,
+            (gtx_common.NeighborConnectivityType, gtx_common.StructuredConnectivityType),
+        )
         local_size = offset_provider_t.max_neighbors
         map_index = gtir_to_sdfg_utils.get_map_variable(list_type.offset_type)
 
@@ -1548,8 +1565,9 @@ class LambdaToDataflow(eve.NodeVisitor):
             and input_expr.gt_dtype.offset_type is not None
         )
         offset_type = input_expr.gt_dtype.offset_type
-        offset_provider_type = self.subgraph_builder.get_offset_provider_type(offset_type.value)
-        assert isinstance(offset_provider_type, gtx_common.NeighborConnectivityType)
+        offset_provider_type = _neighbor_table_type(
+            self.subgraph_builder.get_offset_provider_type(offset_type.value), offset_type.value
+        )
 
         inp_conn = "_in"
         outp_conn = "_out"
@@ -1822,10 +1840,10 @@ class LambdaToDataflow(eve.NodeVisitor):
         else:
             assert isinstance(offset_provider_arg, gtir.OffsetLiteral)
             assert isinstance(offset_provider_arg.value, str)
-            offset_provider_type = self.subgraph_builder.get_offset_provider_type(
-                offset_provider_arg.value
+            offset_provider_type = _neighbor_table_type(
+                self.subgraph_builder.get_offset_provider_type(offset_provider_arg.value),
+                offset_provider_arg.value,
             )
-            assert isinstance(offset_provider_type, gtx_common.NeighborConnectivityType)
             shifted_dims = {offset_provider_type.source_dim, offset_provider_type.codomain}
         if not isinstance(it, (IteratorExpr, IndexIteratorExpr)):
             it_type = node.args[0].type

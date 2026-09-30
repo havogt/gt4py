@@ -39,7 +39,12 @@ def find_constant_symbols(
     """Helper function to find symbols to replace with constant values."""
     constant_symbols: dict[str, int] = {}
 
-    if unstructured_horizontal_has_unit_stride:
+    structured = any(
+        isinstance(conn_type, common.StructuredConnectivityType)
+        for conn_type in offset_provider_type.values()
+    )
+    # a structured layout has several horizontal dimensions and none is known to be unit-stride
+    if unstructured_horizontal_has_unit_stride and not structured:
         # Search the stride symbols corresponding to the horizontal dimension
         for p in ir.params:
             if isinstance(p.type, ts.FieldType):

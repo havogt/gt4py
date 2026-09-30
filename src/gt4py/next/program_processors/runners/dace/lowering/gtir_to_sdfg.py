@@ -840,7 +840,12 @@ class GTIRToSDFG(eve.NodeVisitor, SDFGBuilder):
         for dim in dims:
             if dim.kind == gtx_common.DimensionKind.LOCAL:
                 # for local dimension, the size is taken from the associated connectivity type
-                shape.append(neighbor_table_types[dim.value].max_neighbors)
+                local_conn_type = gtx_common.get_offset_type(self.offset_provider_type, dim.value)
+                assert isinstance(
+                    local_conn_type,
+                    (gtx_common.NeighborConnectivityType, gtx_common.StructuredConnectivityType),
+                )
+                shape.append(local_conn_type.max_neighbors)
             elif gtx_dace_args.is_connectivity_identifier(name, self.offset_provider_type):
                 # we use symbolic size for the global dimension of a connectivity
                 shape.append(gtx_dace_args.field_size_symbol(name, dim, neighbor_table_types))
