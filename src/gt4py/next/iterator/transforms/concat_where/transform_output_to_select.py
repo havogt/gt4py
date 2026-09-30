@@ -13,12 +13,7 @@ from gt4py.eve import NodeTranslator, PreserveLocationVisitor
 from gt4py.next import common, utils
 from gt4py.next.iterator import ir as itir
 from gt4py.next.iterator.ir_utils import common_pattern_matcher as cpm
-from gt4py.next.iterator.transforms import (
-    fuse_as_fieldop,
-    infer_domain,
-    inline_lambdas,
-    symbol_ref_utils,
-)
+from gt4py.next.iterator.transforms import fuse_as_fieldop, infer_domain
 from gt4py.next.iterator.transforms.concat_where.transform_to_as_fieldop import (
     concat_where_to_as_fieldop,
 )
@@ -67,19 +62,6 @@ def _output_concat_wheres(program: itir.Program) -> set[int]:
         if isinstance(stmt, itir.SetAt):
             visit(stmt.expr, {})
     return found
-
-
-class _PruneUnreferencedLetBindings(PreserveLocationVisitor, NodeTranslator):
-    PRESERVED_ANNEX_ATTRS = ("domain",)
-
-    def visit_FunCall(self, node: itir.FunCall) -> itir.Expr:
-        node = self.generic_visit(node)
-        if cpm.is_let(node):
-            refs = set(symbol_ref_utils.collect_symbol_refs(node.fun.expr, ignore_builtins=False))
-            unreferenced = [str(param.id) not in refs for param in node.fun.params]
-            if any(unreferenced):
-                return inline_lambdas.inline_lambda(node, eligible_params=unreferenced)
-        return node
 
 
 class _TransformSelected(PreserveLocationVisitor, NodeTranslator):
@@ -141,12 +123,9 @@ def transform_output_to_select(
 
     Requires inferred domains and returns a program with inferred domains.
     """
-    if not _output_concat_wheres(program):
-        return program
-    # `prune_empty_concat_where` can leave let bindings without references, which the domain
-    # inference below rejects.
-    program = _PruneUnreferencedLetBindings().visit(program)
     selected = _output_concat_wheres(program)
+    if not selected:
+        return program
     offset_provider_type = common.offset_provider_to_type(offset_provider)
     program = _TransformSelected(selected).visit(program)
     program = type_inference.SanitizeTypes().visit(program)
