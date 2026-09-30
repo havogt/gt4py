@@ -158,7 +158,7 @@ EMBEDDED_CONCAT_WHERE_SELECT: bool = env_flag_to_bool(
     "GT4PY_EMBEDDED_CONCAT_WHERE_SELECT", default=True
 )
 EMBEDDED_CONCAT_WHERE_UPDATE: bool = env_flag_to_bool(
-    "GT4PY_EMBEDDED_CONCAT_WHERE_UPDATE", default=True
+    "GT4PY_EMBEDDED_CONCAT_WHERE_UPDATE", default=False
 )
 
 #: Embedded `concat_where`: use the select only if the smaller branch covers at least this fraction
@@ -168,7 +168,7 @@ EMBEDDED_CONCAT_WHERE_SELECT_MIN_FRACTION: float = float(
 )
 #: Same, used instead when the offset provider contains a `StructuredConnectivity`.
 EMBEDDED_CONCAT_WHERE_SELECT_MIN_FRACTION_STRUCTURED: float = float(
-    os.environ.get("GT4PY_EMBEDDED_CONCAT_WHERE_SELECT_MIN_FRACTION_STRUCTURED", "0")
+    os.environ.get("GT4PY_EMBEDDED_CONCAT_WHERE_SELECT_MIN_FRACTION_STRUCTURED", "0.1")
 )
 
 

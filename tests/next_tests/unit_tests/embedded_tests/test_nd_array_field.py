@@ -2220,6 +2220,44 @@ def test_jax_concat_where_fast_paths_can_be_disabled(monkeypatch):
     )
 
 
+@pytest.mark.requires_jax
+@pytest.mark.parametrize("structured", [False, True])
+def test_jax_concat_where_select_with_a_small_branch(structured):
+    import jax
+
+    from gt4py.next.embedded import context as embedded_context
+    from gt4py.next.embedded.structured_connectivity import StructuredConnectivity
+
+    I = Dimension("I")
+    X = Dimension("X")
+    K = Dimension("K", kind=DimensionKind.VERTICAL)
+    C2EDim = Dimension("C2E", kind=DimensionKind.LOCAL)
+    offset_provider = (
+        {
+            "C2E": StructuredConnectivity(
+                source_dim=I, codomain=I, color_dim=X, local_dim=C2EDim, offsets={0: [{}]}
+            )
+        }
+        if structured
+        else {}
+    )
+    domain = common.domain({K: (0, 40)})
+    true_field = common._field(jax.numpy.arange(40, dtype=np.float64), domain=domain)
+    false_field = common._field(-jax.numpy.arange(40, dtype=np.float64), domain=domain)
+
+    def testee(t, f):
+        with embedded_context.update(offset_provider=offset_provider):
+            return experimental.concat_where(common.domain({K: (38, 40)}), t, f)
+
+    hlo = jax.jit(testee).lower(true_field, false_field).compile().as_text()
+
+    assert (" concatenate(" in hlo) == structured
+    np.testing.assert_array_equal(
+        jax.jit(testee)(true_field, false_field).asnumpy(),
+        np.concatenate([-np.arange(38.0), np.arange(38.0, 40.0)]),
+    )
+
+
 def test_concat_where_with_gap_still_raises():
     K = Dimension("K", kind=DimensionKind.VERTICAL)
     true_field = common._field(np.zeros(1), domain=common.domain({K: (0, 1)}))
@@ -2230,9 +2268,12 @@ def test_concat_where_with_gap_still_raises():
 
 
 @pytest.mark.requires_jax
-def test_jax_concat_where_with_one_covering_branch_updates_in_place():
+def test_jax_concat_where_with_one_covering_branch_updates_in_place(monkeypatch):
     import jax
 
+    from gt4py.next import config
+
+    monkeypatch.setattr(config, "EMBEDDED_CONCAT_WHERE_UPDATE", True)
     C = Dimension("C")
     K = Dimension("K", kind=DimensionKind.VERTICAL)
     partial = common._field(jax.numpy.ones((2, 4)), domain=common.domain({C: (0, 2), K: (1, 5)}))
