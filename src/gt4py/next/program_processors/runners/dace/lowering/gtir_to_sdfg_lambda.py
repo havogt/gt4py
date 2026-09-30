@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import abc
+import collections
 import copy
 import dataclasses
 from typing import (
@@ -1046,35 +1047,35 @@ class LambdaToDataflow(eve.NodeVisitor):
             nsdfg.add_scalar("__cond", dace.dtypes.bool)
             input_memlets["__cond"] = condition_value
 
-        # Collect all field iterators that are shifted inside any of the then/else
-        # branch expressions. Iterator shift expressions require the field argument
-        # as iterator, therefore the corresponding array has to be passed with full
-        # shape into the nested SDFG where the if_ expression is lowered. When the
-        # branch expression simply does `deref` on the iterator, without any shifting,
-        # it corresponds to a direct element access. Such `deref` expressions can
+        # Collect the field iterators that are only dereferenced inside the then/else
+        # branch expressions, i.e. every reference to the iterator is the argument of
+        # a `deref`. Such a `deref` corresponds to a direct element access, which can
         # be lowered outside the nested SDFG, so that just the local value (a scalar
-        # or a list of values) is passed as input to the nested SDFG.
-        shifted_iterator_symbols = set()
-        for branch_expr in node.args[1:3]:
-            for shift_node in eve.walk_values(branch_expr).filter(
-                lambda x: cpm.is_applied_shift(x)
-            ):
-                shifted_iterator_symbols |= (
-                    eve.walk_values(shift_node)
-                    .if_isinstance(gtir.SymRef)
-                    .map(lambda x: str(x.id))
-                    .filter(lambda x: isinstance(self.symbol_map.get(x, None), IteratorExpr))
-                    .to_set()
-                )
+        # or a list of values) is passed as input to the nested SDFG. Any other use,
+        # e.g. `shift`, `neighbors` or an alias bound by `let`, requires the field
+        # argument as iterator, therefore the corresponding array has to be passed
+        # with full shape into the nested SDFG where the if_ expression is lowered.
         iterator_symbols = {
             sym_name
             for sym_name, sym_type in self.symbol_map.items()
             if isinstance(sym_type, IteratorExpr)
         }
-        direct_deref_iterators = (
-            set(symbol_ref_utils.collect_symbol_refs(node.args[1:3], iterator_symbols))
-            - shifted_iterator_symbols
+        iterator_ref_counts = collections.Counter(
+            eve.walk_values(node.args[1:3])
+            .if_isinstance(gtir.SymRef)
+            .map(lambda x: str(x.id))
+            .filter(lambda x: x in iterator_symbols)
         )
+        deref_counts = collections.Counter(
+            eve.walk_values(node.args[1:3])
+            .filter(lambda x: cpm.is_call_to(x, "deref") and isinstance(x.args[0], gtir.SymRef))
+            .map(lambda x: str(x.args[0].id))
+        )
+        direct_deref_iterators = {
+            sym_name
+            for sym_name, count in iterator_ref_counts.items()
+            if deref_counts[sym_name] == count
+        }
 
         for nstate, arg in zip([tstate, fstate], node.args[1:3]):
             # visit each if-branch in the corresponding state of the nested SDFG

@@ -2141,6 +2141,97 @@ def test_gtir_if_values_with_let_bound_literal():
     assert np.allclose(c, np.where(a < b, a * 2.0, b))
 
 
+def test_gtir_if_values_with_shift_on_let_bound_iterator():
+    OFFSET = 1
+    testee = gtir.Program(
+        id="if_values_with_shift_on_let_bound_iterator",
+        function_definitions=[],
+        params=[
+            gtir.Sym(id="x", type=IFTYPE),
+            gtir.Sym(id="y", type=IFTYPE),
+            gtir.Sym(id="z", type=IFTYPE),
+        ],
+        declarations=[],
+        body=[
+            gtir.SetAt(
+                expr=im.as_fieldop(
+                    im.lambda_("a", "b")(
+                        im.if_(
+                            im.less(im.deref("a"), im.deref("b")),
+                            im.let("it", "a")(im.deref(im.shift(IOff, OFFSET)("it"))),
+                            im.deref("b"),
+                        )
+                    )
+                )("x", "y"),
+                domain=apply_margin_on_field_domain(
+                    im.get_field_domain(gtx_common.GridType.CARTESIAN, "z", [IDim]),
+                    IDim,
+                    (0, OFFSET),
+                ),
+                target=gtir.SymRef(id="z"),
+            )
+        ],
+    )
+
+    a = np.random.rand(N)
+    b = np.random.rand(N)
+    c = np.zeros_like(a)
+
+    sdfg = build_dace_sdfg(testee, CARTESIAN_OFFSETS)
+
+    sdfg(a, b, c, **FSYMBOLS)
+    assert np.allclose(c[:-OFFSET], np.where(a < b, np.roll(a, -OFFSET), b)[:-OFFSET])
+
+
+def test_gtir_if_values_with_neighbors():
+    testee = gtir.Program(
+        id="if_values_with_neighbors",
+        function_definitions=[],
+        params=[
+            gtir.Sym(id="edges", type=EFTYPE),
+            gtir.Sym(id="v_in", type=VFTYPE),
+            gtir.Sym(id="vertices", type=VFTYPE),
+        ],
+        declarations=[],
+        body=[
+            gtir.SetAt(
+                expr=im.as_fieldop(
+                    im.lambda_("e", "v")(
+                        im.if_(
+                            im.less(im.deref("v"), 0.5),
+                            im.reduce("plus", 0.0)(im.neighbors("V2E", "e")),
+                            im.deref("v"),
+                        )
+                    )
+                )("edges", "v_in"),
+                domain=im.get_field_domain(gtx_common.GridType.UNSTRUCTURED, "vertices", [Vertex]),
+                target=gtir.SymRef(id="vertices"),
+            )
+        ],
+    )
+
+    connectivity_V2E = SIMPLE_MESH.offset_provider["V2E"]
+    e = np.random.rand(SIMPLE_MESH.num_edges)
+    v_in = np.random.rand(SIMPLE_MESH.num_vertices)
+    v = np.empty_like(v_in)
+
+    sdfg = build_dace_sdfg(testee, SIMPLE_MESH.offset_provider)
+
+    sdfg(
+        e,
+        v_in,
+        v,
+        gt_conn_V2E=connectivity_V2E.ndarray,
+        **FSYMBOLS,
+        **make_mesh_symbols(SIMPLE_MESH),
+        __v_in_Vertex_range_0=0,
+        __v_in_Vertex_range_1=SIMPLE_MESH.num_vertices,
+        __v_in_Vertex_stride=1,
+    )
+    v_ref = np.where(v_in < 0.5, e[connectivity_V2E.asnumpy()].sum(axis=1), v_in)
+    assert np.allclose(v, v_ref)
+
+
 def test_gtir_index():
     MARGIN = 2
     assert (MARGIN * 2) < N
