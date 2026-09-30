@@ -24,6 +24,7 @@ from gt4py._core import definitions as core_defs
 from gt4py.eve.extended_typing import (
     Any,
     ClassVar,
+    Final,
     Never,
     Optional,
     ParamSpec,
@@ -71,10 +72,59 @@ def _get_nd_array_class(*fields: common.Field | core_defs.Scalar) -> type[NdArra
     raise AssertionError("No 'NdArrayField' found in the arguments.")
 
 
+# Per-neighbor views of a stacked local field produced by a `StructuredConnectivity` premap:
+# (local dimension, one field per neighbor on the stacked field's domain without it).
+# Elementwise ops propagate them and indexing a single neighbor returns the view, so under jit
+# only the neighbors that are used get assembled, instead of the full stack.
+_NEIGHBOR_VIEWS_ATTR: Final = "_gt4py_neighbor_views"
+
+
+def _neighbor_views(
+    field: common.Field | core_defs.Scalar,
+) -> Optional[tuple[common.Dimension, tuple[NdArrayField, ...]]]:
+    return getattr(field, _NEIGHBOR_VIEWS_ATTR, None)
+
+
+def _set_neighbor_views(
+    field: NdArrayField, views: tuple[common.Dimension, tuple[NdArrayField, ...]]
+) -> None:
+    object.__setattr__(field, _NEIGHBOR_VIEWS_ATTR, views)
+
+
+def _neighbor_view_operands(
+    fields: Sequence[common.Field | core_defs.Scalar],
+) -> Optional[tuple[common.Dimension, int, list[list[common.Field | core_defs.Scalar]]]]:
+    views = [_neighbor_views(f) for f in fields]
+    known = [v for v in views if v is not None]
+    if not known or any(v[0] != known[0][0] or len(v[1]) != len(known[0][1]) for v in known):
+        return None
+    local_dim, first = known[0]
+    per_k: list[list[common.Field | core_defs.Scalar]] = [[] for _ in first]
+    for f in fields:
+        view = _neighbor_views(f)
+        for k, args in enumerate(per_k):
+            if view is not None:
+                args.append(view[1][k])
+            elif isinstance(f, common.Field) and local_dim in f.domain.dims:
+                args.append(f[local_dim(k)])
+            else:
+                args.append(f)
+    return local_dim, len(first), per_k
+
+
 def _make_builtin(
     builtin_name: str, array_builtin_name: str, reverse: bool = False
 ) -> Callable[..., NdArrayField]:
     def _builtin_op(*fields: common.Field | core_defs.Scalar) -> NdArrayField:
+        result = _builtin_op_on_arrays(*fields)
+        if (views := _neighbor_view_operands(fields)) is not None:
+            local_dim, _, per_k = views
+            _set_neighbor_views(
+                result, (local_dim, tuple(_builtin_op_on_arrays(*args) for args in per_k))
+            )
+        return result
+
+    def _builtin_op_on_arrays(*fields: common.Field | core_defs.Scalar) -> NdArrayField:
         cls_ = _get_nd_array_class(*fields)
         xp = cls_.array_ns
         op = _get_builtin(xp, array_builtin_name)
@@ -408,6 +458,12 @@ class NdArrayField(
         )
 
     def restrict(self, index: common.AnyIndexSpec) -> NdArrayField:
+        if (
+            isinstance(index, common.NamedIndex)
+            and (view := _neighbor_views(self)) is not None
+            and index.dim == view[0]
+        ):
+            return view[1][index.value]
         new_domain, buffer_slice = self._slice(index)
         new_buffer = self.ndarray[buffer_slice]
         new_buffer = self.__class__.array_ns.asarray(new_buffer)
@@ -773,7 +829,22 @@ def _structured_premap(
             _structured_conn.expand_k(data, connectivity.connectivity, connectivity.k),
         )
 
-    return _structured_conn.expand_stacked(data, connectivity)
+    stacked = _structured_conn.expand_stacked(data, connectivity)
+    local_dim = connectivity.local_dim
+    neighbor_domain = common.Domain(*(nr for nr in stacked.domain if nr.dim != local_dim))
+    _set_neighbor_views(
+        stacked,
+        (
+            local_dim,
+            tuple(
+                cast(NdArrayField, _structured_conn.expand_k(data, connectivity, k)).restrict(
+                    neighbor_domain
+                )
+                for k in range(connectivity.num_neighbors)
+            ),
+        ),
+    )
+    return stacked
 
 
 def _gather_premap(data: NdArrayField, *connectivities: common.GatherConnectivity) -> NdArrayField:
