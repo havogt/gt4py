@@ -1829,7 +1829,9 @@ class LambdaToDataflow(eve.NodeVisitor):
             )
             assert isinstance(offset_provider_type, gtx_common.NeighborConnectivityType)
             shifted_dims = {offset_provider_type.source_dim, offset_provider_type.codomain}
-        if shifted_dims.isdisjoint(dim for dim, _ in it.field_domain):
+        if {gtx_common.as_non_staggered(dim) for dim in shifted_dims}.isdisjoint(
+            gtx_common.as_non_staggered(dim) for dim, _ in it.field_domain
+        ):
             # the field is constant along the shifted dimensions
             return it
 
