@@ -1074,6 +1074,29 @@ def _size0_field(
     )
 
 
+def _bound_dim(field: common.Field, named_range: common.NamedRange) -> common.Field:
+    nd_array_class = _get_nd_array_class(field)
+    new_domain = field.domain.replace(named_range.dim, named_range)
+    return nd_array_class.from_array(
+        nd_array_class.array_ns.broadcast_to(field.ndarray, new_domain.shape), domain=new_domain
+    )
+
+
+def _concat_where_slices(
+    domain: common.Domain, true_field: common.Field, false_field: common.Field
+) -> tuple[tuple[common.Field, ...], tuple[common.Field, ...]]:
+    true_domain = embedded_common.domain_intersection(true_field.domain, domain)
+    t_slices = () if true_domain.is_empty() else (true_field[true_domain],)
+    false_domains = tuple(
+        intersection
+        for d in _invert_domain(domain)
+        if not (
+            intersection := embedded_common.domain_intersection(false_field.domain, d)
+        ).is_empty()
+    )
+    return t_slices, tuple(false_field[d] for d in false_domains)
+
+
 def _concat_where(
     domain: common.Domain,
     true_field: common.Field,
@@ -1090,18 +1113,17 @@ def _concat_where(
         true_field, false_field, ignore_dims=domain_dim
     )
 
-    true_domain = embedded_common.domain_intersection(t_broadcasted.domain, domain)
-    t_slices = () if true_domain.is_empty() else (t_broadcasted[true_domain],)
-
-    inverted_domains = _invert_domain(domain)
-    false_domains = tuple(
-        intersection
-        for d in inverted_domains
-        if not (
-            intersection := embedded_common.domain_intersection(f_broadcasted.domain, d)
-        ).is_empty()
-    )
-    f_slices = tuple(f_broadcasted[d] for d in false_domains)
+    t_slices, f_slices = _concat_where_slices(domain, t_broadcasted, f_broadcasted)
+    if not all(
+        common.UnitRange.is_finite(s.domain[domain_dim].unit_range) for s in (*t_slices, *f_slices)
+    ):
+        # a branch without extent along `domain_dim` (e.g. a scalar) takes the extent of the other
+        t_range, f_range = (f.domain[domain_dim].unit_range for f in (t_broadcasted, f_broadcasted))
+        if common.UnitRange.is_finite(f_range):
+            t_broadcasted = _bound_dim(t_broadcasted, common.NamedRange(domain_dim, f_range))
+        elif common.UnitRange.is_finite(t_range):
+            f_broadcasted = _bound_dim(f_broadcasted, common.NamedRange(domain_dim, t_range))
+        t_slices, f_slices = _concat_where_slices(domain, t_broadcasted, f_broadcasted)
 
     if len(t_slices) + len(f_slices) == 0:
         # no data to concatenate, return an empty field

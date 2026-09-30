@@ -146,6 +146,21 @@ def test_concat_where_scalar_broadcast_on_empty_branch(cartesian_case, static_do
     cases.verify(cartesian_case, testee, a, b, 1, out=out, ref=ref)
 
 
+def test_concat_where_scalar_branch_in_expression(cartesian_case, static_domains: bool):
+    @gtx.field_operator(static_domains=static_domains)
+    def testee(a: cases.IKField, b: cases.KField, N: np.int32) -> cases.IKField:
+        return a + concat_where((KDim >= 1) & (KDim < N), b * a, 0)
+
+    a = cases.allocate(cartesian_case, testee, "a")()
+    b = cases.allocate(cartesian_case, testee, "b")()
+    out = cases.allocate(cartesian_case, testee, cases.RETURN)()
+    N = out.domain.shape[1] - 2
+
+    k = np.arange(out.domain.shape[1])
+    ref = a.asnumpy() + np.where((k >= 1) & (k < N), b.asnumpy() * a.asnumpy(), 0)
+    cases.verify(cartesian_case, testee, a, b, N, out=out, ref=ref)
+
+
 def test_concat_where_single_level_broadcast(cartesian_case, static_domains: bool):
     @gtx.field_operator(static_domains=static_domains)
     def testee(a: cases.KField, b: cases.IJKField) -> cases.IJKField:

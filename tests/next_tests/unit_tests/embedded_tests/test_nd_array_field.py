@@ -1607,17 +1607,8 @@ def test_hyperslice(index_array, expected):
             ([1, 1], {D0: (-2, 0)}),
             ([], {D0: (0, 0)}),
         ),
-        # broadcasting from scalar (needs infinite domain support)
-        pytest.param(
-            D0 == 0,
-            ([0, 0], None),
-            (1, None),
-            ([0, 1], None),
-            marks=[
-                pytest.mark.embedded_concat_where_infinite_domain,
-                pytest.mark.xfail(reason="requires infinite domain support"),
-            ],
-        ),
+        # broadcasting from scalar: takes the extent of the other branch
+        (D0 == 0, ([0, 0], None), (1, None), ([0, 1], None)),
     ],
 )
 def test_concat_where(
