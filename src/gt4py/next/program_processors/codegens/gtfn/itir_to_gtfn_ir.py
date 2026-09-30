@@ -198,6 +198,8 @@ def _collect_offset_definitions(
                 offset_definitions[dim.value] = TagDefinition(
                     name=Sym(id=dim.value), alias=_horizontal_dimension
                 )
+        elif isinstance(connectivity_type, common.StructuredConnectivityType):
+            pass  # resolved to Cartesian shifts by `StructuredToCartesian`
         else:
             raise AssertionError(
                 "Elements of the offset provider type need to be a 'NeighborConnectivityType'."

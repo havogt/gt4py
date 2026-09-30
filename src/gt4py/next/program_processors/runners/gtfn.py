@@ -85,7 +85,10 @@ def extract_connectivity_args(
 ) -> list[tuple[core_defs.NDArrayObject, tuple[int, ...]]]:
     # Note: this function is on the hot path and needs to have minimal overhead.
     zero_origin = (0, 0)
-    assert all(hasattr(conn, "ndarray") for conn in offset_provider.values())
+    assert all(
+        hasattr(conn, "ndarray") or common.is_structured_connectivity(conn)
+        for conn in offset_provider.values()
+    )
     # Note: the order here needs to agree with the order of the generated bindings.
     # This is currently true only because when hashing offset provider dicts,
     # the keys' order is taken into account. Any modification to the hashing

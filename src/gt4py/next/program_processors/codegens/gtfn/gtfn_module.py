@@ -56,7 +56,10 @@ def _local_dims_to_tuple_like(
             ):
                 dim_name = dim.value
                 connectivity = common.get_offset_type(offset_provider_type, dim_name)
-                assert isinstance(connectivity, common.NeighborConnectivityType)
+                assert isinstance(
+                    connectivity,
+                    (common.NeighborConnectivityType, common.StructuredConnectivityType),
+                )
                 size = connectivity.max_neighbors
                 arg = f"gridtools::sid::dimension_to_tuple_like<generated::{dim_name}_t, {size}>({arg})"
     return arg
@@ -144,6 +147,8 @@ class GTFNTranslationStep(
                 arg_exprs.append(
                     f"gridtools::hymap::keys<generated::{name}_t>::make_values({nbtbl})"
                 )
+            elif isinstance(connectivity_type, common.StructuredConnectivityType):
+                pass  # resolved to Cartesian shifts at compile time, no runtime argument
             else:
                 raise AssertionError(
                     f"Expected offset provider type '{name}' to be a 'NeighborConnectivityType', "
