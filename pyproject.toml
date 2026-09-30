@@ -287,6 +287,7 @@ markers = [
   'uses_zero_dimensional_fields: tests that require backend support for zero-dimensional fields',
   'uses_cartesian_shift: tests that use a Cartesian connectivity',
   'uses_unstructured_shift: tests that use a unstructured connectivity',
+  'uses_structured_connectivity: tests that use a StructuredConnectivity (unstructured entities on a lattice)',
   'uses_max_over: tests that use the max_over builtin',
   'uses_mesh_with_skip_values: tests that use a mesh with skip values',
   'uses_concat_where: tests that use the concat_where builtin',

@@ -157,6 +157,7 @@ USES_TUPLE_RETURNS = "uses_tuple_returns"
 USES_ZERO_DIMENSIONAL_FIELDS = "uses_zero_dimensional_fields"
 USES_CARTESIAN_SHIFT = "uses_cartesian_shift"
 USES_UNSTRUCTURED_SHIFT = "uses_unstructured_shift"
+USES_STRUCTURED_CONNECTIVITY = "uses_structured_connectivity"
 USES_MAX_OVER = "uses_max_over"
 USES_MESH_WITH_SKIP_VALUES = "uses_mesh_with_skip_values"
 USES_PROGRAM_METRICS = "uses_program_metrics"
@@ -247,6 +248,8 @@ ROUNDTRIP_SKIP_LIST = DOMAIN_INFERENCE_SKIP_LIST + [
     (USES_SPARSE_FIELDS_AS_OUTPUT, XFAIL, UNSUPPORTED_MESSAGE),
     (USES_TUPLES_ARGS_WITH_DIFFERENT_BUT_PROMOTABLE_DIMS, XFAIL, UNSUPPORTED_MESSAGE),
     (USES_CONCAT_WHERE, XFAIL, UNSUPPORTED_MESSAGE),
+    # neither half-infinite colour `concat_where`s nor structured local dimensions are supported
+    (USES_STRUCTURED_CONNECTIVITY, SKIP, UNSUPPORTED_MESSAGE),
 ]
 GTIR_EMBEDDED_SKIP_LIST = ROUNDTRIP_SKIP_LIST + [
     # NOTE: not in `ROUNDTRIP_SKIP_LIST`: the roundtrip backend passes this, only the
