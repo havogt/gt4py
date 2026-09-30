@@ -162,7 +162,13 @@ def horizontal_first_layout_mapper(
     dims: Sequence[common.Dimension],
 ) -> core_allocators.BufferLayoutMap:
     """Map dimensions to a buffer layout making horizontal dims change the slowest (i.e. larger strides)."""
+    return _horizontal_first_layout_map(tuple(dims))
 
+
+@functools.lru_cache(maxsize=256)
+def _horizontal_first_layout_map(
+    dims: tuple[common.Dimension, ...],
+) -> core_allocators.BufferLayoutMap:
     def pos_of_kind(kind: common.DimensionKind) -> list[int]:
         return [i for i, dim in enumerate(dims) if dim.kind == kind]
 
