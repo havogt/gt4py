@@ -13,6 +13,7 @@ import dataclasses
 import functools
 import itertools
 import math
+import weakref
 from collections.abc import Callable, Sequence
 from types import ModuleType
 
@@ -1295,6 +1296,61 @@ NdArrayField.register_builtin_func(
 )
 
 
+# -- torch.compile support --
+_torch_compile_entry_points: weakref.WeakValueDictionary[int, Callable[..., Any]] = (
+    weakref.WeakValueDictionary()
+)
+_within_torch_nonstrict_call = False
+
+
+def register_torch_compile_entry_point(entry_point: Callable[..., Any]) -> None:
+    # Dynamo applies mutations of Python state only after tracing, so the entry point must be
+    # registered before 'torch.compile' traces a call to it.
+    if torch is not None:
+        _torch_compile_entry_points[id(entry_point)] = entry_point
+
+
+def is_torch_compiling() -> bool:
+    return torch is not None and not _within_torch_nonstrict_call and torch.compiler.is_compiling()
+
+
+_ENCODED_DIMENSION = "__gt4py_dimension__"
+
+
+def _encode_dimensions(value: Any) -> Any:
+    # 'Dimension's (also as dict keys, e.g. in 'domain') are no constants for Dynamo
+    if isinstance(value, common.Dimension):
+        return (_ENCODED_DIMENSION, value.value, value.kind)
+    if isinstance(value, dict):
+        return {_encode_dimensions(k): _encode_dimensions(v) for k, v in value.items()}
+    if isinstance(value, (tuple, list)) and not isinstance(value, common.Field):
+        return type(value)(_encode_dimensions(v) for v in value)
+    return value
+
+
+def _decode_dimensions(value: Any) -> Any:
+    if (
+        isinstance(value, tuple)
+        and len(value) == 3
+        and isinstance(value[0], str)
+        and value[0] == _ENCODED_DIMENSION
+    ):
+        return common.Dimension(value[1], value[2])
+    if isinstance(value, dict):
+        return {_decode_dimensions(k): _decode_dimensions(v) for k, v in value.items()}
+    if isinstance(value, (tuple, list)) and not isinstance(value, common.Field):
+        return type(value)(_decode_dimensions(v) for v in value)
+    return value
+
+
+def torch_compile_call(entry_point: Callable[..., Any], args: tuple, kwargs: dict[str, Any]) -> Any:
+    """Call an embedded entry point from a 'torch.compile' region, tracing it non-strictly."""
+    result = _torch_nonstrict_call(
+        id(entry_point), _encode_dimensions(args), _encode_dimensions(kwargs)
+    )
+    return result[0] if result else None
+
+
 # -- Concrete array implementations --
 # NumPy
 _nd_array_implementations = [np]
@@ -1652,12 +1708,50 @@ if torch:
     class TorchCUDAArrayField(_TorchArrayFieldMixin, NdArrayField):
         array_ns: ClassVar[ModuleType] = _torch_cuda_ns
 
+    # Connectivities created outside of 'torch.compile', to read their concrete tables while
+    # 'torch.compile' traces with fake tensors.
+    _torch_concrete_connectivities: weakref.WeakValueDictionary[int, NdArrayConnectivityField] = (
+        weakref.WeakValueDictionary()
+    )
+
+    class _TorchConnectivityMixin:
+        _concrete_id: Optional[int] = None
+
+        def __post_init__(self) -> None:
+            # not the fake and functional tensors of a trace
+            if type(self._ndarray) is torch.Tensor:  # type: ignore[attr-defined] # mixin of 'NdArrayConnectivityField'
+                _torch_concrete_connectivities[id(self)] = self  # type: ignore[assignment] # mixin of 'NdArrayConnectivityField'
+
+        def _concrete(self) -> Optional[NdArrayConnectivityField]:
+            if self._concrete_id is None:
+                return None
+            return _torch_concrete_connectivities.get(self._concrete_id)
+
+        def inverse_image(self, image_range: common.UnitRange | common.NamedRange) -> common.Domain:
+            if (concrete := self._concrete()) is None:
+                return super().inverse_image(image_range)  # type: ignore[misc] # mixin of 'NdArrayConnectivityField'
+            with torch.utils._python_dispatch._disable_current_modes():
+                return concrete.inverse_image(image_range)
+
+        def restrict(self, index: common.AnyIndexSpec) -> NdArrayConnectivityField:
+            restricted = super().restrict(index)  # type: ignore[misc] # mixin of 'NdArrayConnectivityField'
+            if (concrete := self._concrete()) is not None and restricted._concrete_id is None:
+                with torch.utils._python_dispatch._disable_current_modes():
+                    object.__setattr__(restricted, "_concrete_id", id(concrete.restrict(index)))
+            return restricted
+
+        __getitem__ = restrict
+
     @dataclasses.dataclass(frozen=True, eq=False)
-    class TorchArrayConnectivityField(_TorchArrayFieldMixin, NdArrayConnectivityField):
+    class TorchArrayConnectivityField(  # type: ignore[misc] # 'restrict' of the mixin returns a connectivity
+        _TorchConnectivityMixin, _TorchArrayFieldMixin, NdArrayConnectivityField
+    ):
         array_ns: ClassVar[ModuleType] = _torch_cpu_ns
 
     @dataclasses.dataclass(frozen=True, eq=False)
-    class TorchCUDAArrayConnectivityField(_TorchArrayFieldMixin, NdArrayConnectivityField):
+    class TorchCUDAArrayConnectivityField(  # type: ignore[misc] # 'restrict' of the mixin returns a connectivity
+        _TorchConnectivityMixin, _TorchArrayFieldMixin, NdArrayConnectivityField
+    ):
         array_ns: ClassVar[ModuleType] = _torch_cuda_ns
 
     def _torch_field(data: torch.Tensor, /, **kwargs: Any) -> NdArrayField:
@@ -1676,6 +1770,79 @@ if torch:
 
     common._field.register(torch.Tensor, _torch_field)
     common._connectivity.register(torch.Tensor, _torch_connectivity)
+
+    import torch.utils._pytree as _torch_pytree
+
+    # pytree contexts must be plain constants for Dynamo, frozen dataclasses are not accepted
+    _DomainContext: TypeAlias = tuple[tuple[str, common.DimensionKind, int, int], ...]
+
+    def _domain_to_context(domain: common.Domain) -> _DomainContext:
+        return tuple(
+            (dim.value, dim.kind, rng.start, rng.stop)
+            for dim, rng in zip(domain.dims, domain.ranges, strict=True)
+        )
+
+    def _context_to_domain(context: _DomainContext) -> common.Domain:
+        return common.Domain(
+            dims=tuple(common.Dimension(value, kind) for value, kind, _, _ in context),
+            ranges=tuple(common.UnitRange(start, stop) for _, _, start, stop in context),
+        )
+
+    for _field_cls in (TorchArrayField, TorchCUDAArrayField):
+        _torch_pytree.register_pytree_node(
+            _field_cls,
+            lambda field: ([field.ndarray], _domain_to_context(field.domain)),
+            lambda children, context, cls=_field_cls: cls(_context_to_domain(context), children[0]),
+        )
+
+    def _flatten_torch_connectivity(
+        conn: _TorchConnectivityMixin,
+    ) -> tuple[list[torch.Tensor], tuple[Any, ...]]:
+        assert isinstance(conn, NdArrayConnectivityField)
+        context = (
+            _domain_to_context(conn.domain),
+            conn.codomain.value,
+            conn.codomain.kind,
+            conn.skip_value,
+            # later tracing passes flatten the connectivities unflattened by the first one
+            id(conn) if conn._concrete_id is None else conn._concrete_id,
+        )
+        return [conn.ndarray], context
+
+    def _unflatten_torch_connectivity(
+        cls: type[NdArrayConnectivityField], children: list[torch.Tensor], context: tuple[Any, ...]
+    ) -> NdArrayConnectivityField:
+        domain, codomain_value, codomain_kind, skip_value, concrete_id = context
+        conn = cls(
+            _context_to_domain(domain),
+            children[0],
+            common.Dimension(codomain_value, codomain_kind),
+            skip_value,
+        )
+        object.__setattr__(conn, "_concrete_id", concrete_id)
+        return conn
+
+    for _connectivity_cls in (TorchArrayConnectivityField, TorchCUDAArrayConnectivityField):
+        _torch_pytree.register_pytree_node(
+            _connectivity_cls,
+            _flatten_torch_connectivity,
+            functools.partial(_unflatten_torch_connectivity, _connectivity_cls),
+        )
+
+    @torch.compiler.nonstrict_trace
+    def _torch_nonstrict_call(
+        entry_point_id: int, args: tuple, kwargs: dict[str, Any]
+    ) -> tuple[Any, ...]:
+        global _within_torch_nonstrict_call
+        _within_torch_nonstrict_call = True
+        try:
+            result = _torch_compile_entry_points[entry_point_id](
+                *_decode_dimensions(args), **_decode_dimensions(kwargs)
+            )
+        finally:
+            _within_torch_nonstrict_call = False
+        # a 'None' output is not supported by 'nonstrict_trace'
+        return () if result is None else (result,)
 
 
 def _broadcast(field: common.Field, new_dimensions: Sequence[common.Dimension]) -> common.Field:
