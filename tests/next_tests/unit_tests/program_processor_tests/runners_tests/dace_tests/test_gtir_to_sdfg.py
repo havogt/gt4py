@@ -2234,6 +2234,63 @@ def test_gtir_if_values_with_neighbors():
     assert np.allclose(v, v_ref)
 
 
+def test_gtir_if_values_with_shift_on_let_bound_dynamically_shifted_iterator():
+    MARGIN = 2
+    testee = gtir.Program(
+        id="if_values_with_shift_on_let_bound_dynamically_shifted_iterator",
+        function_definitions=[],
+        params=[
+            gtir.Sym(id="x", type=IFTYPE),
+            gtir.Sym(id="y", type=IFTYPE),
+            gtir.Sym(id="x_offset", type=ts.FieldType(dims=[IDim], dtype=SIZE_TYPE)),
+            gtir.Sym(id="z", type=IFTYPE),
+        ],
+        declarations=[],
+        body=[
+            gtir.SetAt(
+                expr=im.as_fieldop(
+                    im.lambda_("a", "b", "off")(
+                        im.let("s", im.shift(IOff, im.deref("off"))("a"))(
+                            im.if_(
+                                im.less(im.deref("a"), im.deref("b")),
+                                im.let("it", "s")(im.deref(im.shift(IOff, 1)("it"))),
+                                im.deref("b"),
+                            )
+                        )
+                    )
+                )("x", "y", "x_offset"),
+                domain=apply_margin_on_field_domain(
+                    im.get_field_domain(gtx_common.GridType.CARTESIAN, "z", [IDim]),
+                    IDim,
+                    (0, MARGIN),
+                ),
+                target=gtir.SymRef(id="z"),
+            )
+        ],
+    )
+
+    a = np.random.rand(N)
+    b = np.random.rand(N)
+    a_offset = np.arange(N, dtype=np.int32) % 2
+    c = np.zeros_like(a)
+
+    sdfg = build_dace_sdfg(testee, CARTESIAN_OFFSETS)
+
+    sdfg(
+        a,
+        b,
+        a_offset,
+        c,
+        **FSYMBOLS,
+        __x_offset_IDim_range_0=0,
+        __x_offset_IDim_range_1=N,
+        __x_offset_IDim_stride=1,
+    )
+    i = np.arange(N - MARGIN)
+    ref = np.where(a[i] < b[i], a[i + a_offset[i] + 1], b[i])
+    assert np.allclose(c[: N - MARGIN], ref)
+
+
 def test_gtir_index():
     MARGIN = 2
     assert (MARGIN * 2) < N
