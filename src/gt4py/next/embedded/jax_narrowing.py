@@ -39,7 +39,8 @@ class _Options:
     min_readers: int
 
 
-# Dimensions up to this extent (e.g. colors, neighbors) are never narrowed: cutting them splits
+# Dimensions up to this extent (e.g. colors, neighbors) and the minor dimension (the vertical in
+# gt4py's layouts, where `concat_where` splits levels) are never narrowed: cutting them splits
 # concatenations into separately computed pieces that XLA materializes.
 _MIN_NARROWED_EXTENT = 8
 
@@ -167,8 +168,10 @@ def _needed_windows(
         if _is_var(v) and window is not None:
             if keep is not None and v not in keep:
                 window = _full(v)
+            shape = _shape(v)
             window = tuple(
-                w if n > _MIN_NARROWED_EXTENT else (0, n) for w, n in zip(window, _shape(v))
+                w if n > _MIN_NARROWED_EXTENT and d < len(shape) - 1 else (0, n)
+                for d, (w, n) in enumerate(zip(window, shape))
             )
             if v in needed and needed[v] != window:
                 inconsistent.add(v)
