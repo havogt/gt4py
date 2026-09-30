@@ -1216,7 +1216,7 @@ def _concat_where(
             min(p.domain[domain_dim].unit_range.start for p in pieces),
             max(p.domain[domain_dim].unit_range.stop for p in pieces),
         )
-        if all(
+        if config.EMBEDDED_CONCAT_WHERE_SELECT and all(
             f.domain[domain_dim].unit_range.start <= result_range.start
             and result_range.stop <= f.domain[domain_dim].unit_range.stop
             for f in (t_broadcasted, f_broadcasted)
@@ -1231,7 +1231,8 @@ def _concat_where(
         for covering, partial_pieces in ((f_broadcasted, t_slices), (t_broadcasted, f_slices)):
             covering_range = covering.domain[domain_dim].unit_range
             if (
-                tiled
+                config.EMBEDDED_CONCAT_WHERE_UPDATE
+                and tiled
                 and covering_range.start <= result_range.start
                 and (result_range.stop <= covering_range.stop)
             ):
