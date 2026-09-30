@@ -175,6 +175,63 @@ class BufferAllocator(Protocol[core_defs.DeviceTypeT]):
         ...
 
 
+@functools.lru_cache(maxsize=256)
+def _buffer_layout(
+    shape: core_defs.TensorShape,
+    item_size: int,
+    layout_map: BufferLayoutMap,
+    byte_alignment: int,
+    aligned_index: tuple[int, ...],
+) -> tuple[core_defs.TensorShape, tuple[int, ...], int, int]:
+    """Padded shape, strides, total byte length and aligned-index byte offset of a buffer."""
+    if not core_defs.is_valid_tensor_shape(shape):
+        raise ValueError(f"Invalid shape {shape}")
+    ndim = len(shape)
+    if len(layout_map) != ndim or not is_valid_layout_map(layout_map):
+        raise ValueError(f"Invalid layout_map {layout_map} for shape {shape}")
+
+    # Compute number of items inside an aligned block
+    if math.gcd(byte_alignment, item_size) not in (byte_alignment, item_size):
+        raise ValueError(
+            f"Incompatible 'byte_alignment' ({byte_alignment}) and 'dtype' size ({item_size})"
+        )
+    items_per_aligned_block = (byte_alignment // item_size) or 1
+
+    # Compute the padding required in the contiguous dimension to get aligned blocks
+    dims_layout = [layout_map.index(i) for i in range(len(shape))]
+    # Convert shape size to same data type (note that `np.int16` can overflow)
+    padded_shape_lst = [np.int32(x) for x in shape]
+    if ndim > 0:
+        padded_shape_lst[dims_layout[-1]] = (  # type: ignore[call-overload]
+            math.ceil(shape[dims_layout[-1]] / items_per_aligned_block) * items_per_aligned_block
+        )
+    padded_shape = tuple(padded_shape_lst)
+    assert core_defs.is_valid_tensor_shape(padded_shape)
+    total_length = item_size * functools.reduce(operator.mul, padded_shape, 1) + (
+        byte_alignment - 1
+    )  # the worst case for misalignment is `byte_alignment - 1`
+
+    # Compute strides
+    strides_lst = [item_size] * len(shape)
+    accumulator = item_size
+    for i in range(len(shape) - 2, -1, -1):
+        accumulator = strides_lst[dims_layout[i]] = accumulator * padded_shape[dims_layout[i + 1]]
+    strides = tuple(strides_lst)
+
+    # Compute final byte offset to align the requested buffer index
+    aligned_index_offset = (
+        (
+            items_per_aligned_block
+            * (math.ceil(aligned_index[dims_layout[-1]] / items_per_aligned_block))
+            - aligned_index[dims_layout[-1]]
+        )
+        * item_size
+        if ndim > 0
+        else 0
+    )
+    return padded_shape, strides, total_length, aligned_index_offset
+
+
 @dataclasses.dataclass(frozen=True, init=False)
 class _BaseNDArrayBufferAllocator(abc.ABC, Generic[core_defs.DeviceTypeT]):
     """Base class for buffer allocators using NumPy-like modules."""
@@ -193,60 +250,15 @@ class _BaseNDArrayBufferAllocator(abc.ABC, Generic[core_defs.DeviceTypeT]):
         byte_alignment: int,
         aligned_index: Optional[Sequence[int]] = None,
     ) -> TensorBuffer[core_defs.DeviceTypeT, core_defs.ScalarT]:
-        if not core_defs.is_valid_tensor_shape(shape):
-            raise ValueError(f"Invalid shape {shape}")
-        ndim = len(shape)
-        if len(layout_map) != ndim or not is_valid_layout_map(layout_map):
-            raise ValueError(f"Invalid layout_map {layout_map} for shape {shape}")
-
-        # Compute number of items inside an aligned block
         item_size = dtype.byte_size
-        if math.gcd(byte_alignment, item_size) not in (byte_alignment, item_size):
-            raise ValueError(
-                f"Incompatible 'byte_alignment' ({byte_alignment}) and 'dtype' size ({item_size})"
-            )
-        items_per_aligned_block = (byte_alignment // item_size) or 1
-
-        # Compute the padding required in the contiguous dimension to get aligned blocks
-        dims_layout = [layout_map.index(i) for i in range(len(shape))]
-        # Convert shape size to same data type (note that `np.int16` can overflow)
-        padded_shape_lst = [np.int32(x) for x in shape]
-        if ndim > 0:
-            padded_shape_lst[dims_layout[-1]] = (  # type: ignore[call-overload]
-                math.ceil(shape[dims_layout[-1]] / items_per_aligned_block)
-                * items_per_aligned_block
-            )
-        padded_shape = tuple(padded_shape_lst)
-        assert core_defs.is_valid_tensor_shape(padded_shape)
-        total_length = item_size * functools.reduce(operator.mul, padded_shape, 1) + (
-            byte_alignment - 1
-        )  # the worst case for misalignment is `byte_alignment - 1`
-
-        # Compute strides
-        strides_lst = [item_size] * len(shape)
-        accumulator = item_size
-        for i in range(len(shape) - 2, -1, -1):
-            accumulator = strides_lst[dims_layout[i]] = (
-                accumulator * padded_shape[dims_layout[i + 1]]
-            )
-        strides = tuple(strides_lst)
+        aligned_index = tuple(aligned_index or (0,) * len(shape))
+        padded_shape, strides, total_length, aligned_index_offset = _buffer_layout(
+            tuple(shape), item_size, tuple(layout_map), byte_alignment, aligned_index
+        )
 
         # Allocate total size
         buffer = self.malloc(total_length, device_id)
         memory_address = self.array_utils.byte_bounds(buffer)[0]
-
-        # Compute final byte offset to align the requested buffer index
-        aligned_index = tuple(aligned_index or ([0] * len(shape)))
-        aligned_index_offset = (
-            (
-                items_per_aligned_block
-                * (math.ceil(aligned_index[dims_layout[-1]] / items_per_aligned_block))
-                - aligned_index[dims_layout[-1]]
-            )
-            * item_size
-            if ndim > 0
-            else 0
-        )
 
         allocation_mismatch_offset = (
             byte_alignment - memory_address % byte_alignment
