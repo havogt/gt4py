@@ -33,7 +33,7 @@ from gt4py.next import (
     errors,
     utils,
 )
-from gt4py.next.embedded import operators as embedded_operators
+from gt4py.next.embedded import nd_array_field, operators as embedded_operators
 from gt4py.next.ffront import (
     field_operator_ast as foast,
     foast_to_gtir,
@@ -264,6 +264,7 @@ class Program(_CompilableGTEntryPointMixin[ffront_stages.DSLProgramDef]):
     def __post_init__(self) -> None:
         no_args_past = workflow.ConcreteArtifact(self.past_stage, arguments.CompileTimeArgs.empty())
         _ = self._frontend_transforms.past_lint(no_args_past).data
+        nd_array_field.register_torch_compile_entry_point(self)
 
     @property
     def __name__(self) -> str:
@@ -340,6 +341,10 @@ class Program(_CompilableGTEntryPointMixin[ffront_stages.DSLProgramDef]):
         enable_jit: bool | None = None,
         **kwargs: Any,
     ) -> None:
+        if self.backend is None and nd_array_field.is_torch_compiling():
+            return nd_array_field.torch_compile_call(
+                self, args, {**kwargs, "offset_provider": offset_provider}
+            )
         if offset_provider is None:
             offset_provider = {}
         enable_jit = self.compilation_options.enable_jit if enable_jit is None else enable_jit
@@ -483,6 +488,7 @@ class FieldOperator(_CompilableGTEntryPointMixin[ffront_stages.DSLFieldOperatorD
     def __post_init__(self) -> None:
         """This ensures that DSL linting occurs at decoration time."""
         _ = self.foast_stage
+        nd_array_field.register_torch_compile_entry_point(self)
 
     @functools.cached_property
     def foast_stage(self) -> ffront_stages.FOASTOperatorDef:
@@ -533,6 +539,8 @@ class FieldOperator(_CompilableGTEntryPointMixin[ffront_stages.DSLFieldOperatorD
         return self.foast_stage.closure_vars
 
     def __call__(self, *args: Any, enable_jit: bool | None = None, **kwargs: Any) -> Any:
+        if self.backend is None and nd_array_field.is_torch_compiling():
+            return nd_array_field.torch_compile_call(self, args, kwargs)
         if not next_embedded.context.within_valid_context() and self.backend is not None:
             # non embedded execution
             offset_provider = {**kwargs.pop("offset_provider", {})}
