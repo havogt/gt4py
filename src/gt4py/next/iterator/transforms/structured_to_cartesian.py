@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Iterator
 
 from gt4py import eve
 from gt4py.next import common, utils
@@ -194,9 +195,19 @@ class _ResolveChains(eve.PreserveLocationVisitor, eve.NodeTranslator):
             else:
                 raise ValueError(f"Shift '{tag}' mixed with structured shifts.")
         assert previous is not None
-        target_colors = {
-            conn.colors for conn in self.structured.values() if conn.source_dim == previous.codomain
-        }
+        if previous.codomain_colors is not None:
+            target_colors = {tuple(range(previous.codomain_colors))}
+        else:
+            target_colors = {
+                conn.colors
+                for conn in self.structured.values()
+                if conn.source_dim == previous.codomain
+            }
+        if not target_colors:
+            raise ValueError(
+                f"The colours of '{previous.codomain.value}' are unknown: set 'codomain_colors' of"
+                f" the connectivity or provide one starting from '{previous.codomain.value}'."
+            )
         if any(color not in colors for colors in target_colors):
             raise ValueError(
                 f"A structured shift chain reaches colour {color} of '{previous.codomain.value}',"
@@ -288,32 +299,80 @@ def _lattice_dims(
     return tuple(common.order_dimensions(dims))
 
 
+_Env = dict[str, tuple[itir.Expr, "_Env"]]
+
+
+def _shifted_in_dim(stencil: itir.Lambda, param: str, dim: str) -> bool:
+    return any(
+        cpm.is_applied_shift(call)
+        and cpm.is_ref_to(call.args[0], param)
+        and any(
+            isinstance(tag, itir.CartesianOffset) and tag.domain.value == dim
+            for tag in call.fun.args[::2]
+        )
+        for call in stencil.expr.pre_walk_values().if_isinstance(itir.FunCall)
+    )
+
+
+def _reached_colors(
+    expr: itir.Expr,
+    color_dim: str,
+    output_colors: dict[int, tuple[common.Dimension, tuple[int, ...]]],
+    env: _Env,
+) -> Iterator[tuple[int, ...]]:
+    """Colours of the structured expressions that `expr` reads at its own colour."""
+    if id(expr) in output_colors and output_colors[id(expr)][0].value == color_dim:
+        yield output_colors[id(expr)][1]
+    elif isinstance(expr, itir.SymRef):
+        if str(expr.id) in env:
+            bound, bound_env = env[str(expr.id)]
+            yield from _reached_colors(bound, color_dim, output_colors, bound_env)
+    elif cpm.is_let(expr):
+        inner_env = {**env, **{str(p.id): (a, env) for p, a in zip(expr.fun.params, expr.args)}}
+        yield from _reached_colors(expr.fun.expr, color_dim, output_colors, inner_env)
+    elif cpm.is_call_to(expr, "concat_where"):
+        for branch in expr.args[1:]:
+            yield from _reached_colors(branch, color_dim, output_colors, env)
+    elif cpm.is_applied_as_fieldop(expr):
+        stencil = expr.fun.args[0]
+        for i, arg in enumerate(expr.args):
+            if not (
+                isinstance(stencil, itir.Lambda)
+                and _shifted_in_dim(stencil, str(stencil.params[i].id), color_dim)
+            ):
+                yield from _reached_colors(arg, color_dim, output_colors, env)
+    elif isinstance(expr, itir.FunCall):
+        for arg in expr.args:
+            yield from _reached_colors(arg, color_dim, output_colors, env)
+
+
 def _check_output_colors(
     program: itir.Program, output_colors: dict[int, tuple[common.Dimension, tuple[int, ...]]]
 ) -> None:
-    """Raise if a `SetAt` writes a colour its structured expression does not compute."""
+    """
+    Raise if a `SetAt` writes a colour that a structured expression it reads does not compute.
+
+    The written colour range reaches a structured expression through lets, `concat_where`s and
+    `as_fieldop` arguments not shifted in the colour dimension; the reads of a structured stencil
+    are bounded by the chain resolution. Symbolic bounds are not checked.
+    """
     for stmt in program.body:
-        if not isinstance(stmt, itir.SetAt):
+        if not isinstance(stmt, itir.SetAt) or not cpm.is_call_to(stmt.domain, "cartesian_domain"):
             continue
-        expr = stmt.expr
-        while cpm.is_let(expr):
-            expr = expr.fun.expr
-        if id(expr) not in output_colors or not cpm.is_call_to(stmt.domain, "cartesian_domain"):
-            continue
-        color_dim, colors = output_colors[id(expr)]
         for named_range in stmt.domain.args:
             axis, start, stop = named_range.args  # type: ignore[attr-defined]  # a domain holds `named_range`s
-            if (
+            if not (
                 isinstance(axis, itir.AxisLiteral)
-                and axis.value == color_dim.value
                 and isinstance(start, itir.Literal)
                 and isinstance(stop, itir.Literal)
-                and not colors[0] <= int(start.value) <= int(stop.value) <= colors[-1] + 1
             ):
-                raise ValueError(
-                    f"'{stmt.target}' is written on {color_dim.value} [{start.value}, {stop.value}),"
-                    f" but its structured expression has the colours {colors}."
-                )
+                continue
+            for colors in _reached_colors(stmt.expr, axis.value, output_colors, {}):
+                if not colors[0] <= int(start.value) <= int(stop.value) <= colors[-1] + 1:
+                    raise ValueError(
+                        f"'{stmt.target}' is written on {axis.value} [{start.value}, {stop.value}),"
+                        f" but reads a structured expression with the colours {colors}."
+                    )
 
 
 def _check_postcondition(
@@ -470,9 +529,7 @@ class StructuredToCartesian(eve.PreserveLocationVisitor, eve.NodeTranslator):
         if not first_conns:
             return im.as_fieldop(stencil, *domain)(*args)
         conn = first_conns[0]
-        result = self._assemble(conn, stencil, domain, args, result_type)
-        self.output_colors[id(result)] = (conn.color_dim, conn.colors)
-        return result
+        return self._assemble(conn, stencil, domain, args, result_type)
 
     def _assemble(
         self,
@@ -488,7 +545,9 @@ class StructuredToCartesian(eve.PreserveLocationVisitor, eve.NodeTranslator):
             for color in conn.colors
         ]
         if len(branches) == 1:
-            return im.as_fieldop(branches[0], *domain)(*args)
+            result = im.as_fieldop(branches[0], *domain)(*args)
+            self.output_colors[id(result)] = (conn.color_dim, conn.colors)
+            return result
 
         if isinstance(result_type, ts.TupleType):
             raise NotImplementedError("Tuple-valued structured 'as_fieldop's are not supported.")
@@ -510,6 +569,7 @@ class StructuredToCartesian(eve.PreserveLocationVisitor, eve.NodeTranslator):
             expr = im.concat_where(
                 im.less(im.axis_literal(conn.color_dim), color + 1), branch(stencil), expr
             )
+        self.output_colors[id(expr)] = (conn.color_dim, conn.colors)
         return im.let(*bindings.items())(expr) if bindings else expr
 
 

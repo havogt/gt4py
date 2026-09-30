@@ -42,6 +42,7 @@ E2C = StructuredConnectivity(
     color_dim=X,
     local_dim=E2CDim,
     offsets={0: [{}, {X: 1}], 1: [{X: -1}, {I: -1}], 2: [{X: -2}, {X: -1}]},
+    codomain_colors=2,
 )
 # a single vertex colour
 V2E = StructuredConnectivity(
@@ -496,11 +497,16 @@ def test_broadcast_lattice_comes_from_the_parameters(uids):
 
 
 def _provider_type(**offsets) -> common.OffsetProviderType:
-    """Cell -> Edge connectivities named by their keyword, local dimension `C2E`."""
+    """Cell -> Edge connectivities named by their keyword, local dimension `C2E`, 3 edge colours."""
     return common.offset_provider_to_type(
         {
             tag: StructuredConnectivity(
-                source_dim=Cell, codomain=Edge, color_dim=X, local_dim=C2EDim, offsets=per_color
+                source_dim=Cell,
+                codomain=Edge,
+                color_dim=X,
+                local_dim=C2EDim,
+                offsets=per_color,
+                codomain_colors=3,
             )
             for tag, per_color in offsets.items()
         }
@@ -532,7 +538,7 @@ def test_j_and_negative_offsets(uids):
 
 
 def test_colors_not_starting_at_zero(uids):
-    provider_type = _provider_type(C2E={1: [{I: 1}], 2: [{X: -1}], 3: [{}]})
+    provider_type = _provider_type(C2E={1: [{I: 1}], 2: [{X: -1}], 3: [{X: -2}]})
     testee = _program(
         im.as_fieldop(im.lambda_("it")(im.deref(im.shift("C2E", 0)("it"))))("e"),
         {"e": edge_field},
@@ -543,7 +549,7 @@ def test_colors_not_starting_at_zero(uids):
         [
             im.lambda_("it")(_shifted("it", (I, 1))),
             im.lambda_("it")(_shifted("it", (X, -1))),
-            im.lambda_("it")(_shifted("it")),
+            im.lambda_("it")(_shifted("it", (X, -2))),
         ],
         "e",
         first_color=1,
@@ -574,6 +580,72 @@ def test_output_beyond_the_colors_raises(uids):
 
     with pytest.raises(ValueError, match="colours \\(0, 1\\)"):
         _apply(testee, uids)
+
+
+def _double(expr: itir.Expr) -> itir.Expr:
+    return im.as_fieldop(im.lambda_("a")(im.multiplies_(im.deref("a"), 2.0)))(expr)
+
+
+@pytest.mark.parametrize(
+    "shape",
+    ["wrapped", "let_bound_argument", "vertical_concat_where"],
+)
+def test_output_beyond_the_colors_raises_through_wrappers(uids, shape):
+    shifted = im.as_fieldop(im.lambda_("it")(im.deref(im.shift("C2E", 0)("it"))))
+    expr = {
+        "wrapped": _double(shifted("e")),
+        "let_bound_argument": shifted(_double("e")),
+        "vertical_concat_where": im.concat_where(
+            im.less(im.axis_literal(K), 1), _double(shifted("e")), "e"
+        ),
+    }[shape]
+    testee = _program(expr, {"e": edge_field}, domain={I: (0, 4), X: (0, 3), K: (0, 3)})
+
+    with pytest.raises(ValueError, match="colours \\(0, 1\\)"):
+        _apply(testee, uids)
+
+
+def test_structured_read_of_a_wider_field_is_allowed(uids):
+    # the edge output reads cells through E2C, which stays within the cell colours
+    testee = _program(
+        _double(im.as_fieldop(im.lambda_("it")(im.deref(im.shift("E2C", 0)("it"))))("c")),
+        {"c": cell_field},
+        domain={I: (0, 4), X: (0, 3), K: (0, 3)},
+    )
+
+    _apply(testee, uids)
+
+
+def test_chain_beyond_the_codomain_colors_raises(uids):
+    provider_type = _provider_type(C2E={0: [{X: 3}], 1: [{}]})
+    testee = _program(
+        im.as_fieldop(im.lambda_("it")(im.deref(im.shift("C2E", 0)("it"))))("e"),
+        {"e": edge_field},
+    )
+
+    with pytest.raises(ValueError, match="colour 3 of 'Edge'"):
+        _apply(testee, uids, provider_type=provider_type)
+
+
+def test_unknown_codomain_colors_raise(uids):
+    provider_type = common.offset_provider_to_type(
+        {
+            "C2E": StructuredConnectivity(
+                source_dim=Cell,
+                codomain=Edge,
+                color_dim=X,
+                local_dim=C2EDim,
+                offsets={0: [{}], 1: [{}]},
+            )
+        }
+    )
+    testee = _program(
+        im.as_fieldop(im.lambda_("it")(im.deref(im.shift("C2E", 0)("it"))))("e"),
+        {"e": edge_field},
+    )
+
+    with pytest.raises(ValueError, match="colours of 'Edge' are unknown"):
+        _apply(testee, uids, provider_type=provider_type)
 
 
 def test_discontinuous_chain_raises(uids):

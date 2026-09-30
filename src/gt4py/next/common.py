@@ -1003,6 +1003,7 @@ class StructuredConnectivityType:
 
     `offsets` holds, per source colour in ascending order, the colour and one entry per neighbor;
     each entry is the non-zero `(dimension, offset)` pairs sorted by dimension name.
+    `codomain_colors`, if known, is the number of colours of the codomain, numbered from 0.
     """
 
     source_dim: Dimension
@@ -1010,6 +1011,7 @@ class StructuredConnectivityType:
     color_dim: Dimension
     local_dim: Dimension
     offsets: tuple[tuple[int, tuple[tuple[tuple[Dimension, int], ...], ...]], ...]
+    codomain_colors: Optional[int] = None
 
     @property
     def colors(self) -> tuple[int, ...]:

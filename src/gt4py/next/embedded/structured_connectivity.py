@@ -61,6 +61,8 @@ class StructuredConnectivity:
     color_dim: common.Dimension
     local_dim: common.Dimension
     offsets: dict[int, list[dict[common.Dimension, int]]]
+    #: number of colours of the codomain, numbered from 0; only compiled backends read it
+    codomain_colors: Optional[int] = None
 
     def __post_init__(self) -> None:
         lengths = {len(v) for v in self.offsets.values()}
@@ -99,6 +101,7 @@ class StructuredConnectivity:
                 )
                 for color in self.colors
             ),
+            codomain_colors=self.codomain_colors,
         )
 
     def __gt_type__(self) -> common.StructuredConnectivityType:

@@ -142,8 +142,17 @@ def _neighbor(data: np.ndarray, shifts: list[dict], colors: range, shape_i=NI, s
     return out
 
 
-def _call(program, backend, *args, out_entity: common.Dimension, offset_provider=OFFSET_PROVIDER):
-    out_domain = gtx.domain({I: (0, NI), J: (0, NJ), X: (0, N_COLORS[out_entity]), K: (0, NK)})
+def _call(
+    program,
+    backend,
+    *args,
+    out_entity: common.Dimension,
+    offset_provider=OFFSET_PROVIDER,
+    extra_colors: int = 0,
+):
+    out_domain = gtx.domain(
+        {I: (0, NI), J: (0, NJ), X: (0, N_COLORS[out_entity] + extra_colors), K: (0, NK)}
+    )
     out = gtx.as_field(out_domain, np.full(out_domain.shape, -1.0), allocator=backend.allocator)
     if isinstance(backend, definitions.EmbeddedDummyBackend):
         operator = program
@@ -161,6 +170,11 @@ def _call(program, backend, *args, out_entity: common.Dimension, offset_provider
         )
     operator(*args, out=out, offset_provider=offset_provider)
     return out.asnumpy()
+
+
+def _assert_matches(actual: np.ndarray, reference: np.ndarray) -> None:
+    assert np.isfinite(reference).all()
+    np.testing.assert_allclose(actual, reference, rtol=1e-14, equal_nan=False)
 
 
 @pytest.fixture
@@ -194,7 +208,7 @@ def test_c2e_sum(exec_alloc_descriptor, rng):
         out_entity=Cell,
     )
 
-    np.testing.assert_allclose(actual, reference, rtol=1e-14)
+    _assert_matches(actual, reference)
 
 
 def test_sparse_slot(exec_alloc_descriptor, rng):
@@ -210,7 +224,7 @@ def test_sparse_slot(exec_alloc_descriptor, rng):
         out_entity=Cell,
     )
 
-    np.testing.assert_allclose(actual, reference, rtol=1e-14)
+    _assert_matches(actual, reference)
 
 
 def test_let_bound_list(exec_alloc_descriptor, rng):
@@ -230,7 +244,7 @@ def test_let_bound_list(exec_alloc_descriptor, rng):
         out_entity=Cell,
     )
 
-    np.testing.assert_allclose(actual, reference, rtol=1e-14)
+    _assert_matches(actual, reference)
 
 
 def test_e2c2v_sum(exec_alloc_descriptor, rng):
@@ -247,7 +261,7 @@ def test_e2c2v_sum(exec_alloc_descriptor, rng):
         out_entity=Edge,
     )
 
-    np.testing.assert_allclose(actual, reference, rtol=1e-14)
+    _assert_matches(actual, reference)
 
 
 def test_chained(exec_alloc_descriptor, rng):
@@ -261,7 +275,7 @@ def test_chained(exec_alloc_descriptor, rng):
         chained, exec_alloc_descriptor, _as_field(exec_alloc_descriptor, Cell, c), out_entity=Cell
     )
 
-    np.testing.assert_allclose(actual, reference, rtol=1e-14)
+    _assert_matches(actual, reference)
 
 
 def test_single_color_output(exec_alloc_descriptor, rng):
@@ -272,7 +286,7 @@ def test_single_color_output(exec_alloc_descriptor, rng):
         v2e_sum, exec_alloc_descriptor, _as_field(exec_alloc_descriptor, Edge, e), out_entity=Vertex
     )
 
-    np.testing.assert_allclose(actual, reference, rtol=1e-14)
+    _assert_matches(actual, reference)
 
 
 def test_unused_neighbor_table_is_ignored(exec_alloc_descriptor, rng):
@@ -294,4 +308,20 @@ def test_unused_neighbor_table_is_ignored(exec_alloc_descriptor, rng):
         offset_provider={**OFFSET_PROVIDER, "E2V": e2v_table},
     )
 
-    np.testing.assert_allclose(actual, reference, rtol=1e-14)
+    _assert_matches(actual, reference)
+
+
+@pytest.mark.checks_specific_error
+def test_output_beyond_the_colors_raises(exec_alloc_descriptor, rng):
+    e = _torus_field(rng, Edge)
+    _, w_field = _sparse(exec_alloc_descriptor, rng, Cell, C2EDim, 3)
+
+    with pytest.raises(ValueError, match="colours"):
+        _call(
+            c2e_sum,
+            exec_alloc_descriptor,
+            _as_field(exec_alloc_descriptor, Edge, e),
+            w_field,
+            out_entity=Cell,
+            extra_colors=1,
+        )
