@@ -25,7 +25,7 @@ from gt4py.next.iterator.transforms.inline_lambdas import InlineLambdas
 from gt4py.next.iterator.transforms.normalize_shifts import NormalizeShifts
 from gt4py.next.iterator.transforms.unroll_reduce import UnrollReduce
 from gt4py.next.iterator.type_system import inference as type_inference
-from gt4py.next.type_system import type_specifications as ts
+from gt4py.next.type_system import type_info, type_specifications as ts
 
 
 #: Bound on the fixpoint loops below; each is expected to converge in at most a few iterations.
@@ -46,7 +46,9 @@ def _is_list_field(expr: itir.Expr) -> bool:
     return isinstance(expr.type, ts.FieldType) and isinstance(expr.type.dtype, ts.ListType)
 
 
-def _structured_tags(node: itir.Node, structured: dict[str, common.StructuredConnectivityType]):
+def _structured_tags(
+    node: itir.Node, structured: dict[str, common.StructuredConnectivityType]
+) -> eve.utils.XIterable[itir.OffsetLiteral]:
     return (
         node.pre_walk_values()
         .if_isinstance(itir.OffsetLiteral)
@@ -58,7 +60,8 @@ def _structured_tags(node: itir.Node, structured: dict[str, common.StructuredCon
 class _RewriteDomains(eve.PreserveLocationVisitor, eve.NodeTranslator):
     """`unstructured_domain(...)` -> `cartesian_domain(...)`, entity dims of `broadcast` -> lattice."""
 
-    entity_dims: frozenset[common.Dimension]
+    PRESERVED_ANNEX_ATTRS = ("domain",)
+
     lattice_dims: tuple[common.Dimension, ...]
 
     def visit_FunCall(self, node: itir.FunCall, **kwargs) -> itir.FunCall:
@@ -71,8 +74,13 @@ class _RewriteDomains(eve.PreserveLocationVisitor, eve.NodeTranslator):
             and all(isinstance(axis, itir.AxisLiteral) for axis in node.args[1].args)
         ):
             dims = [ir_misc.dim_from_axis_literal(axis) for axis in node.args[1].args]  # type: ignore[arg-type]  # checked above
-            if any(dim in self.entity_dims for dim in dims):
-                new_dims = [dim for dim in dims if dim not in self.entity_dims]
+            entity_dims = [
+                dim
+                for dim in dims
+                if dim.kind == common.DimensionKind.HORIZONTAL and dim not in self.lattice_dims
+            ]
+            if entity_dims:
+                new_dims = [dim for dim in dims if dim not in entity_dims]
                 new_dims = common.order_dimensions({*new_dims, *self.lattice_dims})
                 return im.call("broadcast")(
                     node.args[0], im.make_tuple(*(im.axis_literal(dim) for dim in new_dims))
@@ -88,10 +96,11 @@ class _FuseListFields(eve.PreserveLocationVisitor, eve.NodeTranslator):
     `let(v, as_fieldop(λ(a, b) → map_list(f)(·a, ·b))(as_fieldop(λ(e) → neighbors(C2E, e))(e), w))`
     `(as_fieldop(λ(it) → list_get(1, ·it))(v))` becomes one `as_fieldop` whose stencil holds
     `list_get(1, map_list(f)(neighbors(C2E, e), ·w))` (modulo the lets `fuse_as_fieldop` leaves).
-    A let used `r` times is duplicated `r` times; fusion is repeated per consumer until none of its
-    arguments is a list-valued `as_fieldop`, which terminates as every step removes one
-    `as_fieldop` from the finite argument tree.
+    A let used `r` times is duplicated `r` times. One fusion per consumer suffices: the traversal
+    is post-order, so a list-valued argument has already absorbed its own list-valued arguments.
     """
+
+    PRESERVED_ANNEX_ATTRS = ("domain",)
 
     offset_provider_type: common.OffsetProviderType
     uids: utils.IDGeneratorPool
@@ -111,25 +120,27 @@ class _FuseListFields(eve.PreserveLocationVisitor, eve.NodeTranslator):
         return node
 
     def _fuse_list_args(self, node: itir.FunCall) -> itir.FunCall:
-        for _ in range(_MAX_ITERATIONS):
-            eligible = [cpm.is_applied_as_fieldop(arg) and _is_list_field(arg) for arg in node.args]
-            if not any(eligible):
-                return node
-            fused = fuse_as_fieldop.fuse_as_fieldop(
-                node,
-                eligible,
-                offset_provider_type=self.offset_provider_type,
-                enable_cse=False,
-                uids=self.uids,
-            )
-            assert isinstance(fused, itir.FunCall)
-            type_inference.copy_type(from_=node, to=fused, allow_untyped=True)
-            node = fused
-        raise RuntimeError("Fusing list-valued 'as_fieldop' arguments did not converge.")
+        eligible = [cpm.is_applied_as_fieldop(arg) and _is_list_field(arg) for arg in node.args]
+        if not any(eligible):
+            return node
+        fused = fuse_as_fieldop.fuse_as_fieldop(
+            node,
+            eligible,
+            offset_provider_type=self.offset_provider_type,
+            enable_cse=False,
+            uids=self.uids,
+        )
+        assert isinstance(fused, itir.FunCall) and not any(
+            cpm.is_applied_as_fieldop(arg) and _is_list_field(arg) for arg in fused.args
+        )
+        type_inference.copy_type(from_=node, to=fused, allow_untyped=True)
+        return fused
 
 
 class _InlineIteratorLets(eve.PreserveLocationVisitor, eve.NodeTranslator):
     """`let(it, shift(...)(a))(... it ... it ...)` -> `... shift(...)(a) ... shift(...)(a) ...`."""
+
+    PRESERVED_ANNEX_ATTRS = ("domain",)
 
     def visit_FunCall(self, node: itir.FunCall, **kwargs) -> itir.Expr:
         node = self.generic_visit(node, **kwargs)
@@ -157,11 +168,18 @@ class _ResolveChains(eve.PreserveLocationVisitor, eve.NodeTranslator):
         color = self.color
         offsets: dict[common.Dimension, int] = {}
         kept: list[itir.Expr] = []
+        previous: common.StructuredConnectivityType | None = None
         for tag, index in zip(pairs[::2], pairs[1::2], strict=True):
             if isinstance(tag, itir.OffsetLiteral) and tag.value in self.structured:
                 if not (isinstance(index, itir.OffsetLiteral) and isinstance(index.value, int)):
                     raise ValueError(f"Structured shift '{tag.value}' has a non-constant index.")
                 conn = self.structured[tag.value]
+                if previous is not None and previous.codomain != conn.source_dim:
+                    raise ValueError(
+                        f"Shift '{tag.value}' starts on '{conn.source_dim.value}', but the chain"
+                        f" is on '{previous.codomain.value}'."
+                    )
+                previous = conn
                 if color not in conn.colors:
                     raise ValueError(f"Colour {color} is not a source colour of '{tag.value}'.")
                 for dim, offset in conn.neighbor_offset(color, index.value).items():
@@ -175,6 +193,15 @@ class _ResolveChains(eve.PreserveLocationVisitor, eve.NodeTranslator):
                 kept.extend((tag, index))
             else:
                 raise ValueError(f"Shift '{tag}' mixed with structured shifts.")
+        assert previous is not None
+        target_colors = {
+            conn.colors for conn in self.structured.values() if conn.source_dim == previous.codomain
+        }
+        if any(color not in colors for colors in target_colors):
+            raise ValueError(
+                f"A structured shift chain reaches colour {color} of '{previous.codomain.value}',"
+                " which does not exist."
+            )
         offsets[color_dim] = color - self.color
 
         resolved: list[itir.Expr] = []
@@ -246,6 +273,49 @@ def _normalize_stencil(
     raise RuntimeError("Normalising a structured stencil did not converge.")
 
 
+def _lattice_dims(
+    program: itir.Program, color_dims: set[common.Dimension]
+) -> tuple[common.Dimension, ...]:
+    """The horizontal dimensions of the parameters laid out on a lattice with a colour dimension."""
+    dims: set[common.Dimension] = set()
+    for param in program.params:
+        assert param.type is not None
+        for type_ in type_info.primitive_constituents(param.type):
+            if isinstance(type_, ts.FieldType) and color_dims & set(type_.dims):
+                dims.update(
+                    dim for dim in type_.dims if dim.kind == common.DimensionKind.HORIZONTAL
+                )
+    return tuple(common.order_dimensions(dims))
+
+
+def _check_output_colors(
+    program: itir.Program, output_colors: dict[int, tuple[common.Dimension, tuple[int, ...]]]
+) -> None:
+    """Raise if a `SetAt` writes a colour its structured expression does not compute."""
+    for stmt in program.body:
+        if not isinstance(stmt, itir.SetAt):
+            continue
+        expr = stmt.expr
+        while cpm.is_let(expr):
+            expr = expr.fun.expr
+        if id(expr) not in output_colors or not cpm.is_call_to(stmt.domain, "cartesian_domain"):
+            continue
+        color_dim, colors = output_colors[id(expr)]
+        for named_range in stmt.domain.args:
+            axis, start, stop = named_range.args  # type: ignore[attr-defined]  # a domain holds `named_range`s
+            if (
+                isinstance(axis, itir.AxisLiteral)
+                and axis.value == color_dim.value
+                and isinstance(start, itir.Literal)
+                and isinstance(stop, itir.Literal)
+                and not colors[0] <= int(start.value) <= int(stop.value) <= colors[-1] + 1
+            ):
+                raise ValueError(
+                    f"'{stmt.target}' is written on {color_dim.value} [{start.value}, {stop.value}),"
+                    f" but its structured expression has the colours {colors}."
+                )
+
+
 def _check_postcondition(
     program: itir.Program, structured: dict[str, common.StructuredConnectivityType]
 ) -> None:
@@ -304,6 +374,10 @@ class StructuredToCartesian(eve.PreserveLocationVisitor, eve.NodeTranslator):
     structured: dict[str, common.StructuredConnectivityType]
     offset_provider_type: common.OffsetProviderType
     uids: utils.IDGeneratorPool
+    #: colour dimension and colours of every rewritten expression, by `id`
+    output_colors: dict[int, tuple[common.Dimension, tuple[int, ...]]] = dataclasses.field(
+        default_factory=dict
+    )
 
     @classmethod
     def apply(
@@ -332,30 +406,21 @@ class StructuredToCartesian(eve.PreserveLocationVisitor, eve.NodeTranslator):
                 f"Neighbor tables {tables} are used together with structured connectivities."
             )
 
-        entity_dims = frozenset(
-            dim for conn in structured.values() for dim in (conn.source_dim, conn.codomain)
-        )
-        lattice_dims = tuple(
-            common.order_dimensions(
-                {conn.color_dim for conn in structured.values()}
-                | {
-                    dim
-                    for conn in structured.values()
-                    for _, per_neighbor in conn.offsets
-                    for offset in per_neighbor
-                    for dim, _ in offset
-                }
-            )
-        )
-        program = _RewriteDomains(entity_dims=entity_dims, lattice_dims=lattice_dims).visit(program)
+        for tag, conn in structured.items():
+            if conn.colors != tuple(range(conn.colors[0], conn.colors[0] + len(conn.colors))):
+                raise ValueError(f"The colours {conn.colors} of '{tag}' are not contiguous.")
+
+        color_dims = {conn.color_dim for conn in structured.values()}
+        lattice_dims = _lattice_dims(program, color_dims)
+        program = _RewriteDomains(lattice_dims=lattice_dims).visit(program)
         program = type_inference.infer(program, offset_provider_type=offset_provider_type)
         program = _FuseListFields(offset_provider_type=offset_provider_type, uids=uids).visit(
             program
         )
         program = type_inference.infer(program, offset_provider_type=offset_provider_type)
-        program = cls(
-            structured=structured, offset_provider_type=offset_provider_type, uids=uids
-        ).visit(program)
+        rewriter = cls(structured=structured, offset_provider_type=offset_provider_type, uids=uids)
+        program = rewriter.visit(program)
+        _check_output_colors(program, rewriter.output_colors)
         program = type_inference.infer(program, offset_provider_type=offset_provider_type)
         _check_postcondition(program, structured)
         return program
@@ -397,7 +462,6 @@ class StructuredToCartesian(eve.PreserveLocationVisitor, eve.NodeTranslator):
         stencil = _normalize_stencil(
             stencil, arg_types, offset_provider_type=self.offset_provider_type, uids=self.uids
         )
-        params = frozenset(param.id for param in stencil.params)
         first_conns = self._output_colors(stencil)
         if len({(conn.source_dim, conn.colors) for conn in first_conns}) > 1:
             raise ValueError(
@@ -406,6 +470,19 @@ class StructuredToCartesian(eve.PreserveLocationVisitor, eve.NodeTranslator):
         if not first_conns:
             return im.as_fieldop(stencil, *domain)(*args)
         conn = first_conns[0]
+        result = self._assemble(conn, stencil, domain, args, result_type)
+        self.output_colors[id(result)] = (conn.color_dim, conn.colors)
+        return result
+
+    def _assemble(
+        self,
+        conn: common.StructuredConnectivityType,
+        stencil: itir.Lambda,
+        domain: list[itir.Expr],
+        args: list[itir.Expr],
+        result_type: ts.TypeSpec | None,
+    ) -> itir.Expr:
+        params = frozenset(param.id for param in stencil.params)
         branches = [
             _ResolveChains(structured=self.structured, params=params, color=color).visit(stencil)
             for color in conn.colors

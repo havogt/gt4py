@@ -9,11 +9,11 @@
 import pytest
 
 from gt4py.next import common, utils
+from gt4py.next.embedded.structured_connectivity import StructuredConnectivity
 from gt4py.next.iterator import ir as itir
 from gt4py.next.iterator.ir_utils import ir_makers as im
 from gt4py.next.iterator.transforms import inline_dynamic_shifts, pass_manager
 from gt4py.next.iterator.transforms.structured_to_cartesian import StructuredToCartesian
-from gt4py.next.embedded.structured_connectivity import StructuredConnectivity
 from gt4py.next.type_system import type_specifications as ts
 
 
@@ -21,6 +21,7 @@ Cell = common.Dimension("Cell")
 Edge = common.Dimension("Edge")
 Vertex = common.Dimension("Vertex")
 I = common.Dimension("I")  # noqa: E741 [ambiguous-variable-name]
+J = common.Dimension("J")
 X = common.Dimension("X")
 K = common.Dimension("K", kind=common.DimensionKind.VERTICAL)
 C2EDim = common.Dimension("C2E", kind=common.DimensionKind.LOCAL)
@@ -62,11 +63,16 @@ offset_field = ts.FieldType(dims=[I, X, K], dtype=i32)
 cell_domain = {I: (0, 4), X: (0, 2), K: (0, 3)}
 
 
-def _program(expr: itir.Expr, params: dict[str, ts.TypeSpec], domain=cell_domain) -> itir.Program:
+def _program(
+    expr: itir.Expr,
+    params: dict[str, ts.TypeSpec],
+    domain: dict[common.Dimension, tuple[int, int]] = cell_domain,
+    out_type: ts.TypeSpec = cell_field,
+) -> itir.Program:
     return itir.Program(
         id="testee",
         function_definitions=[],
-        params=[im.sym(name, type_) for name, type_ in {**params, "out": cell_field}.items()],
+        params=[im.sym(name, type_) for name, type_ in {**params, "out": out_type}.items()],
         declarations=[],
         body=[
             itir.SetAt(
@@ -100,11 +106,14 @@ def _shift(*args) -> im.call:
     )
 
 
-def _per_color(stencils: list[itir.Lambda], *args: str) -> itir.Expr:
+def _per_color(stencils: list[itir.Lambda], *args: str, first_color: int = 0) -> itir.Expr:
+    """`concat_where(X < c0 + 1, as_fieldop(s0)(args), concat_where(X < c1 + 1, ...))`."""
     expr = im.as_fieldop(stencils[-1])(*args)
-    for color in reversed(range(len(stencils) - 1)):
+    for i in reversed(range(len(stencils) - 1)):
         expr = im.concat_where(
-            im.less(im.axis_literal(X), color + 1), im.as_fieldop(stencils[color])(*args), expr
+            im.less(im.axis_literal(X), first_color + i + 1),
+            im.as_fieldop(stencils[i])(*args),
+            expr,
         )
     return expr
 
@@ -455,6 +464,179 @@ def test_broadcast_axes_become_lattice_dims(uids):
         assert call.args[1] == im.make_tuple(
             im.axis_literal(I), im.axis_literal(X), im.axis_literal(K)
         )
+
+
+def test_broadcast_lattice_comes_from_the_parameters(uids):
+    # no offset of the provider moves in J, the fields still have it
+    ijxk_field = ts.FieldType(dims=[I, J, X, K], dtype=f64)
+    testee = _program(
+        im.as_fieldop(
+            im.lambda_("a", "it")(im.plus(im.deref("a"), im.deref(im.shift("V2E", 0)("it"))))
+        )(
+            im.call("broadcast")(1.0, im.make_tuple(im.axis_literal(Vertex), im.axis_literal(K))),
+            "e",
+        ),
+        {"e": ijxk_field},
+        domain={I: (0, 4), J: (0, 4), X: (0, 1), K: (0, 3)},
+        out_type=ijxk_field,
+    )
+
+    actual = _apply(testee, uids)
+
+    broadcasts = [
+        call
+        for call in actual.pre_walk_values().if_isinstance(itir.FunCall)
+        if call.fun == im.ref("broadcast")
+    ]
+    assert broadcasts
+    for call in broadcasts:
+        assert call.args[1] == im.make_tuple(
+            im.axis_literal(I), im.axis_literal(J), im.axis_literal(X), im.axis_literal(K)
+        )
+
+
+def _provider_type(**offsets) -> common.OffsetProviderType:
+    """Cell -> Edge connectivities named by their keyword, local dimension `C2E`."""
+    return common.offset_provider_to_type(
+        {
+            tag: StructuredConnectivity(
+                source_dim=Cell, codomain=Edge, color_dim=X, local_dim=C2EDim, offsets=per_color
+            )
+            for tag, per_color in offsets.items()
+        }
+    )
+
+
+def test_j_and_negative_offsets(uids):
+    ijxk_field = ts.FieldType(dims=[I, J, X, K], dtype=f64)
+    provider_type = _provider_type(
+        C2E={0: [{J: -1}, {I: -1, J: 1, X: 2}], 1: [{I: 1, J: -1, X: -1}, {X: 1}]}
+    )
+    testee = _program(
+        im.as_fieldop(im.lambda_("it")(im.deref(im.shift("C2E", 1)("it"))))("e"),
+        {"e": ijxk_field},
+        domain={I: (0, 4), J: (0, 4), X: (0, 2), K: (0, 3)},
+        out_type=ijxk_field,
+    )
+    expected = _per_color(
+        [
+            im.lambda_("it")(_shifted("it", (I, -1), (J, 1), (X, 2))),
+            im.lambda_("it")(_shifted("it", (X, 1))),
+        ],
+        "e",
+    )
+
+    actual = _apply(testee, uids, provider_type=provider_type)
+
+    assert actual.body[0].expr == expected
+
+
+def test_colors_not_starting_at_zero(uids):
+    provider_type = _provider_type(C2E={1: [{I: 1}], 2: [{X: -1}], 3: [{}]})
+    testee = _program(
+        im.as_fieldop(im.lambda_("it")(im.deref(im.shift("C2E", 0)("it"))))("e"),
+        {"e": edge_field},
+        domain={I: (0, 4), X: (1, 4), K: (0, 3)},
+    )
+    # colour 1 -> X < 2, colour 2 -> X < 3, colour 3 -> the rest
+    expected = _per_color(
+        [
+            im.lambda_("it")(_shifted("it", (I, 1))),
+            im.lambda_("it")(_shifted("it", (X, -1))),
+            im.lambda_("it")(_shifted("it")),
+        ],
+        "e",
+        first_color=1,
+    )
+
+    actual = _apply(testee, uids, provider_type=provider_type)
+
+    assert actual.body[0].expr == expected
+
+
+def test_non_contiguous_colors_raise(uids):
+    provider_type = _provider_type(C2E={0: [{}], 2: [{X: -1}]})
+    testee = _program(
+        im.as_fieldop(im.lambda_("it")(im.deref(im.shift("C2E", 0)("it"))))("e"),
+        {"e": edge_field},
+    )
+
+    with pytest.raises(ValueError, match="not contiguous"):
+        _apply(testee, uids, provider_type=provider_type)
+
+
+def test_output_beyond_the_colors_raises(uids):
+    testee = _program(
+        im.as_fieldop(im.lambda_("it")(im.deref(im.shift("C2E", 0)("it"))))("e"),
+        {"e": edge_field},
+        domain={I: (0, 4), X: (0, 3), K: (0, 3)},
+    )
+
+    with pytest.raises(ValueError, match="colours \\(0, 1\\)"):
+        _apply(testee, uids)
+
+
+def test_discontinuous_chain_raises(uids):
+    testee = _program(
+        im.as_fieldop(im.lambda_("it")(im.deref(_shift("C2E", 1, "C2E", 0)("it"))))("e"),
+        {"e": edge_field},
+    )
+
+    with pytest.raises(ValueError, match="starts on 'Cell'"):
+        _apply(testee, uids)
+
+
+def test_chain_to_a_missing_colour_raises(uids):
+    # V2E is fine; `V2X` reaches edge colour 3, and edges (the sources of E2C) have 0, 1, 2
+    v2x = StructuredConnectivity(
+        source_dim=Vertex, codomain=Edge, color_dim=X, local_dim=V2EDim, offsets={0: [{X: 3}]}
+    )
+    testee = _program(
+        im.as_fieldop(im.lambda_("it")(im.deref(im.shift("V2X", 0)("it"))))("e"),
+        {"e": edge_field},
+        domain={I: (0, 4), X: (0, 1), K: (0, 3)},
+    )
+
+    with pytest.raises(ValueError, match="colour 3 of 'Edge'"):
+        _apply(testee, uids, provider_type={**PROVIDER_TYPE, "V2X": v2x.__gt_type__()})
+
+
+def test_scan_raises(uids):
+    testee = _program(
+        im.as_fieldop(
+            im.scan(
+                im.lambda_("state", "it")(im.plus("state", im.deref(im.shift("C2E", 0)("it")))),
+                True,
+                im.literal_from_value(0.0),
+            )
+        )("e"),
+        {"e": edge_field},
+    )
+
+    with pytest.raises(NotImplementedError, match="scan"):
+        _apply(testee, uids)
+
+
+def test_empty_color_branch_is_pruned_with_static_domains():
+    testee = _program(
+        im.as_fieldop(im.lambda_("it")(im.deref(im.shift("C2E", 1)("it"))))("e"),
+        {"e": edge_field},
+        domain={I: (0, 4), X: (0, 1), K: (0, 3)},
+    )
+
+    actual = pass_manager.apply_fieldview_transforms(
+        testee, offset_provider={"C2E": C2E, "E2C": E2C, "V2E": V2E}
+    )
+
+    calls = list(actual.pre_walk_values().if_isinstance(itir.FunCall))
+    assert not any(call.fun == im.ref("concat_where") for call in calls)
+    # only colour 0 is written: C2E[0][1] = {X: 1}
+    shifts = [
+        call.fun
+        for call in calls
+        if isinstance(call.fun, itir.FunCall) and call.fun.fun == im.ref("shift")
+    ]
+    assert shifts == [im.call("shift")(im.cartesian_offset(X), _off(1))]
 
 
 def test_idempotent(uids):
