@@ -59,6 +59,32 @@ It has the following arguments:
 """
 
 
+def gt_reject_shared_transient_intermediate(
+    xform: "MapFusionVertical",
+    first_map_exit: dace_nodes.MapExit,
+    second_map_entry: dace_nodes.MapEntry,
+    state: dace.SDFGState,
+    sdfg: dace.SDFG,
+) -> bool:
+    """Vertical fusion callback rejecting a transient intermediate that also feeds other nodes.
+
+    Fusing through such an intermediate does not remove it: the producer is moved into the
+    second Map, which then also reads everything the producer reads, while the other
+    consumers still read the materialized intermediate.
+    """
+    for edge in state.out_edges(first_map_exit):
+        intermediate = edge.dst
+        if (
+            not isinstance(intermediate, dace_nodes.AccessNode)
+            or not intermediate.desc(sdfg).transient
+        ):
+            continue
+        consumers = [oedge.dst for oedge in state.out_edges(intermediate)]
+        if second_map_entry in consumers and any(c is not second_map_entry for c in consumers):
+            return False
+    return True
+
+
 @dace_properties.make_properties
 class MapFusionVertical(dace_dftrans.MapFusionVertical):
     """GT4Py's Map fusion transformation for vertical Maps.

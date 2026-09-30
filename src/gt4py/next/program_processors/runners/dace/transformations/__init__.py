@@ -41,6 +41,7 @@ from .map_fusion import (
     MapFusionHorizontal,
     MapFusionVertical,
     VerticalMapFusionCallback,
+    gt_reject_shared_transient_intermediate,
 )
 from .map_fusion_extended import (
     HorizontalMapSplitCallback,
@@ -145,6 +146,7 @@ __all__ = [
     "gt_propagate_strides_from_access_node",
     "gt_propagate_strides_of",
     "gt_reduce_distributed_buffering",
+    "gt_reject_shared_transient_intermediate",
     "gt_remove_copy_chain",
     "gt_remove_map",
     "gt_replace_concat_where_node",

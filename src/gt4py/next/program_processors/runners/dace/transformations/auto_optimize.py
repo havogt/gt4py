@@ -516,8 +516,9 @@ def _gt_auto_process_top_level_maps(
         vertical_map_fusion = gtx_transformations.MapFusionVertical(
             only_toplevel_maps=True,
             consolidate_edges_only_if_not_extending=True,
-            check_fusion_callback=optimization_hooks.get(  # type: ignore[arg-type]
-                GT4PyAutoOptHook.TopLevelDataFlowMapFusionVerticalCallBack, None
+            check_fusion_callback=optimization_hooks.get(
+                GT4PyAutoOptHook.TopLevelDataFlowMapFusionVerticalCallBack,
+                gtx_transformations.gt_reject_shared_transient_intermediate,
             ),
         )
         # TODO(phimuell): Remove that hack once [issue#1911](https://github.com/spcl/dace/issues/1911)
@@ -662,8 +663,9 @@ def _gt_auto_process_top_level_maps(
                 check_split_callback=optimization_hooks.get(  # type: ignore[arg-type]
                     GT4PyAutoOptHook.TopLevelDataFlowVerticalSplitCallBack, None
                 ),
-                check_fusion_callback=optimization_hooks.get(  # type: ignore[arg-type]
-                    GT4PyAutoOptHook.TopLevelDataFlowMapFusionVerticalCallBack, None
+                check_fusion_callback=optimization_hooks.get(
+                    GT4PyAutoOptHook.TopLevelDataFlowMapFusionVerticalCallBack,
+                    gtx_transformations.gt_reject_shared_transient_intermediate,
                 ),
                 validate=False,
                 validate_all=validate_all,
