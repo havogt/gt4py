@@ -161,6 +161,12 @@ EMBEDDED_CONCAT_WHERE_UPDATE: bool = env_flag_to_bool(
     "GT4PY_EMBEDDED_CONCAT_WHERE_UPDATE", default=True
 )
 
+#: Embedded `concat_where`: use the select only if the smaller branch covers at least this fraction
+#: of the result range (the select evaluates both branches on the whole range).
+EMBEDDED_CONCAT_WHERE_SELECT_MIN_FRACTION: float = float(
+    os.environ.get("GT4PY_EMBEDDED_CONCAT_WHERE_SELECT_MIN_FRACTION", "0")
+)
+
 
 #: Add GPU trace markers (NVTX, ROC-TX) to the generated code, at compile time.
 ADD_GPU_TRACE_MARKERS: bool = env_flag_to_bool("GT4PY_ADD_GPU_TRACE_MARKERS", default=False)

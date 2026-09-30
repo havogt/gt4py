@@ -1215,10 +1215,19 @@ def _concat_where(
             min(p.domain[domain_dim].unit_range.start for p in pieces),
             max(p.domain[domain_dim].unit_range.stop for p in pieces),
         )
-        if config.EMBEDDED_CONCAT_WHERE_SELECT and all(
-            f.domain[domain_dim].unit_range.start <= result_range.start
-            and result_range.stop <= f.domain[domain_dim].unit_range.stop
-            for f in (t_broadcasted, f_broadcasted)
+        branch_lengths = (
+            sum(len(p.domain[domain_dim].unit_range) for p in t_slices),
+            sum(len(p.domain[domain_dim].unit_range) for p in f_slices),
+        )
+        if (
+            config.EMBEDDED_CONCAT_WHERE_SELECT
+            and min(branch_lengths)
+            >= config.EMBEDDED_CONCAT_WHERE_SELECT_MIN_FRACTION * len(result_range)
+            and all(
+                f.domain[domain_dim].unit_range.start <= result_range.start
+                and result_range.stop <= f.domain[domain_dim].unit_range.stop
+                for f in (t_broadcasted, f_broadcasted)
+            )
         ):
             return _where_on_range(
                 cast(NdArrayField, t_broadcasted),
