@@ -657,6 +657,7 @@ class FieldOperator(_CompilableGTEntryPointMixin[ffront_stages.DSLFieldOperatorD
         plans = self._output_allocation_plans.get(domain)
         if plans is not None:
             return tuple(plan.allocate() for plan in plans)
+        assert self.backend is not None
         operator_type = self.__gt_type__()
         assert isinstance(operator_type, ts_ffront.FieldOperatorType | ts_ffront.ScanOperatorType)
         result = _allocate_from_type(operator_type.definition.returns, domain, self.backend)

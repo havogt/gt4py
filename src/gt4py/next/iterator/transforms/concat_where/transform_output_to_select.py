@@ -97,7 +97,7 @@ class _FuseIntoSelects(PreserveLocationVisitor, NodeTranslator):
             and str(stencil.params[0].id).startswith("__tcw_pos")
         ):
             return fuse_as_fieldop.FuseAsFieldOp.apply(
-                node,
+                node,  # type: ignore[arg-type]  # `apply` is annotated for programs but accepts any node
                 uids=self.uids,
                 offset_provider_type=self.offset_provider_type,
                 allow_undeclared_symbols=True,
