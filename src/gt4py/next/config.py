@@ -152,6 +152,15 @@ EMBEDDED_CONCAT_WHERE_WITHOUT_CONCATENATE: bool = env_flag_to_bool(
     "GT4PY_EMBEDDED_CONCAT_WHERE_WITHOUT_CONCATENATE", default=True
 )
 
+#: Embedded `concat_where`, with `EMBEDDED_CONCAT_WHERE_WITHOUT_CONCATENATE`: allow the select
+#: (both branches cover the result range) and the in-place update (one branch covers it) separately.
+EMBEDDED_CONCAT_WHERE_SELECT: bool = env_flag_to_bool(
+    "GT4PY_EMBEDDED_CONCAT_WHERE_SELECT", default=True
+)
+EMBEDDED_CONCAT_WHERE_UPDATE: bool = env_flag_to_bool(
+    "GT4PY_EMBEDDED_CONCAT_WHERE_UPDATE", default=True
+)
+
 
 #: Add GPU trace markers (NVTX, ROC-TX) to the generated code, at compile time.
 ADD_GPU_TRACE_MARKERS: bool = env_flag_to_bool("GT4PY_ADD_GPU_TRACE_MARKERS", default=False)
