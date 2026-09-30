@@ -185,7 +185,17 @@ def _collect_offset_definitions(
 
     for offset_name, connectivity_type in offset_provider_type.items():
         if isinstance(connectivity_type, common.NeighborConnectivityType):
-            assert grid_type == common.GridType.UNSTRUCTURED
+            if grid_type == common.GridType.CARTESIAN:
+                # a table next to structured connectivities, unused after `StructuredToCartesian`
+                # but still bound as an argument
+                for tag in (
+                    offset_name,
+                    connectivity_type.neighbor_dim.value,
+                    connectivity_type.source_dim.value,
+                    connectivity_type.codomain.value,
+                ):
+                    offset_definitions.setdefault(tag, TagDefinition(name=Sym(id=tag)))
+                continue
             offset_definitions[offset_name] = TagDefinition(name=Sym(id=offset_name))
             if offset_name != connectivity_type.neighbor_dim.value:
                 offset_definitions[connectivity_type.neighbor_dim.value] = TagDefinition(
