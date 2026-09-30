@@ -843,7 +843,7 @@ class GTIRToSDFG(eve.NodeVisitor, SDFGBuilder):
                 local_conn_type = gtx_common.get_offset_type(self.offset_provider_type, dim.value)
                 assert isinstance(
                     local_conn_type,
-                    (gtx_common.NeighborConnectivityType, gtx_common.StructuredConnectivityType),
+                    gtx_common.OffsetProviderTypeElem,
                 )
                 shape.append(local_conn_type.max_neighbors)
             elif gtx_dace_args.is_connectivity_identifier(name, self.offset_provider_type):

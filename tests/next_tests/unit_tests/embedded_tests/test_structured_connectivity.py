@@ -235,9 +235,9 @@ def test_gt_type_is_hashable_and_equal_by_value():
             (1, (((X, -1),), ((I, 1),), ((X, 1),))),
         ),
     )
-    assert first["C2E"].max_neighbors == STRUCTURED_C2E.max_neighbors == 3
-    assert first["C2E"].neighbor_dim == STRUCTURED_C2E.neighbor_dim == C2EDim
-    assert not first["C2E"].has_skip_values and not STRUCTURED_C2E.has_skip_values
+    assert first["C2E"].max_neighbors == 3
+    assert first["C2E"].neighbor_dim == C2EDim
+    assert not first["C2E"].has_skip_values
     assert first["C2E"].colors == (0, 1)
     assert first["C2E"].neighbor_offset(1, 1) == {I: 1}
 

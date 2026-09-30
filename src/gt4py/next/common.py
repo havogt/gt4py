@@ -1215,7 +1215,7 @@ def is_neighbor_table(obj: Any) -> TypeGuard[NeighborTable]:
 
 
 OffsetProviderElem: TypeAlias = NeighborTable
-OffsetProviderTypeElem: TypeAlias = NeighborConnectivityType
+OffsetProviderTypeElem: TypeAlias = NeighborConnectivityType | StructuredConnectivityType
 # Note: `OffsetProvider` and `OffsetProviderType` should not be accessed directly,
 # use the `get_offset` and `get_offset_type` functions instead.
 OffsetProvider: TypeAlias = Mapping[Tag, OffsetProviderElem]
@@ -1240,7 +1240,8 @@ def is_offset_provider_type(obj: Any) -> TypeGuard[OffsetProviderType]:
     if not isinstance(obj, Mapping):
         return False
     return all(
-        isinstance(el, (OffsetProviderTypeElem, StructuredConnectivityType)) for el in obj.values()
+        isinstance(el, (NeighborConnectivityType, StructuredConnectivityType))
+        for el in obj.values()
     )
 
 
@@ -1248,9 +1249,7 @@ def offset_provider_to_type(
     offset_provider: OffsetProvider | OffsetProviderType,
 ) -> OffsetProviderType:
     return {
-        k: v.__gt_type__()  # type: ignore[misc]  # `OffsetProviderTypeElem` does not list `StructuredConnectivityType`
-        if isinstance(v, Connectivity) or is_structured_connectivity(v)
-        else v
+        k: v.__gt_type__() if isinstance(v, Connectivity) or is_structured_connectivity(v) else v
         for k, v in offset_provider.items()
     }
 

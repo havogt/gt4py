@@ -223,7 +223,13 @@ class SymbolicDomain:
                     new_dim = connectivity.codomain
                 else:
                     assert common.is_offset_provider_type(offset_provider)
-                    connectivity = common.get_offset_type(offset_provider, off.value)
+                    connectivity_type = common.get_offset_type(offset_provider, off.value)
+                    if not isinstance(connectivity_type, common.NeighborConnectivityType):
+                        raise ValueError(
+                            f"Offset '{off.value}' is not a neighbor table; structured "
+                            "connectivities are resolved by 'StructuredToCartesian'."
+                        )
+                    connectivity = connectivity_type
                     old_dim = connectivity.domain[0]
                     new_dim = connectivity.codomain
 

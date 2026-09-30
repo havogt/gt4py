@@ -65,7 +65,7 @@ _CONST_DIM: Final = gtx_common.Dimension(value="_CONST_DIM", kind=gtx_common.Dim
 
 
 def _neighbor_table_type(
-    conn_type: gtx_common.OffsetProviderTypeElem | gtx_common.StructuredConnectivityType,
+    conn_type: gtx_common.OffsetProviderTypeElem,
     offset: str,
 ) -> gtx_common.NeighborConnectivityType:
     if not isinstance(conn_type, gtx_common.NeighborConnectivityType):
@@ -820,7 +820,7 @@ class LambdaToDataflow(eve.NodeVisitor):
             assert local_dim is not None
             assert isinstance(
                 self.subgraph_builder.get_offset_provider_type(local_dim.value),
-                (gtx_common.NeighborConnectivityType, gtx_common.StructuredConnectivityType),
+                gtx_common.OffsetProviderTypeElem,
             )
             # find position of the local dimension in the field layout
             assert isinstance(arg_desc, dace.data.Array)
@@ -1526,7 +1526,7 @@ class LambdaToDataflow(eve.NodeVisitor):
         )
         assert isinstance(
             offset_provider_t,
-            (gtx_common.NeighborConnectivityType, gtx_common.StructuredConnectivityType),
+            gtx_common.OffsetProviderTypeElem,
         )
         local_size = offset_provider_t.max_neighbors
         map_index = gtir_to_sdfg_utils.get_map_variable(list_type.offset_type)

@@ -58,7 +58,7 @@ def _local_dims_to_tuple_like(
                 connectivity = common.get_offset_type(offset_provider_type, dim_name)
                 assert isinstance(
                     connectivity,
-                    (common.NeighborConnectivityType, common.StructuredConnectivityType),
+                    common.OffsetProviderTypeElem,
                 )
                 size = connectivity.max_neighbors
                 arg = f"gridtools::sid::dimension_to_tuple_like<generated::{dim_name}_t, {size}>({arg})"
