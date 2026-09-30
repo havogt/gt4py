@@ -166,6 +166,10 @@ EMBEDDED_CONCAT_WHERE_UPDATE: bool = env_flag_to_bool(
 EMBEDDED_CONCAT_WHERE_SELECT_MIN_FRACTION: float = float(
     os.environ.get("GT4PY_EMBEDDED_CONCAT_WHERE_SELECT_MIN_FRACTION", "0")
 )
+#: Same, used instead when the offset provider contains a `StructuredConnectivity`.
+EMBEDDED_CONCAT_WHERE_SELECT_MIN_FRACTION_STRUCTURED: float = float(
+    os.environ.get("GT4PY_EMBEDDED_CONCAT_WHERE_SELECT_MIN_FRACTION_STRUCTURED", "0")
+)
 
 
 #: Add GPU trace markers (NVTX, ROC-TX) to the generated code, at compile time.
