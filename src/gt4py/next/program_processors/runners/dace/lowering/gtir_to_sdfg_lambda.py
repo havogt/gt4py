@@ -42,6 +42,7 @@ from gt4py.next.iterator.ir_utils import (
     misc as itir_misc,
 )
 from gt4py.next.iterator.transforms import symbol_ref_utils
+from gt4py.next.iterator.type_system import type_specifications as it_ts
 from gt4py.next.program_processors.runners.dace import (
     library_nodes as gtx_library_nodes,
     sdfg_args as gtx_dace_args,
@@ -1812,9 +1813,6 @@ class LambdaToDataflow(eve.NodeVisitor):
         offset_provider_arg, offset_value_arg, it = self._visit_shift_multidim(
             node.args[0], node.fun.args
         )
-        if not isinstance(it, (IteratorExpr, IndexIteratorExpr)):
-            # a scalar has the same value at every position
-            return it
         offset_provider_type: gtx_common.NeighborConnectivityType | None = None
         if isinstance(offset_provider_arg, gtir.CartesianOffset):
             shifted_dims = {
@@ -1829,6 +1827,18 @@ class LambdaToDataflow(eve.NodeVisitor):
             )
             assert isinstance(offset_provider_type, gtx_common.NeighborConnectivityType)
             shifted_dims = {offset_provider_type.source_dim, offset_provider_type.codomain}
+        if not isinstance(it, (IteratorExpr, IndexIteratorExpr)):
+            it_type = node.args[0].type
+            if isinstance(it_type, ts.ScalarType) or (
+                isinstance(it_type, it_ts.IteratorType)
+                and shifted_dims.isdisjoint(it_type.defined_dims)
+            ):
+                # the value is constant along the shifted dimensions
+                return it
+            raise ValueError(
+                f"Shift of '{node.args[0]}' along {sorted(dim.value for dim in shifted_dims)}"
+                f" requires an iterator, got '{type(it).__name__}' for type '{it_type}'."
+            )
         if {gtx_common.as_non_staggered(dim) for dim in shifted_dims}.isdisjoint(
             gtx_common.as_non_staggered(dim) for dim, _ in it.field_domain
         ):
