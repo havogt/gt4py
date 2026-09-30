@@ -22,6 +22,8 @@ import warnings
 from collections.abc import Callable
 from typing import Any, Generic, Optional, Sequence, TypeAlias
 
+import numpy as np
+
 from gt4py import eve
 from gt4py._core import definitions as core_defs
 from gt4py.eve import extended_typing as xtyping
@@ -36,7 +38,7 @@ from gt4py.next import (
     named_collections,
     utils,
 )
-from gt4py.next.embedded import operators as embedded_operators
+from gt4py.next.embedded import nd_array_field, operators as embedded_operators
 from gt4py.next.ffront import (
     foast_to_gtir,
     past_process_args,
@@ -647,6 +649,22 @@ class FieldOperator(_CompilableGTEntryPointMixin[ffront_stages.DSLFieldOperatorD
     def __gt_closure_vars__(self) -> dict[str, Any]:
         return self.foast_stage.closure_vars
 
+    @functools.cached_property
+    def _output_allocation_plans(self) -> dict[Any, Optional[list[_OutputAllocationPlan]]]:
+        return {}
+
+    def _allocate_output(self, domain: common.Domain | tuple[common.Domain | tuple, ...]) -> Any:
+        plans = self._output_allocation_plans.get(domain)
+        if plans is not None:
+            return tuple(plan.allocate() for plan in plans)
+        operator_type = self.__gt_type__()
+        assert isinstance(operator_type, ts_ffront.FieldOperatorType | ts_ffront.ScanOperatorType)
+        result = _allocate_from_type(operator_type.definition.returns, domain, self.backend)
+        self._output_allocation_plans[domain] = _OutputAllocationPlan.from_allocated(
+            result, self.backend
+        )
+        return result
+
     def __call__(self, *args: Any, enable_jit: bool | None = None, **kwargs: Any) -> Any:
         if not next_embedded.context.within_valid_context() and self.backend is not None:
             # non embedded execution
@@ -655,16 +673,7 @@ class FieldOperator(_CompilableGTEntryPointMixin[ffront_stages.DSLFieldOperatorD
             if "out" in kwargs:
                 out = kwargs.pop("out")
             elif "domain" in kwargs:
-                operator_type = self.__gt_type__()
-                assert isinstance(
-                    operator_type,
-                    ts_ffront.FieldOperatorType | ts_ffront.ScanOperatorType,
-                )
-                result = _allocate_from_type(
-                    operator_type.definition.returns,
-                    utils.tree_map(common.domain)(kwargs.pop("domain")),
-                    self.backend,
-                )
+                result = self._allocate_output(utils.tree_map(common.domain)(kwargs.pop("domain")))
                 out = result
             else:
                 raise errors.MissingArgumentError(None, "out", True)
@@ -697,6 +706,69 @@ class FieldOperator(_CompilableGTEntryPointMixin[ffront_stages.DSLFieldOperatorD
                 kwargs["offset_provider"] = {**kwargs.pop("offset_provider", {})}
             op = embedded_operators.EmbeddedOperator(self.definition_stage.definition)
             return embedded_operators.field_operator_call(op, args, kwargs)
+
+
+@dataclasses.dataclass(frozen=True)
+class _OutputAllocationPlan:
+    """Recipe to allocate a field with the layout of a field allocated by a custom layout allocator."""
+
+    field_type: type[nd_array_field.NdArrayField]
+    domain: common.Domain
+    dtype: Any
+    shape: tuple[int, ...]
+    byte_strides: tuple[int, ...]
+    byte_span: int
+    byte_alignment: int
+    array_ns: types.ModuleType
+    byte_bounds: Callable[[Any], tuple[int, int]]
+
+    @classmethod
+    def from_allocated(
+        cls, result: Any, backend: Optional[next_backend.Backend]
+    ) -> Optional[list[_OutputAllocationPlan]]:
+        allocator = getattr(backend, "allocator", None)
+        if not isinstance(result, tuple) or not isinstance(
+            allocator, next_allocators.BaseFieldBufferAllocator
+        ):
+            return None
+        plans = []
+        for field in result:
+            if not isinstance(field, nd_array_field.NdArrayField):
+                return None
+            array = field.ndarray
+            xp = field.array_ns
+            byte_bounds = getattr(xp, "byte_bounds", None) or getattr(
+                getattr(getattr(xp, "lib", None), "array_utils", None), "byte_bounds", None
+            )
+            if byte_bounds is None or not hasattr(getattr(xp, "lib", None), "stride_tricks"):
+                return None
+            if any(stride < 0 for stride in array.strides):
+                return None
+            plans.append(
+                cls(
+                    field_type=type(field),
+                    domain=field.domain,
+                    dtype=array.dtype,
+                    shape=array.shape,
+                    byte_strides=array.strides,
+                    byte_span=sum(s * (n - 1) for s, n in zip(array.strides, array.shape))
+                    + array.itemsize,
+                    byte_alignment=allocator.byte_alignment,
+                    array_ns=xp,
+                    byte_bounds=byte_bounds,
+                )
+            )
+        return plans
+
+    def allocate(self) -> nd_array_field.NdArrayField:
+        buffer = self.array_ns.empty((self.byte_span + self.byte_alignment - 1,), dtype=np.uint8)
+        offset = -self.byte_bounds(buffer)[0] % self.byte_alignment
+        array = self.array_ns.lib.stride_tricks.as_strided(
+            buffer[offset : offset + self.byte_span].view(self.dtype),
+            shape=self.shape,
+            strides=self.byte_strides,
+        )
+        return self.field_type(self.domain, array)
 
 
 def _allocate_from_type(
