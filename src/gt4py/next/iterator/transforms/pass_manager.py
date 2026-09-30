@@ -24,6 +24,7 @@ from gt4py.next.iterator.transforms import (
     inline_lifts,
     prune_empty_concat_where,
     remove_broadcast,
+    structured_to_cartesian,
     symbol_ref_utils,
 )
 from gt4py.next.iterator.transforms.collapse_list_get import CollapseListGet
@@ -179,6 +180,9 @@ def apply_common_transforms(
     ir = inline_dynamic_shifts.InlineDynamicShifts.apply(
         ir, offset_provider_type=offset_provider_type, uids=uids
     )  # domain inference does not support dynamic offsets yet
+    ir = structured_to_cartesian.StructuredToCartesian.apply(
+        ir, offset_provider_type=offset_provider_type, uids=uids
+    )  # after `InlineDynamicShifts` (dynamic K shifts fused into their consumers), before domain inference (needs Cartesian shifts and domains)
     ir = infer_domain_ops.InferDomainOps.apply(ir)
     ir = concat_where.canonicalize_domain_argument(ir)
 
@@ -298,6 +302,9 @@ def apply_fieldview_transforms(
     ir = inline_dynamic_shifts.InlineDynamicShifts.apply(
         ir, offset_provider_type=offset_provider_type, uids=uids
     )  # domain inference does not support dynamic offsets yet
+    ir = structured_to_cartesian.StructuredToCartesian.apply(
+        ir, offset_provider_type=offset_provider_type, uids=uids
+    )  # after `InlineDynamicShifts` (dynamic K shifts fused into their consumers), before domain inference (needs Cartesian shifts and domains)
 
     ir = infer_domain_ops.InferDomainOps.apply(ir)
     ir = concat_where.canonicalize_domain_argument(ir)
