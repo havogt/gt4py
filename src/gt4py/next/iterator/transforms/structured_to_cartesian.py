@@ -294,7 +294,8 @@ class StructuredToCartesian(eve.PreserveLocationVisitor, eve.NodeTranslator):
     the `concat_where`.
 
     Preconditions: runs before domain inference; program parameters are typed on the lattice;
-    tuple arguments are expanded; the provider mixes no neighbor tables with structured entries.
+    tuple arguments are expanded; the program uses no neighbor table next to structured
+    entries (other provider entries are ignored).
     A program without structured entries in the offset provider is returned unchanged.
     """  # noqa: RUF002  # ambiguous multiplication character in printed IR
 
@@ -315,12 +316,20 @@ class StructuredToCartesian(eve.PreserveLocationVisitor, eve.NodeTranslator):
         structured = _structured_connectivities(offset_provider_type)
         if not structured:
             return program
-        if any(
-            isinstance(conn, common.NeighborConnectivityType)
-            for conn in offset_provider_type.values()
+        referenced = set(
+            program.pre_walk_values()
+            .if_isinstance(itir.OffsetLiteral)
+            .getattr("value")
+            .if_isinstance(str)
+            .to_list()
+        )
+        if tables := sorted(
+            tag
+            for tag in referenced
+            if isinstance(offset_provider_type.get(tag), common.NeighborConnectivityType)
         ):
             raise ValueError(
-                "An offset provider must not mix neighbor tables with structured connectivities."
+                f"Neighbor tables {tables} are used together with structured connectivities."
             )
 
         entity_dims = frozenset(

@@ -481,17 +481,49 @@ def test_noop_without_structured_connectivity(uids):
     assert _apply(testee, uids, provider_type={"C2E": table_type}) is testee
 
 
-def test_mixed_provider_raises(uids):
+def test_referenced_table_next_to_structured_raises(uids):
+    table_type = common.NeighborConnectivityType(
+        domain=(Cell, C2EDim), codomain=Edge, skip_value=None, dtype=None, max_neighbors=3
+    )
+    testee = _program(
+        im.as_fieldop(
+            im.lambda_("a", "b")(
+                im.plus(im.deref(im.shift("E2C", 1)("a")), im.deref(im.shift("C2E", 0)("b")))
+            )
+        )("c", "e"),
+        {"c": cell_field, "e": edge_field},
+    )
+
+    with pytest.raises(ValueError, match="Neighbor tables \\['C2E'\\]"):
+        _apply(
+            testee,
+            uids,
+            provider_type={**PROVIDER_TYPE, "C2E": table_type, "Koff": K},
+        )
+
+
+def test_unreferenced_table_and_vertical_dimension_are_ignored(uids):
     table_type = common.NeighborConnectivityType(
         domain=(Cell, C2EDim), codomain=Edge, skip_value=None, dtype=None, max_neighbors=3
     )
     testee = _program(
         im.as_fieldop(im.lambda_("it")(im.deref(im.shift("E2C", 1)("it"))))("c"),
         {"c": cell_field},
+        domain={I: (0, 4), X: (0, 3), K: (0, 3)},
+    )
+    # edge colours 0, 1, 2: E2C[c][1] = {X: 1}, {I: -1}, {X: -1}
+    expected = _per_color(
+        [
+            im.lambda_("it")(_shifted("it", (X, 1))),
+            im.lambda_("it")(_shifted("it", (I, -1))),
+            im.lambda_("it")(_shifted("it", (X, -1))),
+        ],
+        "c",
     )
 
-    with pytest.raises(ValueError, match="mix"):
-        _apply(testee, uids, provider_type={**PROVIDER_TYPE, "C2E": table_type})
+    actual = _apply(testee, uids, provider_type={**PROVIDER_TYPE, "C2E": table_type, "Koff": K})
+
+    assert actual.body[0].expr == expected
 
 
 def test_list_valued_output_raises(uids):
