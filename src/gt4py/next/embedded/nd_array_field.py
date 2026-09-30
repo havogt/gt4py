@@ -1222,8 +1222,7 @@ def _concat_where(
         )
         if (
             config.EMBEDDED_CONCAT_WHERE_SELECT
-            and min(branch_lengths)
-            >= config.EMBEDDED_CONCAT_WHERE_SELECT_MIN_FRACTION * len(result_range)
+            and min(branch_lengths) >= _select_min_fraction() * len(result_range)
             and all(
                 f.domain[domain_dim].unit_range.start <= result_range.start
                 and result_range.stop <= f.domain[domain_dim].unit_range.stop
@@ -1249,6 +1248,16 @@ def _concat_where(
                     cast(NdArrayField, covering), partial_pieces, domain_dim, result_range
                 )
     return _concat(*f_slices, *t_slices, dim=domain_dim)
+
+
+def _select_min_fraction() -> float:
+    offset_provider = embedded_context.get_offset_provider(None) or {}
+    if any(
+        isinstance(conn, _structured_conn.StructuredConnectivity)
+        for conn in offset_provider.values()
+    ):
+        return config.EMBEDDED_CONCAT_WHERE_SELECT_MIN_FRACTION_STRUCTURED
+    return config.EMBEDDED_CONCAT_WHERE_SELECT_MIN_FRACTION
 
 
 def _update_on_range(
