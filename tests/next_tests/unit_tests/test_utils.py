@@ -625,6 +625,18 @@ def test_tree_map_default():
     assert testee(((1, 2), 3)) == ((2, 3), 4)
 
 
+def test_tree_map_does_not_access_the_paramspec_at_runtime(monkeypatch):
+    class _NoRuntimeAccess:
+        @property
+        def args(self):
+            raise AssertionError("'_P.args' accessed at runtime")
+
+    mapped = utils.tree_map(lambda x: x + 1)
+    monkeypatch.setattr(utils, "_P", _NoRuntimeAccess())
+
+    assert mapped((1, (2, 3))) == (2, (3, 4))
+
+
 def test_tree_map_multi_arg():
     @utils.tree_map
     def testee(x, y):

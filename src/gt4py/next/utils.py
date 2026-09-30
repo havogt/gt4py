@@ -218,9 +218,7 @@ def tree_map(
                 else:
                     return ctor(mapped)
 
-            return fun(  # type: ignore[call-arg]
-                *cast(_P.args, args),  # type: ignore[valid-type]
-            )  # mypy doesn't understand that `args` at this point is of type `_P.args`
+            return fun(*args)  # type: ignore[arg-type, call-arg]
 
         if with_path_arg:
             return lambda *args: impl(*args, ())
