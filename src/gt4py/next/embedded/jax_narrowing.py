@@ -20,6 +20,8 @@ nested jaxprs of `jit`; every other primitive reads its inputs in full.
 
 from __future__ import annotations
 
+import collections
+import dataclasses
 import functools
 from typing import Any, Callable, Optional, Sequence, cast
 
@@ -29,6 +31,13 @@ from jax import lax
 
 
 Window = tuple[tuple[int, int], ...]
+
+
+@dataclasses.dataclass(frozen=True)
+class _Options:
+    consistent: bool
+    min_readers: int
+
 
 # Dimensions up to this extent (e.g. colors, neighbors) are never narrowed: cutting them splits
 # concatenations into separately computed pieces that XLA materializes.
@@ -49,8 +58,16 @@ _ELEMENTWISE: frozenset[str] = frozenset(
 _NESTED_JAXPR: frozenset[str] = frozenset({"jit", "pjit", "closed_call"})
 
 
-def narrow(fun: Callable) -> Callable:
-    """Wrap `fun` so that all its intermediates are computed only where they are read."""
+def narrow(fun: Callable, *, consistent: bool = True, min_readers: int = 2) -> Callable:
+    """
+    Wrap `fun` so that its intermediates are computed only where they are read.
+
+    The read windows are propagated exactly, but a value is computed on its window only if it has at
+    least `min_readers` readers or depends on a value computed on its window: XLA already narrows a
+    value with a single reader by fusing the reader's slice into it, and keeping those values at their
+    full shape leaves XLA's fusion decisions unchanged. With `consistent`, a value is narrowed only if
+    all its readers read the same window.
+    """
 
     @functools.wraps(fun)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -62,8 +79,9 @@ def narrow(fun: Callable) -> Callable:
 
         closed, out_shape = jax.make_jaxpr(flat_fun, return_shape=True)(*leaves)
         jaxpr = closed.jaxpr
-        needed = _needed_windows(jaxpr, [_full(v) for v in jaxpr.outvars])
-        outs = _evaluate(jaxpr, closed.consts, [(x, _zero(x)) for x in leaves], needed)
+        options = _Options(consistent, min_readers)
+        plan = _plan(jaxpr, [_full(v) for v in jaxpr.outvars], options, frozenset())
+        outs = _evaluate(jaxpr, closed.consts, [(x, _zero(x)) for x in leaves], plan, options)
         return jax.tree.unflatten(jax.tree.structure(out_shape), [x for x, _ in outs])
 
     return wrapper
@@ -100,28 +118,80 @@ def _is_elementwise(eqn: Any) -> bool:
     return all(_shape(v) in (out_shape, ()) for v in eqn.invars)
 
 
-def _needed_windows(jaxpr: Any, out_windows: Sequence[Optional[Window]]) -> dict[Any, Window]:
+@dataclasses.dataclass(frozen=True)
+class _Plan:
+    windows: dict[Any, Window]
+    narrowed: frozenset[Any]
+
+
+def _plan(
+    jaxpr: Any,
+    out_windows: Sequence[Optional[Window]],
+    options: _Options,
+    narrowed_invars: frozenset[int],
+) -> _Plan:
+    """Exact read windows, then the values computed on them; all others keep their full extent."""
+    exact = _needed_windows(jaxpr, out_windows, options, None)
+    readers = collections.Counter(
+        v for vs in (*(eqn.invars for eqn in jaxpr.eqns), jaxpr.outvars) for v in vs if _is_var(v)
+    )
+    narrowed = {jaxpr.invars[i] for i in narrowed_invars}
+    for eqn in jaxpr.eqns:
+        depends_on_narrowed = any(_is_var(v) and v in narrowed for v in eqn.invars)
+        for v in eqn.outvars:
+            window = exact.get(v) if _is_var(v) else None
+            if (
+                window is not None
+                and window != _full(v)
+                and (depends_on_narrowed or readers[v] >= options.min_readers)
+            ):
+                narrowed.add(v)
+    frozen = frozenset(narrowed)
+    return _Plan(_needed_windows(jaxpr, out_windows, options, frozen), frozen)
+
+
+def _needed_windows(
+    jaxpr: Any,
+    out_windows: Sequence[Optional[Window]],
+    options: _Options,
+    keep: Optional[frozenset[Any]],
+) -> dict[Any, Window]:
+    """Read windows; with `keep`, values not in `keep` are read in full."""
     needed: dict[Any, Window] = {}
+    inconsistent: set[Any] = set()
 
     def use(v: Any, window: Optional[Window]) -> None:
         if _is_var(v) and window is not None:
+            if keep is not None and v not in keep:
+                window = _full(v)
             window = tuple(
                 w if n > _MIN_NARROWED_EXTENT else (0, n) for w, n in zip(window, _shape(v))
             )
+            if v in needed and needed[v] != window:
+                inconsistent.add(v)
             needed[v] = _union(needed.get(v), window)  # type: ignore[assignment]
 
     for v, window in zip(jaxpr.outvars, out_windows):
         use(v, window)
     for eqn in reversed(jaxpr.eqns):
+        if options.consistent:
+            for v in eqn.outvars:
+                if v in inconsistent:
+                    needed[v] = _full(v)
         outs = [needed.get(v) if _is_var(v) else None for v in eqn.outvars]
         if all(w is None for w in outs) and not eqn.effects:
             continue
-        for v, window in zip(eqn.invars, _input_windows(eqn, outs)):
+        for v, window in zip(eqn.invars, _input_windows(eqn, outs, options, keep)):
             use(v, window)
+    if options.consistent:
+        for v in inconsistent & set(jaxpr.invars):
+            needed[v] = _full(v)
     return needed
 
 
-def _input_windows(eqn: Any, outs: list[Optional[Window]]) -> list[Optional[Window]]:
+def _input_windows(
+    eqn: Any, outs: list[Optional[Window]], options: _Options, keep: Optional[frozenset[Any]]
+) -> list[Optional[Window]]:
     name, params = eqn.primitive.name, eqn.params
     (out,) = outs if len(outs) == 1 else (None,)
     if out is not None and _is_elementwise(eqn):
@@ -134,9 +204,16 @@ def _input_windows(eqn: Any, outs: list[Optional[Window]]) -> list[Optional[Wind
         return [_broadcast_operand_window(eqn, out), *(_full(v) for v in eqn.invars[1:])]
     if name in _NESTED_JAXPR:
         inner = params["jaxpr"].jaxpr
-        inner_needed = _needed_windows(inner, outs)
+        if keep is None:
+            inner_needed = _needed_windows(inner, outs, options, None)
+        else:
+            inner_needed = _plan(inner, outs, options, _narrowed_positions(eqn, keep)).windows
         return [inner_needed.get(v) for v in inner.invars]
     return [_full(v) for v in eqn.invars]
+
+
+def _narrowed_positions(eqn: Any, narrowed: frozenset[Any]) -> frozenset[int]:
+    return frozenset(i for i, v in enumerate(eqn.invars) if _is_var(v) and v in narrowed)
 
 
 def _unit_strides(params: dict[str, Any]) -> bool:
@@ -187,7 +264,8 @@ def _evaluate(
     jaxpr: Any,
     consts: Sequence[Any],
     args: Sequence[Optional[tuple[Any, tuple[int, ...]]]],
-    needed: dict[Any, Window],
+    plan: _Plan,
+    options: _Options,
 ) -> list[tuple[Any, tuple[int, ...]]]:
     env: dict[Any, tuple[Any, tuple[int, ...]]] = {}
 
@@ -203,17 +281,18 @@ def _evaluate(
             env[v] = a
 
     for eqn in jaxpr.eqns:
-        outs = [needed.get(v) if _is_var(v) else None for v in eqn.outvars]
+        outs = [plan.windows.get(v) if _is_var(v) else None for v in eqn.outvars]
         if all(w is None for w in outs) and not eqn.effects:
             continue
-        for v, value in zip(eqn.outvars, _evaluate_eqn(eqn, outs, [read(v) for v in eqn.invars])):
+        ins = [read(v) for v in eqn.invars]
+        for v, value in zip(eqn.outvars, _evaluate_eqn(eqn, outs, ins, plan, options)):
             if _is_var(v):
                 env[v] = value
     return [cast(tuple[Any, tuple[int, ...]], read(v)) for v in jaxpr.outvars]
 
 
 def _evaluate_eqn(
-    eqn: Any, outs: list[Optional[Window]], ins: list[Any]
+    eqn: Any, outs: list[Optional[Window]], ins: list[Any], plan: _Plan, options: _Options
 ) -> list[tuple[Any, tuple[int, ...]]]:
     name, params, prim = eqn.primitive.name, eqn.params, eqn.primitive
     (out,) = outs if len(outs) == 1 else (None,)
@@ -242,8 +321,8 @@ def _evaluate_eqn(
         return [(result, tuple(lo for lo, _ in out))]
     if name in _NESTED_JAXPR:
         closed = params["jaxpr"]
-        inner_needed = _needed_windows(closed.jaxpr, outs)
-        return _evaluate(closed.jaxpr, closed.consts, ins, inner_needed)
+        inner_plan = _plan(closed.jaxpr, outs, options, _narrowed_positions(eqn, plan.narrowed))
+        return _evaluate(closed.jaxpr, closed.consts, ins, inner_plan, options)
     args = [_cut(value, _full(v)) if _is_var(v) else value[0] for v, value in zip(eqn.invars, ins)]
     results = prim.bind(*args, **params)
     if not prim.multiple_results:
