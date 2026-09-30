@@ -24,6 +24,7 @@ from gt4py.next.iterator import ir as gtir
 from gt4py.next.iterator.ir_utils import domain_utils, ir_makers as im
 from gt4py.next.iterator.transforms import infer_domain
 from gt4py.next.iterator.transforms import pass_manager
+from gt4py.next.iterator.type_system import type_specifications as it_ts
 from gt4py.next.type_system import type_specifications as ts
 
 from next_tests.integration_tests.cases_utils import (
@@ -40,6 +41,7 @@ from next_tests.integration_tests.cases_utils import (
 )
 
 from gt4py.next.program_processors.runners.dace import lowering as dace_lowering
+from gt4py.next.program_processors.runners.dace.lowering import gtir_to_sdfg_lambda
 
 
 @pytest.fixture
@@ -2546,3 +2548,27 @@ def test_gtir_scan_single_level_output():
     sdfg(a, b, c, **symbols)
     assert np.allclose(b, ref + VAL0)
     assert np.allclose(c, np.concatenate([c[:, :-1], ref[:, -1:] + VAL1], axis=1))
+
+
+@pytest.mark.parametrize("defined_dims, raises", [([], False), ([IDim], True)])
+def test_gtir_shift_of_value(defined_dims: list[gtx_common.Dimension], raises: bool):
+    sdfg = dace.SDFG("shift_of_value")
+    state = sdfg.add_state()
+    sdfg.add_scalar("a_value", dace.float64, transient=True)
+    value = gtir_to_sdfg_lambda.ValueExpr(state.add_access("a_value"), FLOAT_TYPE)
+    lambda_translator = gtir_to_sdfg_lambda.LambdaToDataflow(
+        sdfg=sdfg,
+        state=state,
+        subgraph_builder=None,  # type: ignore[arg-type]
+        symbol_map={"a": value},
+    )
+    shift_node = im.shift(IOff, 1)("a")
+    shift_node.args[0].type = it_ts.IteratorType(
+        position_dims=[IDim], defined_dims=defined_dims, element_type=FLOAT_TYPE
+    )
+
+    if raises:
+        with pytest.raises(ValueError, match="requires an iterator"):
+            lambda_translator.visit(shift_node)
+    else:
+        assert lambda_translator.visit(shift_node) is value
