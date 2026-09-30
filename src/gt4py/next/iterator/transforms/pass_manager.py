@@ -312,4 +312,7 @@ def apply_fieldview_transforms(
         ir, offset_provider=offset_provider, symbolic_domain_sizes=symbolic_domain_sizes
     )
     ir = remove_broadcast.RemoveBroadcast.apply(ir)
+    ir = concat_where.transform_output_to_select(
+        ir, offset_provider=offset_provider, symbolic_domain_sizes=symbolic_domain_sizes, uids=uids
+    )
     return ir
