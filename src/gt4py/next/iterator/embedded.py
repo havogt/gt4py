@@ -573,15 +573,16 @@ def execute_shift(
                     new_entry[i] = 0
                 else:
                     offset_implementation = common.get_offset(offset_provider, tag)
-                    assert common.is_neighbor_table(offset_implementation)
-                    source_dim = offset_implementation.__gt_type__().source_dim
-                    cur_index = pos[source_dim.value]
-                    assert common.is_int_index(cur_index)
-                    if offset_implementation[cur_index, index].as_scalar() in [
-                        None,
-                        common._DEFAULT_SKIP_VALUE,
-                    ]:
-                        return None
+                    if not common.is_structured_connectivity(offset_implementation):
+                        assert common.is_neighbor_table(offset_implementation)
+                        source_dim = offset_implementation.__gt_type__().source_dim
+                        cur_index = pos[source_dim.value]
+                        assert common.is_int_index(cur_index)
+                        if offset_implementation[cur_index, index].as_scalar() in [
+                            None,
+                            common._DEFAULT_SKIP_VALUE,
+                        ]:
+                            return None
 
                     new_entry[i] = index
                 break
@@ -1412,7 +1413,9 @@ class _List(Generic[DT]):
         offset_provider = embedded_context.get_offset_provider()
         assert offset_provider is not None
         connectivity = common.get_offset(offset_provider, offset_tag)
-        assert common.is_neighbor_table(connectivity)
+        assert common.is_neighbor_table(connectivity) or common.is_structured_connectivity(
+            connectivity
+        )
         local_dim = connectivity.__gt_type__().neighbor_dim
         return ts.ListType(element_type=element_type, offset_type=local_dim)
 
@@ -1518,7 +1521,9 @@ class SparseListIterator:
         offset_provider = embedded_context.get_offset_provider()
         assert offset_provider is not None
         connectivity = common.get_offset(offset_provider, self.list_offset)
-        assert common.is_neighbor_table(connectivity)
+        assert common.is_neighbor_table(connectivity) or common.is_structured_connectivity(
+            connectivity
+        )
         return _List(
             values=tuple(
                 shifted.deref()
@@ -1660,6 +1665,11 @@ def _dimension_to_tag(
 
 def _validate_domain(domain: Domain, offset_provider_type: common.OffsetProviderType) -> None:
     if isinstance(domain, runtime.CartesianDomain):
+        # a structured program is Cartesian after `StructuredToCartesian`, its tables are unused
+        if any(
+            isinstance(o, common.StructuredConnectivityType) for o in offset_provider_type.values()
+        ):
+            return
         if any(isinstance(o, common.ConnectivityType) for o in offset_provider_type.values()):
             raise RuntimeError(
                 "Got a 'CartesianDomain', but found a 'Connectivity' in 'offset_provider', expected 'UnstructuredDomain'."
@@ -1779,7 +1789,9 @@ def _fieldspec_list_to_value(
             offset_type = type_.offset_type
             assert isinstance(offset_type, common.Dimension)
             connectivity = common.get_offset(offset_provider, offset_type.value)
-            assert common.is_neighbor_table(connectivity)
+            assert common.is_neighbor_table(connectivity) or common.is_structured_connectivity(
+                connectivity
+            )
             return domain.insert(
                 len(domain),
                 common.named_range((offset_type, connectivity.__gt_type__().max_neighbors)),

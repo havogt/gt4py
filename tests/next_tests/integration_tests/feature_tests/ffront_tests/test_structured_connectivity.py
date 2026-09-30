@@ -90,6 +90,14 @@ def sparse_slot(
 
 
 @gtx.field_operator
+def let_bound_list(
+    e: gtx.Field[[Edge, K], float], w: gtx.Field[[Cell, C2EDim], float]
+) -> gtx.Field[[Cell, K], float]:
+    v = e(C2E) * w
+    return v[C2EDim(0)] + v[C2EDim(2)]
+
+
+@gtx.field_operator
 def e2c2v_sum(v: gtx.Field[[Vertex, K], float]) -> gtx.Field[[Edge, K], float]:
     return neighbor_sum(v(E2C2V), axis=E2C2VDim) - v(E2C2V[3])
 
@@ -196,6 +204,26 @@ def test_sparse_slot(exec_alloc_descriptor, rng):
 
     actual = _call(
         sparse_slot,
+        exec_alloc_descriptor,
+        _as_field(exec_alloc_descriptor, Edge, e),
+        w_field,
+        out_entity=Cell,
+    )
+
+    np.testing.assert_allclose(actual, reference, rtol=1e-14)
+
+
+def test_let_bound_list(exec_alloc_descriptor, rng):
+    e = _torus_field(rng, Edge)
+    w, w_field = _sparse(exec_alloc_descriptor, rng, Cell, C2EDim, 3)
+    colors = range(N_COLORS[Cell])
+    reference = (
+        _neighbor(e, [("C2E", 0)], colors) * w[:, :, :, 0, None]
+        + _neighbor(e, [("C2E", 2)], colors) * w[:, :, :, 2, None]
+    )
+
+    actual = _call(
+        let_bound_list,
         exec_alloc_descriptor,
         _as_field(exec_alloc_descriptor, Edge, e),
         w_field,

@@ -248,10 +248,10 @@ ROUNDTRIP_SKIP_LIST = DOMAIN_INFERENCE_SKIP_LIST + [
     (USES_SPARSE_FIELDS_AS_OUTPUT, XFAIL, UNSUPPORTED_MESSAGE),
     (USES_TUPLES_ARGS_WITH_DIFFERENT_BUT_PROMOTABLE_DIMS, XFAIL, UNSUPPORTED_MESSAGE),
     (USES_CONCAT_WHERE, XFAIL, UNSUPPORTED_MESSAGE),
-    # neither half-infinite colour `concat_where`s nor structured local dimensions are supported
-    (USES_STRUCTURED_CONNECTIVITY, SKIP, UNSUPPORTED_MESSAGE),
 ]
 GTIR_EMBEDDED_SKIP_LIST = ROUNDTRIP_SKIP_LIST + [
+    # the half-infinite colour `concat_where`s reach this backend, a single colour does not
+    (USES_STRUCTURED_CONNECTIVITY, SKIP, UNSUPPORTED_MESSAGE),
     # NOTE: not in `ROUNDTRIP_SKIP_LIST`: the roundtrip backend passes this, only the
     # lower-level `iterator/embedded.py` execution keys on the local dimension's name.
     (
