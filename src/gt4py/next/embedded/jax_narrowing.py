@@ -56,6 +56,8 @@ _ELEMENTWISE: frozenset[str] = frozenset(
     }
 )  # fmt: skip
 _NESTED_JAXPR: frozenset[str] = frozenset({"jit", "pjit", "closed_call"})
+# Narrowed concatenations get consumers of different shapes and are materialized by XLA.
+_NEVER_NARROWED: frozenset[str] = frozenset({"concatenate"})
 
 
 def narrow(fun: Callable, *, consistent: bool = True, min_readers: int = 2) -> Callable:
@@ -143,6 +145,7 @@ def _plan(
             if (
                 window is not None
                 and window != _full(v)
+                and eqn.primitive.name not in _NEVER_NARROWED
                 and (depends_on_narrowed or readers[v] >= options.min_readers)
             ):
                 narrowed.add(v)
