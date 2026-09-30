@@ -120,6 +120,7 @@ class _FuseIntoSelects(PreserveLocationVisitor, NodeTranslator):
                 offset_provider_type=self.offset_provider_type,
                 allow_undeclared_symbols=True,
                 within_set_at_expr=True,
+                inline_into_neighbors=False,
             )
         return node
 
