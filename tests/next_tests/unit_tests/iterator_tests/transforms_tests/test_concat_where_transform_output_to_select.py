@@ -61,6 +61,17 @@ def tuple_in_condition(a: CKField, shape: tuple[gtx.int32, gtx.int32], out: CKFi
     _tuple_in_condition(a, shape, out=out, domain={Cell: (0, 10), KDim: (0, 8)})
 
 
+@gtx.field_operator
+def _pruned_selection(a: CKField, b: CKField, n: gtx.int32) -> tuple[CKField, CKField]:
+    d = a * 2.0
+    return concat_where(KDim >= 8, d + d, b), concat_where(KDim < n, a, b)
+
+
+@gtx.program
+def pruned_selection(a: CKField, b: CKField, n: gtx.int32, out1: CKField, out2: CKField):
+    _pruned_selection(a, b, n, out=(out1, out2), domain={Cell: (0, 10), KDim: (0, 8)})
+
+
 def _concat_wheres(node: itir.Node) -> list[itir.FunCall]:
     return eve.walk_values(node).filter(lambda n: cpm.is_call_to(n, "concat_where")).to_list()
 
@@ -103,3 +114,16 @@ def test_concat_where_with_tuple_in_condition_is_kept():
 
     assert _concat_wheres(result)
     assert not _applied_as_fieldops(result.body[0].expr)
+
+
+def test_let_binding_of_pruned_branch_is_removed():
+    result = _transformed(pruned_selection)
+
+    assert not _concat_wheres(result)
+    field_lets = (
+        eve.walk_values(result)
+        .filter(cpm.is_let)
+        .filter(lambda let: any(cpm.is_applied_as_fieldop(arg) for arg in let.args))
+        .to_list()
+    )
+    assert not field_lets
