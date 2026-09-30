@@ -646,7 +646,7 @@ class FieldOffset(runtime.Offset):
         )
 
         if isinstance(offset_definition, StructuredConnectivity):
-            return _StructuredConnectivityK(offset_definition, offset)  # type: ignore[return-value]
+            return _StructuredConnectivityK(offset_definition, offset)
         assert common.is_neighbor_table(offset_definition)
         named_index = common.NamedIndex(self.target[-1], offset)
         connectivity = offset_definition[named_index]

@@ -685,3 +685,43 @@ def test_func_reinference():
     testee = im.call(im.ref("f", f_type))()
     result = itir_type_inference.reinfer(copy.deepcopy(testee))
     assert result.type == float_i_field
+
+
+def test_structured_connectivity_keeps_position_dims():
+    X = common.Dimension("X")
+    C2EDim = common.Dimension("C2E", kind=common.DimensionKind.LOCAL)
+    c2e = common.StructuredConnectivityType(
+        source_dim=Cell,
+        codomain=Edge,
+        color_dim=X,
+        local_dim=C2EDim,
+        offsets=(
+            (0, ((), ((X, 1),), ((X, 2),))),
+            (1, (((X, -1),), ((IDim, 1),), ((X, 1),))),
+        ),
+    )
+    ixk_field = ts.FieldType(dims=[IDim, X, KDim], dtype=float64_type)
+    domain = im.domain(common.GridType.CARTESIAN, {IDim: (0, 4), X: (0, 2), KDim: (0, 3)})
+
+    shifted = im.as_fieldop(im.lambda_("it")(im.deref(im.shift("C2E", 0)("it"))), domain)(
+        im.ref("e", ixk_field)
+    )
+    neighbors = im.as_fieldop(im.lambda_("it")(im.neighbors("C2E", "it")), domain)(
+        im.ref("e", ixk_field)
+    )
+
+    shifted = itir_type_inference.infer(
+        shifted, offset_provider_type={"C2E": c2e}, allow_undeclared_symbols=True
+    )
+    neighbors = itir_type_inference.infer(
+        neighbors, offset_provider_type={"C2E": c2e}, allow_undeclared_symbols=True
+    )
+
+    assert shifted.type == ixk_field
+    shift_call = shifted.fun.args[0].expr.args[0]
+    assert shift_call.type == it_ts.IteratorType(
+        position_dims=[IDim, X, KDim], defined_dims=[IDim, X, KDim], element_type=float64_type
+    )
+    assert neighbors.type == ts.FieldType(
+        dims=[IDim, X, KDim], dtype=ts.ListType(element_type=float64_type, offset_type=C2EDim)
+    )

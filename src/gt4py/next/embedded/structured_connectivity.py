@@ -78,6 +78,44 @@ class StructuredConnectivity:
     def colors(self) -> tuple[int, ...]:
         return tuple(sorted(self.offsets.keys()))
 
+    @property
+    def max_neighbors(self) -> int:
+        return self.num_neighbors
+
+    @property
+    def neighbor_dim(self) -> common.Dimension:
+        return self.local_dim
+
+    @property
+    def has_skip_values(self) -> bool:
+        return False
+
+    @functools.cached_property
+    def _gt_type(self) -> common.StructuredConnectivityType:
+        return common.StructuredConnectivityType(
+            source_dim=self.source_dim,
+            codomain=self.codomain,
+            color_dim=self.color_dim,
+            local_dim=self.local_dim,
+            offsets=tuple(
+                (
+                    color,
+                    tuple(
+                        tuple(
+                            sorted(
+                                ((d, o) for d, o in off.items() if o != 0), key=lambda p: p[0].value
+                            )
+                        )
+                        for off in self.offsets[color]
+                    ),
+                )
+                for color in self.colors
+            ),
+        )
+
+    def __gt_type__(self) -> common.StructuredConnectivityType:
+        return self._gt_type
+
 
 @dataclasses.dataclass(frozen=True)
 class _StructuredConnectivityK:

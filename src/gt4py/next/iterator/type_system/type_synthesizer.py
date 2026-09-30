@@ -343,7 +343,9 @@ def neighbors(
     )
     assert isinstance(it, it_ts.IteratorType)
     conn_type = common.get_offset_type(offset_provider_type, offset_literal.value)
-    assert isinstance(conn_type, common.NeighborConnectivityType)
+    assert isinstance(
+        conn_type, (common.NeighborConnectivityType, common.StructuredConnectivityType)
+    )
     return ts.ListType(element_type=it.element_type, offset_type=conn_type.neighbor_dim)
 
 
@@ -568,6 +570,8 @@ def _resolve_dimensions(
                 if isinstance(offset_type, common.NeighborConnectivityType):
                     if resolved_dim == offset_type.codomain:  # Check if input fits to offset
                         resolved_dim = offset_type.domain[0]  # Update input_dim for next iteration
+                elif isinstance(offset_type, common.StructuredConnectivityType):
+                    pass  # source and target share the structured layout
                 else:
                     raise NotImplementedError(
                         f"'{offset_type}' is not a supported connectivity type."
@@ -764,6 +768,8 @@ def shift(*offset_literals, offset_provider_type: common.OffsetProviderType) -> 
                     assert isinstance(offset_axis, it_ts.OffsetLiteralType)
                     assert isinstance(offset_axis.value, str)
                     type_ = common.get_offset_type(offset_provider_type, offset_axis.value)
+                    if isinstance(type_, common.StructuredConnectivityType):
+                        continue  # source and target share the structured layout
                     assert isinstance(type_, common.NeighborConnectivityType)
                     source_dim, target_dim = type_.domain[0], type_.codomain
 

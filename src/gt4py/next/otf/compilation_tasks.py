@@ -116,8 +116,8 @@ def _offset_provider_with_file_refs(
     offset_provider: common.OffsetProvider,
 ) -> common.OffsetProvider:
     return {
-        name: value
-        if isinstance(value, common.Dimension)
+        name: value  # type: ignore[misc]  # `OffsetProviderElem` does not list `StructuredConnectivity`
+        if isinstance(value, common.Dimension) or common.is_structured_connectivity(value)
         else xtyping.cast(common.OffsetProviderElem, _ConnectivityFileRef(value))
         for name, value in offset_provider.items()
     }

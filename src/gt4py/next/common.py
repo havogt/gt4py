@@ -723,6 +723,7 @@ def _broadcast_ranges(
 
 if TYPE_CHECKING:
     import gt4py.next.ffront.fbuiltins as fbuiltins
+    from gt4py.next.embedded.structured_connectivity import StructuredConnectivity
 
     _Value: TypeAlias = "Field" | core_defs.ScalarT
     _P = ParamSpec("_P")
@@ -995,6 +996,41 @@ class NeighborConnectivityType(ConnectivityType):
         return self.domain[1]
 
 
+@dataclasses.dataclass(frozen=True)
+class StructuredConnectivityType:
+    """
+    Compile-time type of a structured (per-colour Cartesian offset) connectivity.
+
+    `offsets` holds, per source colour in ascending order, the colour and one entry per neighbor;
+    each entry is the non-zero `(dimension, offset)` pairs sorted by dimension name.
+    """
+
+    source_dim: Dimension
+    codomain: Dimension
+    color_dim: Dimension
+    local_dim: Dimension
+    offsets: tuple[tuple[int, tuple[tuple[tuple[Dimension, int], ...], ...]], ...]
+
+    @property
+    def colors(self) -> tuple[int, ...]:
+        return tuple(color for color, _ in self.offsets)
+
+    @property
+    def max_neighbors(self) -> int:
+        return len(self.offsets[0][1])
+
+    @property
+    def neighbor_dim(self) -> Dimension:
+        return self.local_dim
+
+    @property
+    def has_skip_values(self) -> bool:
+        return False
+
+    def neighbor_offset(self, color: int, neighbor: int) -> dict[Dimension, int]:
+        return dict(dict(self.offsets)[color][neighbor])
+
+
 @runtime_checkable
 class Connectivity(Field[DimsT, core_defs.IntegralScalar], Protocol[DimsT, DimT_co]):
     @property
@@ -1186,23 +1222,36 @@ OffsetProvider: TypeAlias = Mapping[Tag, OffsetProviderElem]
 OffsetProviderType: TypeAlias = Mapping[Tag, OffsetProviderTypeElem]
 
 
+def is_structured_connectivity(obj: Any) -> TypeGuard["StructuredConnectivity"]:
+    from gt4py.next.embedded import structured_connectivity
+
+    return isinstance(obj, structured_connectivity.StructuredConnectivity)
+
+
 def is_offset_provider(obj: Any) -> TypeGuard[OffsetProvider]:
     if not isinstance(obj, Mapping):
         return False
-    return all(isinstance(el, OffsetProviderElem) for el in obj.values())
+    return all(
+        isinstance(el, OffsetProviderElem) or is_structured_connectivity(el) for el in obj.values()
+    )
 
 
 def is_offset_provider_type(obj: Any) -> TypeGuard[OffsetProviderType]:
     if not isinstance(obj, Mapping):
         return False
-    return all(isinstance(el, OffsetProviderTypeElem) for el in obj.values())
+    return all(
+        isinstance(el, (OffsetProviderTypeElem, StructuredConnectivityType)) for el in obj.values()
+    )
 
 
 def offset_provider_to_type(
     offset_provider: OffsetProvider | OffsetProviderType,
 ) -> OffsetProviderType:
     return {
-        k: v.__gt_type__() if isinstance(v, Connectivity) else v for k, v in offset_provider.items()
+        k: v.__gt_type__()  # type: ignore[misc]  # `OffsetProviderTypeElem` does not list `StructuredConnectivityType`
+        if isinstance(v, Connectivity) or is_structured_connectivity(v)
+        else v
+        for k, v in offset_provider.items()
     }
 
 

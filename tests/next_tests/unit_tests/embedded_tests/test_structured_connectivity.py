@@ -6,11 +6,13 @@
 # Please, refer to the LICENSE file in the root directory.
 # SPDX-License-Identifier: BSD-3-Clause
 
+import pickle
+
 import numpy as np
 import pytest
 
 import gt4py.next as gtx
-from gt4py.next import neighbor_sum
+from gt4py.next import common, neighbor_sum
 from gt4py.next.embedded import structured_connectivity as structured
 from gt4py.next.embedded.structured_connectivity import StructuredConnectivity
 
@@ -207,3 +209,52 @@ def test_expand_under_jax_jit(case):
     assert first.domain == np_first.domain
     np.testing.assert_array_equal(stacked.asnumpy(), np_stacked.asnumpy())
     np.testing.assert_array_equal(first.asnumpy(), np_first.asnumpy())
+
+
+def test_gt_type_is_hashable_and_equal_by_value():
+    reordered_with_zeros = StructuredConnectivity(
+        source_dim=Cell,
+        codomain=Edge,
+        color_dim=X,
+        local_dim=C2EDim,
+        offsets={1: [{X: -1}, {I: 1, X: 0}, {X: 1}], 0: [{I: 0}, {X: 1}, {X: 2}]},
+    )
+
+    first = common.offset_provider_to_type({"C2E": STRUCTURED_C2E})
+    second = common.offset_provider_to_type({"C2E": reordered_with_zeros})
+
+    assert first == second
+    assert hash(first["C2E"]) == hash(second["C2E"])
+    assert first["C2E"] == common.StructuredConnectivityType(
+        source_dim=Cell,
+        codomain=Edge,
+        color_dim=X,
+        local_dim=C2EDim,
+        offsets=(
+            (0, ((), ((X, 1),), ((X, 2),))),
+            (1, (((X, -1),), ((I, 1),), ((X, 1),))),
+        ),
+    )
+    assert first["C2E"].max_neighbors == STRUCTURED_C2E.max_neighbors == 3
+    assert first["C2E"].neighbor_dim == STRUCTURED_C2E.neighbor_dim == C2EDim
+    assert not first["C2E"].has_skip_values and not STRUCTURED_C2E.has_skip_values
+    assert first["C2E"].colors == (0, 1)
+    assert first["C2E"].neighbor_offset(1, 1) == {I: 1}
+
+
+def test_structured_offset_provider_is_accepted():
+    provider = {"C2E": STRUCTURED_C2E}
+
+    assert common.is_offset_provider(provider)
+    assert common.is_offset_provider_type(common.offset_provider_to_type(provider))
+
+
+def test_structured_offset_provider_pickles():
+    from gt4py.next.otf import compilation_tasks
+
+    provider = compilation_tasks._offset_provider_with_file_refs({"C2E": STRUCTURED_C2E})
+
+    restored = pickle.loads(pickle.dumps(provider))
+
+    assert restored == {"C2E": STRUCTURED_C2E}
+    assert common.offset_provider_to_type(restored) == common.offset_provider_to_type(provider)
