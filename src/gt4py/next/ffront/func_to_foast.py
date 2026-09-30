@@ -14,7 +14,7 @@ import typing
 from typing import Any, Type
 
 import gt4py.eve as eve
-from gt4py.next import errors
+from gt4py.next import common, errors
 from gt4py.next.ffront import (
     dialect_ast_enums,
     experimental,
@@ -22,6 +22,7 @@ from gt4py.next.ffront import (
     field_operator_ast as foast,
     source_utils,
     stages as ffront_stages,
+    type_specifications as ts_ffront,
 )
 from gt4py.next.ffront.ast_passes import (
     SingleAssignTargetPass,
@@ -83,12 +84,42 @@ def func_to_foast(inp: DSLFieldOperatorDef) -> FOASTOperatorDef:
     except errors.DSLError as err:
         err.add_note(f"While processing the definition of '{inp.definition.__name__}'.")
         raise
+    if inp._structured_layout is not None:
+        _apply_structured_layout(foast_node, dict(inp._structured_layout))
     return ffront_stages.FOASTOperatorDef(
         foast_node=foast_node,
         closure_vars=closure_vars,
         grid_type=inp.grid_type,
         debug=inp.debug,
     )
+
+
+def _apply_structured_layout(
+    foast_node: foast.FieldOperator, layout: dict[common.Dimension, tuple[common.Dimension, ...]]
+) -> None:
+    """Replace the entity dimensions in the parameter and return types of `foast_node` in place."""
+
+    def substitute(type_: ts.TypeSpec) -> ts.TypeSpec:
+        if isinstance(type_, ts.FieldType) and any(dim in layout for dim in type_.dims):
+            dims = [new_dim for dim in type_.dims for new_dim in layout.get(dim, (dim,))]
+            return ts.FieldType(dims=common.order_dimensions(dims), dtype=type_.dtype)
+        return type_
+
+    retype = type_info.tree_map_type(substitute)
+    operator_type = foast_node.type
+    if not isinstance(operator_type, ts_ffront.FieldOperatorType):
+        raise NotImplementedError("A structured layout is only supported for field operators.")
+    definition = operator_type.definition
+    function_type = ts.FunctionType(
+        pos_only_args=[retype(arg) for arg in definition.pos_only_args],
+        pos_or_kw_args={name: retype(arg) for name, arg in definition.pos_or_kw_args.items()},
+        kw_only_args={name: retype(arg) for name, arg in definition.kw_only_args.items()},
+        returns=retype(definition.returns),
+    )
+    foast_node.type = ts_ffront.FieldOperatorType(definition=function_type)
+    foast_node.definition.type = function_type
+    for param in foast_node.definition.params:
+        param.type = retype(param.type)
 
 
 def func_to_foast_factory(

@@ -493,3 +493,44 @@ def test_tuple_index_failure():
 
     with pytest.raises(errors.DSLError, match=r"need .* literal"):
         _ = FieldOperatorParser.apply_to_function(tuple_index_failure)
+
+
+def test_structured_layout_replaces_entity_dims():
+    from gt4py.next.ffront import stages as ffront_stages, type_specifications as ts_ffront
+    from gt4py.next.ffront.func_to_foast import func_to_foast
+
+    Cell = gtx.Dimension("Cell")
+    Edge = gtx.Dimension("Edge")
+    K = gtx.Dimension("K", kind=gtx.DimensionKind.VERTICAL)
+    C2EDim = gtx.Dimension("C2E", kind=gtx.DimensionKind.LOCAL)
+    I = gtx.Dimension("I")  # noqa: E741 [ambiguous-variable-name]
+    X = gtx.Dimension("X")
+
+    def op(
+        c: gtx.Field[[Cell, K], float],
+        e: gtx.Field[[Edge, K], float],
+        w: gtx.Field[[Cell, C2EDim], float],
+    ) -> gtx.Field[[Cell, K], float]:
+        return c
+
+    layout = ((Cell, (I, X)), (Edge, (I, X)))
+    plain = ffront_stages.DSLFieldOperatorDef(definition=op)
+    structured = ffront_stages.DSLFieldOperatorDef(definition=op, _structured_layout=layout)
+
+    foast_type = func_to_foast(structured).foast_node.type
+
+    f64 = ts.ScalarType(kind=ts.ScalarKind.FLOAT64)
+    ixk = ts.FieldType(dims=[I, X, K], dtype=f64)
+    assert foast_type == ts_ffront.FieldOperatorType(
+        definition=ts.FunctionType(
+            pos_only_args=[],
+            pos_or_kw_args={
+                "c": ixk,
+                "e": ixk,
+                "w": ts.FieldType(dims=[I, X, C2EDim], dtype=f64),
+            },
+            kw_only_args={},
+            returns=ixk,
+        )
+    )
+    assert ffront_stages.fingerprinter(plain) != ffront_stages.fingerprinter(structured)

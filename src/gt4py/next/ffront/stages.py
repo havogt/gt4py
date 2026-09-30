@@ -79,6 +79,10 @@ class DSLFieldOperatorDef(BaseStage):
     definition: types.FunctionType
     grid_type: Optional[common.GridType] = None
     debug: bool = False
+    #: Entity dimension -> lattice dimensions replacing it in the parameter and return types.
+    _structured_layout: Optional[
+        tuple[tuple[common.Dimension, tuple[common.Dimension, ...]], ...]
+    ] = None
 
 
 ConcreteDSLFieldOperatorDef: typing.TypeAlias = workflow.ConcreteArtifact[
