@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 
 import gt4py.next as gtx
-from gt4py.next import common, scan
+from gt4py.next import common, config, scan
 from gt4py.next.embedded import operators
 from gt4py.next.ffront import fbuiltins
 
@@ -115,8 +115,11 @@ def test_sliced_without_field_args():
 @pytest.mark.requires_jax
 @pytest.mark.parametrize("forward", [True, False])
 @pytest.mark.parametrize("init", ["scalar", "column"])
-def test_jax_matches_numpy(ijk_fields, forward, init):
+@pytest.mark.parametrize("unroll", [1, 3, 10])
+def test_jax_matches_numpy(ijk_fields, forward, init, unroll, monkeypatch):
     import jax.numpy as jnp
+
+    monkeypatch.setattr(config, "EMBEDDED_JAX_SCAN_UNROLL", unroll)
 
     inp, weight, column_init = ijk_fields
     to_jax = lambda f: common._field(jnp.asarray(f.ndarray), domain=f.domain)
@@ -138,8 +141,11 @@ def test_jax_matches_numpy(ijk_fields, forward, init):
 
 
 @pytest.mark.requires_jax
-def test_jax_tuple_carry(ijk_fields):
+@pytest.mark.parametrize("unroll", [1, 4])
+def test_jax_tuple_carry(ijk_fields, unroll, monkeypatch):
     import jax.numpy as jnp
+
+    monkeypatch.setattr(config, "EMBEDDED_JAX_SCAN_UNROLL", unroll)
 
     inp, _, column_init = ijk_fields
     to_jax = lambda f: common._field(jnp.asarray(f.ndarray), domain=f.domain)

@@ -171,6 +171,10 @@ EMBEDDED_CONCAT_WHERE_SELECT_MIN_FRACTION_STRUCTURED: float = float(
     os.environ.get("GT4PY_EMBEDDED_CONCAT_WHERE_SELECT_MIN_FRACTION_STRUCTURED", "0.1")
 )
 
+#: Embedded scans on JAX arrays: levels per iteration of the `jax.lax.scan` (its `unroll`), a
+#: value of at least the number of levels unrolls the scan completely.
+EMBEDDED_JAX_SCAN_UNROLL: int = env_flag_to_int("GT4PY_EMBEDDED_JAX_SCAN_UNROLL", default=1)
+
 
 #: Add GPU trace markers (NVTX, ROC-TX) to the generated code, at compile time.
 ADD_GPU_TRACE_MARKERS: bool = env_flag_to_bool("GT4PY_ADD_GPU_TRACE_MARKERS", default=False)

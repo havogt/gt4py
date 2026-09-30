@@ -11,7 +11,7 @@ from typing import Any, Callable, Generic, Iterator, Optional, ParamSpec, Sequen
 
 from gt4py._core import definitions as core_defs
 from gt4py.eve import extended_typing as xtyping
-from gt4py.next import common, errors, field_utils, named_collections, utils
+from gt4py.next import common, config, errors, field_utils, named_collections, utils
 from gt4py.next.embedded import common as embedded_common, context as embedded_context
 from gt4py.next.field_utils import get_array_ns
 from gt4py.next.otf import arguments
@@ -203,6 +203,7 @@ class ScanOperator(EmbeddedOperator[xtyping.MaybeNestedInTuple[core_defs.ScalarT
             [stack(x) for value in values for x in _leaves(value, is_scanned)],
             length=len(self.range.unit_range),
             reverse=not self.forward,
+            unroll=config.EMBEDDED_JAX_SCAN_UNROLL,
         )
         scan_axis_index = out_domain.dims.index(scan_axis)
         return _replace_leaves(
