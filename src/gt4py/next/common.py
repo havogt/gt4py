@@ -14,6 +14,7 @@ import dataclasses
 import enum
 import functools
 import math
+import operator
 import sys
 import types
 from collections.abc import Iterable, Mapping, Sequence
@@ -331,6 +332,17 @@ RangeLike: TypeAlias = (
 )
 
 
+def _range_bound(value: Any, infinity: Infinity) -> core_defs.IntegralScalar | Infinity:
+    if value is None or value is infinity:
+        return infinity
+    # TODO(egparedes): use core_defs.IntegralScalar for `isinstance()` checks (see PEP 604)
+    #   once the related mypy bug (#16358) gets fixed
+    if isinstance(value, core_defs.INTEGRAL_TYPES):
+        return cast(core_defs.IntegralScalar, value)
+    # e.g. 0-d integer arrays, which is what numpy scalars become under `torch.compile`
+    return operator.index(value)
+
+
 def unit_range(r: RangeLike) -> UnitRange:
     if isinstance(r, UnitRange):
         return r
@@ -338,16 +350,13 @@ def unit_range(r: RangeLike) -> UnitRange:
         if r.step != 1:
             raise ValueError(f"'UnitRange' requires step size 1, got '{r.step}'.")
         return UnitRange(r.start, r.stop)
-    # TODO(egparedes): use core_defs.IntegralScalar for `isinstance()` checks (see PEP 604)
-    #   once the related mypy bug (#16358) gets fixed
-    if (
-        isinstance(r, tuple)
-        and (isinstance(r[0], core_defs.INTEGRAL_TYPES) or r[0] in (None, Infinity.NEGATIVE))
-        and (isinstance(r[1], core_defs.INTEGRAL_TYPES) or r[1] in (None, Infinity.POSITIVE))
-    ):
-        start = r[0] if r[0] is not None else Infinity.NEGATIVE
-        stop = r[1] if r[1] is not None else Infinity.POSITIVE
-        return UnitRange(start, stop)
+    if isinstance(r, tuple) and len(r) == 2:
+        try:
+            return UnitRange(
+                _range_bound(r[0], Infinity.NEGATIVE), _range_bound(r[1], Infinity.POSITIVE)
+            )
+        except TypeError:
+            pass
     if isinstance(r, core_defs.INTEGRAL_TYPES):
         return UnitRange(0, cast(core_defs.IntegralScalar, r))
     if r is None:

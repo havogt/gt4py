@@ -9,6 +9,7 @@
 import operator
 from typing import Optional, Pattern
 
+import numpy as np
 import pytest
 import re
 
@@ -128,6 +129,8 @@ def test_unit_range_length(rng):
         ((2, None), UnitRange(2, Infinity.POSITIVE)),
         ((None, 4), UnitRange(Infinity.NEGATIVE, 4)),
         (None, UnitRange(Infinity.NEGATIVE, Infinity.POSITIVE)),
+        ((np.int32(2), np.int64(4)), UnitRange(2, 4)),
+        ((np.array(2, dtype=np.int32), np.array(4)), UnitRange(2, 4)),
     ],
 )
 def test_unit_range_like(rng_like, expected):
