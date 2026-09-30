@@ -7,9 +7,17 @@
 # SPDX-License-Identifier: BSD-3-Clause
 import copy
 
+import pytest
+
+from gt4py import eve
+from gt4py._core import definitions as core_defs
 from gt4py.next import utils, common
 from gt4py.next.iterator import ir as itir
-from gt4py.next.iterator.ir_utils import ir_makers as im, domain_utils
+from gt4py.next.iterator.ir_utils import (
+    common_pattern_matcher as cpm,
+    ir_makers as im,
+    domain_utils,
+)
 from gt4py.next.iterator.transforms import (
     fuse_as_fieldop,
     collapse_tuple as ct,
@@ -21,6 +29,9 @@ IDim = common.Dimension("IDim")
 JDim = common.Dimension("JDim")
 field_type = ts.FieldType(dims=[IDim], dtype=ts.ScalarType(kind=ts.ScalarKind.INT32))
 IOff = im.cartesian_offset(IDim, IDim)
+Cell = common.Dimension("Cell")
+Edge = common.Dimension("Edge")
+C2EDim = common.Dimension("C2E", kind=common.DimensionKind.LOCAL)
 
 
 def _with_domain_annex(node: itir.Expr, domain: itir.Expr):
@@ -467,3 +478,42 @@ def test_opage_arg_deduplication(uids: utils.IDGeneratorPool):
         testee, offset_provider_type={}, allow_undeclared_symbols=True, enable_cse=False, uids=uids
     )
     assert actual == expected
+
+
+@pytest.mark.parametrize("inline_into_neighbors", [True, False])
+def test_single_arg_producer_of_neighbors(uids: utils.IDGeneratorPool, inline_into_neighbors: bool):
+    offset_provider_type = {
+        "C2E": common.NeighborConnectivityType(
+            domain=(Cell, C2EDim),
+            codomain=Edge,
+            skip_value=None,
+            dtype=core_defs.Int32DType(),
+            max_neighbors=3,
+        )
+    }
+    float_type = ts.ScalarType(kind=ts.ScalarKind.FLOAT64)
+    producer = im.as_fieldop(
+        im.lambda_("a")(im.cast_(im.deref("a"), "float64")),
+        im.domain(common.GridType.UNSTRUCTURED, {Edge: (0, 10)}),
+    )(im.ref("inp", ts.FieldType(dims=[Edge], dtype=float_type)))
+    testee = im.as_fieldop(
+        im.lambda_("it")(im.reduce("plus", im.literal_from_value(0.0))(im.neighbors("C2E", "it"))),
+        im.domain(common.GridType.UNSTRUCTURED, {Cell: (0, 5)}),
+    )(producer)
+
+    actual = fuse_as_fieldop.FuseAsFieldOp.apply(
+        testee,
+        offset_provider_type=offset_provider_type,
+        allow_undeclared_symbols=True,
+        enable_cse=False,
+        uids=uids,
+        inline_into_neighbors=inline_into_neighbors,
+    )
+
+    applied_lifts = eve.walk_values(actual).filter(cpm.is_applied_lift).to_list()
+    if inline_into_neighbors:
+        assert len(applied_lifts) == 1
+        assert actual.args == [im.ref("inp")]
+    else:
+        assert not applied_lifts
+        assert actual == testee
