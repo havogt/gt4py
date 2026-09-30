@@ -773,7 +773,7 @@ class LambdaToDataflow(eve.NodeVisitor):
             field_dims = [dim for dim, _ in arg.field_domain]
             arg_desc = arg.field.desc(self.sdfg)
             if deref_on_input_memlet and all(
-                isinstance(arg.indices[dim], SymbolExpr) for dim, _ in arg.field_domain
+                isinstance(arg.indices.get(dim), SymbolExpr) for dim, _ in arg.field_domain
             ):
                 # If the iterator is just dereferenced inside the branch state,
                 # we can access the array outside the nested SDFG and pass the
