@@ -573,6 +573,11 @@ class MultiStateGlobalSelfCopyElimination2(dace_transformation.Pass):
         transient is used.
         """
 
+        access_locations: dict[str, list[AccessLocation]] = {}
+        for state in sdfg.states():
+            for dnode in state.data_nodes():
+                access_locations.setdefault(dnode.data, []).append((state, dnode))
+
         # Scan all transients and find their location.
         possible_redundant_transients: dict[
             str, tuple[list[AccessLocation], list[AccessLocation]]
@@ -580,7 +585,9 @@ class MultiStateGlobalSelfCopyElimination2(dace_transformation.Pass):
         for data_name, desc in sdfg.arrays.items():
             if not desc.transient:
                 continue
-            write_read_locations = self._find_exclusive_read_and_write_locations_of(sdfg, data_name)
+            write_read_locations = self._find_exclusive_read_and_write_locations_of(
+                access_locations.get(data_name, [])
+            )
             if write_read_locations is None:
                 continue
             if len(write_read_locations[1]) != 0:
@@ -698,15 +705,14 @@ class MultiStateGlobalSelfCopyElimination2(dace_transformation.Pass):
 
     def _find_exclusive_read_and_write_locations_of(
         self,
-        sdfg: dace.SDFG,
-        data_name: str,
+        access_locations: list[AccessLocation],
     ) -> Union[tuple[list[AccessLocation], list[AccessLocation]], None]:
-        """The function finds all locations were `data_name` is written and read.
+        """The function splits the locations of a data into those that write and those that read it.
 
-        The function will scan the SDFG and returns all places where `data_name` is
-        written and where it is read from. If there is however, a location where the
-        data is read and written to in the same place then the function returns
-        `None`.
+        `access_locations` are all AccessNodes that refer to the data. The function
+        returns the places where the data is written and where it is read from. If
+        there is however, a location where the data is read and written to in the
+        same place then the function returns `None`.
 
         In essence this function returns the set of all possible matches the
         transformation is looking for, but further processing has to be performed.
@@ -714,20 +720,17 @@ class MultiStateGlobalSelfCopyElimination2(dace_transformation.Pass):
         read_locations: list[AccessLocation] = []
         write_locations: list[AccessLocation] = []
 
-        for state in sdfg.states():
-            for dnode in state.data_nodes():
-                if dnode.data != data_name:
-                    continue
-                out_deg = state.out_degree(dnode)
-                in_deg = state.in_degree(dnode)
+        for state, dnode in access_locations:
+            out_deg = state.out_degree(dnode)
+            in_deg = state.in_degree(dnode)
 
-                # This is not the pattern we are looking for.
-                if out_deg > 0 and in_deg > 0:
-                    return None
-                elif out_deg > 0:
-                    read_locations.append((state, dnode))
-                else:
-                    assert in_deg > 0
-                    write_locations.append((state, dnode))
+            # This is not the pattern we are looking for.
+            if out_deg > 0 and in_deg > 0:
+                return None
+            elif out_deg > 0:
+                read_locations.append((state, dnode))
+            else:
+                assert in_deg > 0
+                write_locations.append((state, dnode))
 
         return (write_locations, read_locations)
