@@ -358,6 +358,11 @@ class SDFGBuilder(DataflowBuilder, Protocol):
     """Visitor interface available to GTIR-primitive translators."""
 
     @abc.abstractmethod
+    def get_color_dims(self) -> set[gtx_common.Dimension]:
+        """The colour dimensions of the structured connectivities in the offset provider."""
+        ...
+
+    @abc.abstractmethod
     def make_field(
         self,
         data_node: dace_nodes.AccessNode,
@@ -565,6 +570,13 @@ class GTIRToSDFG(eve.NodeVisitor, SDFGBuilder):
 
     def get_offset_provider_type(self, offset: str) -> gtx_common.OffsetProviderTypeElem:
         return gtx_common.get_offset_type(self.offset_provider_type, offset)
+
+    def get_color_dims(self) -> set[gtx_common.Dimension]:
+        return {
+            conn_type.color_dim
+            for conn_type in self.offset_provider_type.values()
+            if isinstance(conn_type, gtx_common.StructuredConnectivityType)
+        }
 
     def make_field(
         self,

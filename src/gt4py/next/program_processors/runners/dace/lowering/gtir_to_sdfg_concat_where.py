@@ -27,6 +27,7 @@ from gt4py.next.iterator.ir_utils import (
     ir_makers as im,
     misc as gtir_misc,
 )
+from gt4py.next.iterator.type_system import inference as gtir_type_inference
 from gt4py.next.program_processors.runners.dace import sdfg_args as gtx_dace_args
 from gt4py.next.program_processors.runners.dace.lowering import (
     gtir_domain,
@@ -211,6 +212,88 @@ def _translate_concat_where_branch(
     )
 
 
+_INFINITY_LITERALS = (gtir.InfinityLiteral.POSITIVE, gtir.InfinityLiteral.NEGATIVE)
+
+
+def _color_slab_stencil_body(
+    expr: gtir.Expr,
+    color_dim: gtx_common.Dimension,
+    pos: str,
+    domain: domain_utils.SymbolicDomain,
+    args: dict[str, gtir.Expr],
+) -> gtir.Expr | None:
+    """
+    Stencil body selecting, by the value of the `pos` index iterator, the stencil of
+    the colour slab that `expr` computes there, or `None` if `expr` is not a chain of
+    `concat_where` along `color_dim` whose leaves are `as_fieldop` of a lambda on the
+    slab of `domain`. The leaf arguments are collected in `args`, by parameter name.
+    """
+    if cpm.is_call_to(expr, "concat_where"):
+        mask = domain_utils.SymbolicDomain.from_expr(expr.args[0])
+        if list(mask.ranges.keys()) != [color_dim]:
+            return None
+        mask_range = mask.ranges[color_dim]
+        if mask_range.start in _INFINITY_LITERALS:
+            cond = im.less(im.deref(pos), mask_range.stop)
+        elif mask_range.stop in _INFINITY_LITERALS:
+            cond = im.greater_equal(im.deref(pos), mask_range.start)
+        else:
+            return None
+        true_body = _color_slab_stencil_body(expr.args[1], color_dim, pos, domain, args)
+        false_body = _color_slab_stencil_body(expr.args[2], color_dim, pos, domain, args)
+        if true_body is None or false_body is None:
+            return None
+        return im.if_(cond, true_body, false_body)
+
+    if not (cpm.is_applied_as_fieldop(expr) and isinstance(expr.fun.args[0], gtir.Lambda)):
+        return None
+    stencil = expr.fun.args[0]
+    leaf_domain = domain_utils.SymbolicDomain.from_expr(expr.fun.args[1])
+    if any(
+        leaf_domain.ranges.get(dim) != dim_range
+        for dim, dim_range in domain.ranges.items()
+        if dim != color_dim
+    ):
+        return None
+    # The leaf parameters are bound by `let`, not substituted: a `let` keeps the full
+    # field as iterator inside the `if_` branch, so no read is declared on the slabs
+    # of the other colours.
+    bindings = []
+    for param, arg in zip(stencil.params, expr.args, strict=True):
+        name = f"__cs_arg{len(args)}"
+        args[name] = arg
+        bindings.append((param, im.ref(name)))
+    return im.let(*bindings)(stencil.expr)
+
+
+def _merge_color_slabs(
+    node: gtir.FunCall, sdfg_builder: gtir_to_sdfg.SDFGBuilder
+) -> gtir.FunCall | None:
+    """
+    Rewrite a `concat_where` chain along the colour dimension of a structured layout,
+    whose leaves are `as_fieldop`s on one colour slab each, into one `as_fieldop` on
+    the whole domain, which selects the stencil of the colour by an `if_` on the index.
+    Returns `None` if `node` is not such a chain.
+    """
+    mask_dims = list(domain_utils.SymbolicDomain.from_expr(node.args[0]).ranges.keys())
+    if len(mask_dims) != 1 or mask_dims[0] not in sdfg_builder.get_color_dims():
+        return None
+    color_dim = mask_dims[0]
+    domain = node.annex.domain
+    pos = "__cs_pos"
+    args: dict[str, gtir.Expr] = {}
+    body = _color_slab_stencil_body(node, color_dim, pos, domain, args)
+    if body is None:
+        return None
+    merged = im.as_fieldop(im.lambda_(pos, *args.keys())(body), domain.as_expr())(
+        im.index(color_dim), *args.values()
+    )
+    gtir_type_inference.reinfer(merged)
+    assert merged.type == node.type
+    merged.annex.domain = domain
+    return merged
+
+
 def translate_concat_where(
     node: gtir.Node,
     ctx: gtir_to_sdfg.SubgraphContext,
@@ -245,11 +328,13 @@ def translate_concat_where(
     #    lower domain.
     #  - Vice versa, if the domain expression is unbound on range stop (positive
     #    infinite), the true expression represents the input for the upper domain.
-    infinity_literals = (gtir.InfinityLiteral.POSITIVE, gtir.InfinityLiteral.NEGATIVE)
-    if mask_domain.ranges[concat_dim].start in infinity_literals:
+    if (merged := _merge_color_slabs(node, sdfg_builder)) is not None:
+        return sdfg_builder.visit(merged, ctx=ctx)
+
+    if mask_domain.ranges[concat_dim].start in _INFINITY_LITERALS:
         bound_expr = mask_domain.ranges[concat_dim].stop
         lower_expr, upper_expr = node.args[1:]
-    elif mask_domain.ranges[concat_dim].stop in infinity_literals:
+    elif mask_domain.ranges[concat_dim].stop in _INFINITY_LITERALS:
         bound_expr = mask_domain.ranges[concat_dim].start
         upper_expr, lower_expr = node.args[1:]
     else:

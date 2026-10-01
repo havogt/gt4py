@@ -194,6 +194,50 @@ def test_unit_strides_dims_iteration_order(
         assert map_.params[-2:] == expected
 
 
+def test_color_slabs_lowered_to_one_map():
+    def slab(offset: int) -> itir.Expr:
+        return im.as_fieldop(
+            im.lambda_("a")(im.deref(im.shift(im.cartesian_offset(X_), offset)("a")))
+        )("x")
+
+    ir = itir.Program(
+        id="color_slabs_one_map",
+        declarations=[],
+        function_definitions=[],
+        params=[itir.Sym(id="x", type=IJXK_FTYPE), itir.Sym(id="y", type=IJXK_FTYPE)],
+        body=[
+            itir.SetAt(
+                expr=im.concat_where(
+                    im.domain(
+                        gtx_common.GridType.CARTESIAN, {X_: (itir.InfinityLiteral.NEGATIVE, 1)}
+                    ),
+                    slab(1),
+                    slab(-1),
+                ),
+                domain=im.domain(
+                    gtx_common.GridType.CARTESIAN, {I_: (0, 3), J_: (0, 4), X_: (0, 2), K_: (0, 5)}
+                ),
+                target=itir.SymRef(id="y"),
+            ),
+        ],
+    )
+    sdfg = _translate_gtir_to_sdfg(
+        ir=ir,
+        offset_provider={"C2E": STRUCTURED_C2E},
+        device_type=core_defs.DeviceType.CPU,
+        auto_optimize=False,
+        async_sdfg_call=False,
+    )
+
+    (map_,) = [
+        node.map
+        for node, _ in sdfg.all_nodes_recursive()
+        if isinstance(node, dace_nodes.MapEntry) and len(node.map.params) == 4
+    ]
+    x_range = map_.range[map_.params.index(gtx_dace_lowering.get_map_variable(X_))]
+    assert (x_range[0], x_range[1]) == (0, 1)
+
+
 def _are_streams_set_to_default_stream(sdfg: dace.SDFG) -> bool:
     if "cuda" not in sdfg.init_code:  # Here 'cuda' equals 'GPU backend'.
         return False
