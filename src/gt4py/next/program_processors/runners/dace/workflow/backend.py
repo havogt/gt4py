@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import dataclasses
 import warnings
+from collections.abc import Sequence
 from typing import Any, Final
 
 import factory
@@ -87,6 +88,7 @@ def make_dace_backend(
     use_metrics: bool = True,
     use_zero_origin: bool = False,
     use_max_domain_range_on_unstructured_shift: bool | None = None,
+    unit_strides_dims: Sequence[common.Dimension] | None = None,
 ) -> backend.Backend:
     """Customize the dace backend with the given configuration parameters.
 
@@ -106,6 +108,11 @@ def make_dace_backend(
         use_zero_origin: Can be set to `True` when all fields passed as program
             arguments have zero-based origin. This setting will skip generation
             of range start-symbols `_range_0` since they can be assumed to be zero.
+        unit_strides_dims: Dimensions with the smallest strides, unit stride first. The
+            first is iterated by the innermost loop (CPU) or GPU thread-x, the second by
+            thread-y; the kind of the first sets the transient strides. Default: for
+            programs with structured connectivities, their horizontal dimensions without
+            the colour dimension, in field order (unit stride with the GT4Py allocators).
 
     Note that `gt_auto_optimize()` parameters that are derived from GT4Py configuration
     cannot be overriden, and therefore cannot appear here. Thus, this function will
@@ -164,6 +171,9 @@ def make_dace_backend(
         otf_workflow__bare_translation__use_metrics=use_metrics,
         otf_workflow__bare_translation__disable_field_origin_on_program_arguments=use_zero_origin,
         otf_workflow__bare_translation__use_max_domain_range_on_unstructured_shift=use_max_domain_range_on_unstructured_shift,
+        otf_workflow__bare_translation__unit_strides_dims=(
+            tuple(unit_strides_dims) if unit_strides_dims is not None else None
+        ),
     )
 
 

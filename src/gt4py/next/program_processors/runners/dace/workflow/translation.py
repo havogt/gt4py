@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Sequence
 from typing import Any, Optional
 
 import dace
@@ -26,7 +27,7 @@ from gt4py.next.program_processors.runners.dace import (
     transformations as gtx_transformations,
 )
 from gt4py.next.program_processors.runners.dace.workflow import common as gtx_wfdcommon
-from gt4py.next.type_system import type_specifications as ts
+from gt4py.next.type_system import type_info, type_specifications as ts
 
 
 def find_constant_symbols(
@@ -98,6 +99,63 @@ def find_constant_symbols(
                 constant_symbols |= {sdfg_symbol.name: 0 for sdfg_symbol in sdfg_origin_symbols}
 
     return constant_symbols
+
+
+def find_structured_unit_strides_dims(
+    ir: itir.Program, offset_provider_type: common.OffsetProviderType
+) -> list[common.Dimension] | None:
+    """Horizontal dimensions of a structured layout, colour dimensions excluded, in field order.
+
+    With the GT4Py allocators (`horizontal_first_layout_mapper`) the first of them has unit stride.
+    Returns `None` for programs without a `StructuredConnectivityType`.
+    """
+    color_dims = {
+        conn_type.color_dim
+        for conn_type in offset_provider_type.values()
+        if isinstance(conn_type, common.StructuredConnectivityType)
+    }
+    if not color_dims:
+        return None
+    dims: list[common.Dimension] = []
+    for p in ir.params:
+        assert p.type is not None
+        for t in type_info.primitive_constituents(p.type):
+            if isinstance(t, ts.FieldType):
+                dims.extend(
+                    dim
+                    for dim in t.dims
+                    if dim.kind == common.DimensionKind.HORIZONTAL
+                    and dim not in color_dims
+                    and dim not in dims
+                )
+    return dims or None
+
+
+def with_unit_strides_dims(
+    auto_optimize_args: dict[str, Any], unit_strides_dims: Sequence[common.Dimension]
+) -> dict[str, Any]:
+    """Make `gt_auto_optimize()` put `unit_strides_dims[0]` on the innermost loop / GPU thread-x.
+
+    `unit_strides_dims[1]` goes to thread-y. The kind of `unit_strides_dims[0]` becomes
+    `unit_strides_kind`, which also selects the transient strides.
+    """
+    hooks = dict(auto_optimize_args.get("optimization_hooks") or {})
+    user_hook = hooks.get(gtx_transformations.GT4PyAutoOptHook.TopLevelDataFlowPost)
+
+    def set_iteration_order(sdfg: dace.SDFG) -> None:
+        if user_hook is not None:
+            user_hook(sdfg)
+        # `gt_auto_optimize()` later moves the Map parameters of `unit_strides_kind` to the
+        #  right, keeping their relative order, which is the one set here.
+        gtx_transformations.gt_set_iteration_order(
+            sdfg, unit_strides_dim=list(unit_strides_dims), validate=False
+        )
+
+    hooks[gtx_transformations.GT4PyAutoOptHook.TopLevelDataFlowPost] = set_iteration_order
+    return auto_optimize_args | {
+        "unit_strides_kind": unit_strides_dims[0].kind,
+        "optimization_hooks": hooks,
+    }
 
 
 def make_sdfg_call_async(sdfg: dace.SDFG, gpu: bool) -> None:
@@ -362,6 +420,7 @@ class DaCeTranslator(
     async_sdfg_call: bool
     unstructured_horizontal_has_unit_stride: bool
     use_metrics: bool
+    unit_strides_dims: tuple[common.Dimension, ...] | None = None
 
     disable_itir_transforms: bool = False
     disable_field_origin_on_program_arguments: bool = False
@@ -402,6 +461,11 @@ class DaCeTranslator(
 
         if self.auto_optimize:
             auto_optimize_args = {} if self.auto_optimize_args is None else self.auto_optimize_args
+            if unit_strides_dims := (
+                self.unit_strides_dims
+                or find_structured_unit_strides_dims(ir, offset_provider_type)
+            ):
+                auto_optimize_args = with_unit_strides_dims(auto_optimize_args, unit_strides_dims)
 
             gtx_transformations.gt_auto_optimize(
                 sdfg,

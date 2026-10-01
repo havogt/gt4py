@@ -18,6 +18,7 @@ from unittest import mock
 
 from gt4py._core import definitions as core_defs
 from gt4py.next import common as gtx_common, fingerprinting
+from gt4py.next.embedded.structured_connectivity import StructuredConnectivity
 from gt4py.next.iterator import ir as itir
 from gt4py.next.iterator.ir_utils import ir_makers as im
 from gt4py.next.otf import arguments as otf_arguments, workflow as otf_workflow
@@ -130,6 +131,67 @@ def test_find_constant_symbols(has_unit_stride, disable_field_origin):
             "__y_Vertex_range_0": 0,
         }
     assert constant_symbols == expected
+
+
+I_ = gtx_common.Dimension("I")
+J_ = gtx_common.Dimension("J")
+X_ = gtx_common.Dimension("X")
+K_ = gtx_common.Dimension("K", kind=gtx_common.DimensionKind.VERTICAL)
+IJXK_FTYPE = ts.FieldType(dims=[I_, J_, X_, K_], dtype=FLOAT_TYPE)
+STRUCTURED_C2E = StructuredConnectivity(
+    source_dim=gtx_common.Dimension("Cell"),
+    codomain=gtx_common.Dimension("Edge"),
+    color_dim=X_,
+    local_dim=gtx_common.Dimension("C2E", kind=gtx_common.DimensionKind.LOCAL),
+    offsets={0: [{}, {X_: 1}]},
+)
+
+
+@pytest.mark.parametrize(
+    ["unit_strides_dims", "offset_provider", "innermost"],
+    [
+        ((I_, J_), {}, [J_, I_]),
+        ((K_, I_), {}, [I_, K_]),
+        (None, {"C2E": STRUCTURED_C2E}, [J_, I_]),
+    ],
+    ids=["I_J", "K_I", "structured_default"],
+)
+def test_unit_strides_dims_iteration_order(
+    unit_strides_dims, offset_provider, innermost, device_type: core_defs.DeviceType
+):
+    ir = itir.Program(
+        id="unit_strides_dims_" + "_".join(d.value for d in innermost),
+        declarations=[],
+        function_definitions=[],
+        params=[itir.Sym(id="x", type=IJXK_FTYPE), itir.Sym(id="y", type=IJXK_FTYPE)],
+        body=[
+            itir.SetAt(
+                expr=im.op_as_fieldop("plus")("x", 1.0),
+                domain=im.get_field_domain(gtx_common.GridType.CARTESIAN, "y", IJXK_FTYPE.dims),
+                target=itir.SymRef(id="y"),
+            ),
+        ],
+    )
+    with dace.config.set_temporary("cache", value="hash"):
+        sdfg = dace_wf_translation.DaCeTranslator(
+            device_type=device_type,
+            auto_optimize=True,
+            auto_optimize_args=None,
+            async_sdfg_call=False,
+            unstructured_horizontal_has_unit_stride=False,
+            use_metrics=False,
+            unit_strides_dims=unit_strides_dims,
+        ).generate_sdfg(ir, offset_provider=offset_provider, column_axis=None)
+
+    maps = [
+        node.map
+        for node, _ in sdfg.all_nodes_recursive()
+        if isinstance(node, dace_nodes.MapEntry) and len(node.map.params) == 4
+    ]
+    assert maps
+    expected = [gtx_dace_lowering.get_map_variable(dim) for dim in innermost]
+    for map_ in maps:
+        assert map_.params[-2:] == expected
 
 
 def _are_streams_set_to_default_stream(sdfg: dace.SDFG) -> bool:
