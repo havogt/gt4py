@@ -24,6 +24,7 @@ from gt4py.next.iterator.transforms import (
     inline_lifts,
     prune_empty_concat_where,
     remove_broadcast,
+    split_color_slabs,
     structured_to_cartesian,
     symbol_ref_utils,
 )
@@ -243,6 +244,9 @@ def apply_common_transforms(
             symbolic_domain_sizes=symbolic_domain_sizes,
             uids=uids,
         )
+        ir = split_color_slabs.split_color_slabs(
+            ir, offset_provider_type=offset_provider_type
+        )  # after `create_global_tmps` (one `as_fieldop` per statement); gtfn only: dace lowers the colour `concat_where` to per-colour maps itself
 
     ir = NormalizeShifts().visit(ir)
 
