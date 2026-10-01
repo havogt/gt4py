@@ -218,6 +218,13 @@ def test_vertical_dim_on_threads_beyond_three_dims():
     assert "gpu<generated::block_sizes_t,generated::loop_block_sizes_t>" in source
 
 
+def test_vertical_loop_block_counts_thread_dims_only():
+    # X loops in each thread, so the threads of a launch are I * J * K / block
+    source = _copy_program_source({IDim: 100, JDim: 116, XDim: 3, K: 80})
+
+    assert "gridtools::meta::list<K_t,gridtools::integral_constant<int,5>>" in source
+
+
 def test_vertical_loop_block_needs_static_sizes():
     source = _copy_program_source({IDim: "n", JDim: 116, XDim: 1, K: 80})
 

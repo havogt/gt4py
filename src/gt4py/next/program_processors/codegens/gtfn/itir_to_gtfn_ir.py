@@ -8,7 +8,6 @@
 
 import dataclasses
 import functools
-import math
 from typing import Any, Callable, ClassVar, Final, Iterable, Optional, Type, TypeGuard, Union
 
 from ordered_set import OrderedSet
@@ -110,7 +109,9 @@ def _vertical_loop_block(body: Iterable[itir.Stmt]) -> tuple[str, int] | None:
     Only for programs whose every domain with a vertical dim is a cartesian domain of more than
     three dims (the vertical dim then runs on threads, see `_visit_cartesian_domain`): one loop
     block applies to all launches of a program, and on a domain of up to three dims it would
-    change today's mapping. The largest launch decides; dynamic sizes give no loop block.
+    change today's mapping. The largest launch decides, counted over its thread dims (the first
+    two dims and the vertical one; further dims loop in each thread); dynamic sizes give no
+    loop block.
     """
     largest: tuple[int, int] | None = None
     names = []
@@ -131,7 +132,8 @@ def _vertical_loop_block(body: Iterable[itir.Stmt]) -> tuple[str, int] | None:
                 return None
             sizes[dim] = int(r.stop.value) - int(r.start.value)
         names.append(common.as_non_staggered(vertical[0]).value)
-        points = math.prod(sizes.values())
+        horizontal = [n for dim, n in sizes.items() if dim != vertical[0]]
+        points = horizontal[0] * horizontal[1] * sizes[vertical[0]]
         if largest is None or points > largest[0]:
             largest = (points, sizes[vertical[0]])
     if largest is None or len(set(names)) != 1:
