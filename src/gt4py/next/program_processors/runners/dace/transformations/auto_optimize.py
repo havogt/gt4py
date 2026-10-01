@@ -147,6 +147,7 @@ def gt_auto_optimize(
     sdfg: dace.SDFG,
     gpu: bool,
     unit_strides_kind: Optional[gtx_common.DimensionKind] = None,
+    unit_strides_dims: Optional[Sequence[gtx_common.Dimension]] = None,
     transient_memory_mode: TransientMemoryMode = TransientMemoryMode.POOL,
     gpu_block_size: Optional[Sequence[int | str] | str] = (32, 8, 1),
     gpu_block_size_1d: Optional[Sequence[int | str] | str] = (64, 1, 1),
@@ -207,6 +208,11 @@ def gt_auto_optimize(
         gpu: Optimize for GPU or CPU.
         unit_strides_kind: All dimensions of this kind are considered to have unit
             strides, see `gt_set_iteration_order()` for more.
+        unit_strides_dims: The dimensions with the smallest strides, unit stride first,
+            for layouts with several dimensions of one kind. The first is iterated by
+            the innermost loop (CPU) or the GPU `x` dimension, the second by `y`. Takes
+            precedence over `unit_strides_kind`; the kind of the first dimension selects
+            the transient strides.
         transient_memory_mode: Lifetime for transient arrays.
         gpu_block_size: This is used as default thread block size for GPU Maps. See
             also the `gpu_block_size_*d` arguments
@@ -419,6 +425,7 @@ def gt_auto_optimize(
             sdfg=sdfg,
             gpu=gpu,
             unit_strides_kind=unit_strides_kind,
+            unit_strides_dims=unit_strides_dims,
             gpu_block_size=gpu_block_size,
             gpu_launch_factor=gpu_launch_factor,
             gpu_launch_bounds=gpu_launch_bounds,
@@ -892,6 +899,7 @@ def _gt_auto_configure_maps_and_strides(
     sdfg: dace.SDFG,
     gpu: bool,
     unit_strides_kind: Optional[gtx_common.DimensionKind],
+    unit_strides_dims: Optional[Sequence[gtx_common.Dimension]],
     gpu_block_size: Optional[Sequence[int | str] | str],
     gpu_launch_bounds: Optional[int | str],
     gpu_launch_factor: Optional[int],
@@ -918,10 +926,10 @@ def _gt_auto_configure_maps_and_strides(
     #  at some point. Thus in that case we pretend that it is horizontal. Which is
     #  a valid assumption for any ICON-like code or if the GT4Py allocator is used.
     # TODO(phimuell): Make this selection more intelligent.
-    if unit_strides_kind is None and gpu:
-        prefered_direction_kind: Optional[gtx_common.DimensionKind] = (
-            gtx_common.DimensionKind.HORIZONTAL
-        )
+    if unit_strides_dims:
+        prefered_direction_kind: Optional[gtx_common.DimensionKind] = unit_strides_dims[0].kind
+    elif unit_strides_kind is None and gpu:
+        prefered_direction_kind = gtx_common.DimensionKind.HORIZONTAL
     else:
         prefered_direction_kind = unit_strides_kind
 
@@ -933,7 +941,14 @@ def _gt_auto_configure_maps_and_strides(
     # NOTE: This is not the only location where we manipulate the Map order, we also
     #   do it in the GPU transformation, where we have to set the order of the
     #   expanded Memlets.
-    if prefered_direction_kind is not None:
+    if unit_strides_dims:
+        gtx_transformations.gt_set_iteration_order(
+            sdfg=sdfg,
+            unit_strides_dim=list(unit_strides_dims),
+            validate=False,
+            validate_all=validate_all,
+        )
+    elif prefered_direction_kind is not None:
         gtx_transformations.gt_set_iteration_order(
             sdfg=sdfg,
             unit_strides_kind=prefered_direction_kind,
@@ -953,7 +968,7 @@ def _gt_auto_configure_maps_and_strides(
         gtx_transformations.gt_change_strides(sdfg, prefered_direction_kind=prefered_direction_kind)
 
     if gpu:
-        if unit_strides_kind != gtx_common.DimensionKind.HORIZONTAL:
+        if not unit_strides_dims and unit_strides_kind != gtx_common.DimensionKind.HORIZONTAL:
             warnings.warn(
                 "The GT4Py DaCe GPU backend assumes that the leading dimension, i.e."
                 " where stride is 1, is of kind 'HORIZONTAL', however it was"

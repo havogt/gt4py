@@ -135,3 +135,39 @@ def test_map_order_unit_strides_dim_3():
 def test_map_order_unit_strides_dim_4():
     sdfg = _make_test_sdfg(["CDim", "KDim"])
     _perform_reorder_test(sdfg, ["EDim", "VDim"], [])
+
+
+_I = gtx_common.Dimension("I")
+_J = gtx_common.Dimension("J")
+_K = gtx_common.Dimension("K", kind=gtx_common.DimensionKind.VERTICAL)
+
+
+def _auto_optimized(gpu: bool, **kwargs) -> tuple[str, list[str]]:
+    sdfg = _make_test_sdfg([f"i_{dim.value}_gtx_{dim.kind}" for dim in (_I, _J, _K)])
+    gtx_transformations.gt_auto_optimize(sdfg, gpu=gpu, **kwargs)
+    (map_entry,) = [
+        node
+        for node in util.count_nodes(sdfg, dace.nodes.MapEntry, True)
+        if len(node.map.params) == 3
+    ]
+    return sdfg.hash_sdfg(), map_entry.map.params
+
+
+@pytest.mark.parametrize("gpu", [False, True])
+def test_auto_optimize_unit_strides_dims_none_is_default(gpu: bool):
+    assert _auto_optimized(gpu, unit_strides_dims=None) == _auto_optimized(gpu)
+
+
+@pytest.mark.parametrize("gpu", [False, True])
+@pytest.mark.parametrize(
+    ["unit_strides_dims", "expected"],
+    [
+        ([_I, _J], ["i_K_gtx_vertical", "i_J_gtx_horizontal", "i_I_gtx_horizontal"]),
+        ([_K, _I], ["i_J_gtx_horizontal", "i_I_gtx_horizontal", "i_K_gtx_vertical"]),
+    ],
+)
+def test_auto_optimize_unit_strides_dims(gpu: bool, unit_strides_dims, expected):
+    _, default_params = _auto_optimized(gpu)
+    _, params = _auto_optimized(gpu, unit_strides_dims=unit_strides_dims)
+    assert params == expected
+    assert default_params != expected
