@@ -175,6 +175,21 @@ def test_shared_memory_staging_structure():
     assert any(barriers[0] < a < barriers[1] for a in accesses)
 
 
+def test_shared_memory_staging_single_barrier_prefetch():
+    sdfg = _make_sdfg()
+    assert _stage(sdfg, single_barrier=True, prefetch=True) == 1
+    sdfg.validate()
+    prefetched = [n for n in sdfg.arrays if n.startswith("__gt_smem_prefetched_f")]
+    assert len(prefetched) == 1
+    code = [c for c in sdfg.generate_code() if c.language == "cu"][0].clean_code
+    k_loop = code[code.index(f"for (auto {K}") :]
+    k_loop = k_loop[: k_loop.index("__global__")] if "__global__" in k_loop else k_loop
+    barriers = [m.start() for m in re.finditer(r"__syncthreads\(\);", k_loop)]
+    assert len(barriers) == 1
+    # next level's loads are issued before the barrier
+    assert k_loop.index(prefetched[0]) < barriers[0]
+
+
 def test_shared_memory_staging_keeps_other_outputs():
     sdfg = _make_sdfg(other_output=True, shared_input=True)
     sdfg.validate()
@@ -226,8 +241,9 @@ def test_shared_memory_staging_rejects_ambiguous_label():
         ({}, {}),
         ({"other_output": True, "shared_input": True}, {}),
         ({}, {"double_buffer": False}),
+        ({"other_output": True}, {"single_barrier": True, "prefetch": True}),
     ],
-    ids=["base", "other_output", "single_buffer"],
+    ids=["base", "other_output", "single_buffer", "prefetch"],
 )
 def test_shared_memory_staging_result(sdfg_kwargs, stage_kwargs):
     import cupy as cp
