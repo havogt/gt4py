@@ -1745,3 +1745,71 @@ def test_concat_where_multiple_producers(nb_producers: int):
 
     csdfg = util.compile_and_run_sdfg(sdfg, **res)
     assert util.compare_sdfg_res(ref=ref, res=res)
+
+
+def _make_size_one_producer_sdfg(
+    nb_producers: int, per_producer: int, pad: int, inner_shape: tuple[int, ...]
+) -> tuple[dace.SDFG, dace.SDFGState, dace_nodes.AccessNode]:
+    """Producers of shape `(pad + per_producer, *inner_shape)`; a size-1 dimension is squeezed by DaCe."""
+    N = nb_producers * per_producer
+    inner_ranges = [f"0:{size}" for size in inner_shape]
+
+    sdfg = dace.SDFG(util.unique_name("size_one_producers"))
+    state = sdfg.add_state()
+    for name in ["output", "c"]:
+        sdfg.add_array(name, shape=(N, *inner_shape), dtype=dace.float64, transient=(name == "c"))
+    concat_node = state.add_access("c")
+
+    for i in range(nb_producers):
+        prod_data = f"prod_{i}"
+        sdfg.add_array(
+            prod_data, shape=(pad + per_producer, *inner_shape), dtype=dace.float64, transient=False
+        )
+        src = ", ".join([f"{pad}:{pad + per_producer}", *inner_ranges])
+        dst = ", ".join([f"{i * per_producer}:{(i + 1) * per_producer}", *inner_ranges])
+        state.add_nedge(
+            state.add_access(prod_data), concat_node, dace.Memlet(f"{prod_data}[{src}] -> [{dst}]")
+        )
+
+    map_params = [f"__i{d}" for d in range(1 + len(inner_shape))]
+    state.add_mapped_tasklet(
+        "compute",
+        map_ranges=dict(zip(map_params, [f"0:{N}", *inner_ranges])),
+        inputs={"__in": dace.Memlet(f"c[{', '.join(map_params)}]")},
+        outputs={"__out": dace.Memlet(f"output[{', '.join(map_params)}]")},
+        code="__out = __in + 3.2",
+        external_edges=True,
+        input_nodes={concat_node},
+    )
+    sdfg.validate()
+    return sdfg, state, concat_node
+
+
+@pytest.mark.parametrize(
+    "nb_producers, per_producer, pad, inner_shape",
+    [
+        pytest.param(2, 5, 1, (1, 3), id="size_one_middle_dim"),
+        pytest.param(2, 1, 0, (), id="all_dims_size_one"),
+        pytest.param(3, 5, 1, (1, 3), id="size_one_middle_dim_three_producers"),
+        pytest.param(4, 1, 0, (1,), id="all_dims_size_one_four_producers"),
+    ],
+)
+def test_concat_where_size_one_producer_dims(
+    nb_producers: int, per_producer: int, pad: int, inner_shape: tuple[int, ...]
+):
+    sdfg, state, concat_node = _make_size_one_producer_sdfg(
+        nb_producers, per_producer, pad, inner_shape
+    )
+
+    ref, res = util.make_sdfg_args(sdfg)
+    util.compile_and_run_sdfg(sdfg, **ref)
+
+    nb_repl = gtx_transformations.gt_replace_concat_where_node(
+        state=state, sdfg=sdfg, concat_node=concat_node
+    )
+    assert nb_repl == 1
+    sdfg.validate()
+    assert concat_node.data not in sdfg.arrays
+
+    util.compile_and_run_sdfg(sdfg, **res)
+    assert util.compare_sdfg_res(ref=ref, res=res)

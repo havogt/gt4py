@@ -1039,6 +1039,13 @@ def _replace_single_read(
         producer_spec = producer_specs[i]
         prod_subset = producer_spec.subset
         prod_offsets = producer_spec.offset
+        # The input Memlet spans the whole producer array; DaCe squeezes its size-1 dimensions
+        #  from the Tasklet connector, so they must not be indexed.
+        squeezed_dims = {
+            dim
+            for dim, size in enumerate(dace_sbs.Range.from_array(producer_spec.desc).size())
+            if size == 1
+        }
 
         this_select_cond: list[str] = []
         this_prod_access: list[str] = []
@@ -1051,9 +1058,10 @@ def _replace_single_read(
             this_select_cond.append(
                 f"((({prod_supply_start}) <= ({consumer_access})) and (({consumer_access}) <= ({prod_supply_end})))"
             )
-            this_prod_access.append(
-                f"(({prod_offset}) + (({consumer_access}) - ({prod_supply_start})))"
-            )
+            if dim not in squeezed_dims:
+                this_prod_access.append(
+                    f"(({prod_offset}) + (({consumer_access}) - ({prod_supply_start})))"
+                )
         prod_accesses.append(", ".join(this_prod_access))
         select_conds.append(" and ".join(this_select_cond))
 
@@ -1067,11 +1075,14 @@ def _replace_single_read(
             tinput_map[producer_spec.data_name] = (tlet_inputs[-1], producer_spec)
 
     # This writes the Tasklet code as a series of nested `?:` operators.
+    def read(tlet_input: str, prod_access: str) -> str:
+        return f"{tlet_input}[{prod_access}]" if prod_access else tlet_input
+
     def write_tasklet_code(tlet_inputs, select_conds, prod_accesses):  # type: ignore[no-untyped-def]
         if len(tlet_inputs) == 2:
-            return f"{tlet_inputs[0]}[{prod_accesses[0]}] if ({select_conds[0]}) else {tlet_inputs[1]}[{prod_accesses[1]}]"
+            return f"{read(tlet_inputs[0], prod_accesses[0])} if ({select_conds[0]}) else {read(tlet_inputs[1], prod_accesses[1])}"
         assert len(tlet_inputs) > 2
-        return f"{tlet_inputs[0]}[{prod_accesses[0]}] if ({select_conds[0]}) else ({write_tasklet_code(tlet_inputs[1:], select_conds[1:], prod_accesses[1:])})"
+        return f"{read(tlet_inputs[0], prod_accesses[0])} if ({select_conds[0]}) else ({write_tasklet_code(tlet_inputs[1:], select_conds[1:], prod_accesses[1:])})"
 
     tlet_code = f"{tlet_output} = {write_tasklet_code(tlet_inputs, select_conds, prod_accesses)}"
 
