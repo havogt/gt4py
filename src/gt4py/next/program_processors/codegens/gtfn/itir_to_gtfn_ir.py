@@ -8,7 +8,8 @@
 
 import dataclasses
 import functools
-from typing import Any, Callable, ClassVar, Iterable, Optional, Type, TypeGuard, Union
+import math
+from typing import Any, Callable, ClassVar, Final, Iterable, Optional, Type, TypeGuard, Union
 
 from ordered_set import OrderedSet
 
@@ -89,6 +90,55 @@ def _get_domains(nodes: Iterable[itir.Stmt]) -> Iterable[itir.FunCall]:
     for node in nodes:
         result.update(node.walk_values().if_isinstance(itir.SetAt).getattr("domain").to_list())
     return result
+
+
+#: Threads one launch of a cartesian domain with more than three dims should keep; the vertical
+#: loop block is sized to it. Measured on GH200 for the structured diffusion (1 km to 250 m).
+_THREADS_PER_LAUNCH: Final = 185_000
+
+
+def _vertical_position(domain: itir.FunCall) -> int | None:
+    dims = list(domain_utils.SymbolicDomain.from_expr(domain).ranges)
+    vertical = [i for i, dim in enumerate(dims) if dim.kind == common.DimensionKind.VERTICAL]
+    return vertical[0] if len(vertical) == 1 else None
+
+
+def _vertical_loop_block(body: Iterable[itir.Stmt]) -> tuple[str, int] | None:
+    """
+    Vertical tag and loop block for the gpu backend, from the static sizes of the launch domains.
+
+    Only for programs whose every domain with a vertical dim is a cartesian domain of more than
+    three dims (the vertical dim then runs on threads, see `_visit_cartesian_domain`): one loop
+    block applies to all launches of a program, and on a domain of up to three dims it would
+    change today's mapping. The largest launch decides; dynamic sizes give no loop block.
+    """
+    largest: tuple[int, int] | None = None
+    names = []
+    for domain in _get_domains(body):
+        ranges = domain_utils.SymbolicDomain.from_expr(domain).ranges
+        vertical = [dim for dim in ranges if dim.kind == common.DimensionKind.VERTICAL]
+        if not vertical:
+            continue
+        if (
+            domain.fun != itir.SymRef(id="cartesian_domain")
+            or len(ranges) <= 3
+            or len(vertical) > 1
+        ):
+            return None
+        sizes = {}
+        for dim, r in ranges.items():
+            if not (isinstance(r.start, itir.Literal) and isinstance(r.stop, itir.Literal)):
+                return None
+            sizes[dim] = int(r.stop.value) - int(r.start.value)
+        names.append(common.as_non_staggered(vertical[0]).value)
+        points = math.prod(sizes.values())
+        if largest is None or points > largest[0]:
+            largest = (points, sizes[vertical[0]])
+    if largest is None or len(set(names)) != 1:
+        return None
+    points, levels = largest
+    block = min(max(round(points / _THREADS_PER_LAUNCH), 1), levels)
+    return (names[0], block) if block > 1 else None
 
 
 def _name_from_named_range(named_range_call: itir.FunCall) -> str:
@@ -541,6 +591,13 @@ class GTFN_lowering(eve.NodeTranslator, eve.VisitorWithSymbolTableTrait):
         return FunCall(fun=SymRef(id="tuple_get"), args=[tuple_idx, self.visit(node.args[1])])
 
     def _visit_cartesian_domain(self, node: itir.FunCall, **kwargs: Any) -> Node:
+        # the gpu backend runs domain dims 0-2 on threads and loops all further dims in each
+        # thread; beyond three dims keep the vertical dim on threads
+        pos = _vertical_position(node)
+        if len(node.args) > 3 and pos is not None and pos > 2:
+            args = list(node.args)
+            args.insert(2, args.pop(pos))
+            node = itir.FunCall(fun=node.fun, args=args)
         sizes, domain_offsets = self._make_domain(node)
         return CartesianDomain(tagged_sizes=sizes, tagged_offsets=domain_offsets)
 
@@ -771,7 +828,10 @@ class GTFN_lowering(eve.NodeTranslator, eve.VisitorWithSymbolTableTrait):
             **_collect_offset_definitions(node, self.grid_type, self.offset_provider_type),
         }
         offset_definitions = _add_staggered_aliases(offset_definitions)
+        loop_block = _vertical_loop_block(node.body)
         return Program(
+            loop_block_tag=loop_block[0] if loop_block else None,
+            loop_block_size=loop_block[1] if loop_block else 1,
             id=SymbolName(node.id),
             params=self.visit(node.params),
             executions=executions,

@@ -261,7 +261,8 @@ class GTFNCodegen(codegen.TemplatedGenerator):
         return self.generic_visit(
             node,
             grid_type_str=self._grid_type_str[node.grid_type],
-            block_sizes=self._block_sizes(node.offset_definitions),
+            block_sizes=self._block_sizes(node.offset_definitions)
+            + self._loop_block_sizes(node.loop_block_tag, node.loop_block_size),
             **kwargs,
         )
 
@@ -325,6 +326,15 @@ class GTFNCodegen(codegen.TemplatedGenerator):
             return f"using block_sizes_t = gridtools::meta::list<{sizes_str}>;"
         else:
             return "using block_sizes_t = gridtools::meta::list<gridtools::meta::list<gtfn::unstructured::dim::horizontal, gridtools::integral_constant<int, 32>>, gridtools::meta::list<gtfn::unstructured::dim::vertical, gridtools::integral_constant<int, 8>>>;"
+
+    @staticmethod
+    def _loop_block_sizes(tag: str | None, size: int) -> str:
+        sizes = (
+            f"gridtools::meta::list<{tag}_t, gridtools::integral_constant<int, {size}>>"
+            if tag is not None
+            else ""
+        )
+        return f"\nusing loop_block_sizes_t = gridtools::meta::list<{sizes}>;"
 
     @classmethod
     def apply(cls, root: Any, **kwargs: Any) -> str:

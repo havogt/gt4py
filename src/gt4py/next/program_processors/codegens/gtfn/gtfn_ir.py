@@ -273,5 +273,8 @@ class Program(Node, ValidatedSymbolTableTrait):
     offset_definitions: list[TagDefinition]
     grid_type: common.GridType
     temporaries: list[TemporaryAllocation]
+    #: per-thread loop block of the gpu backend along this (vertical) tag
+    loop_block_tag: Optional[str] = None
+    loop_block_size: int = 1
 
     _NODE_SYMBOLS_: ClassVar[list[Sym]] = [Sym(id=name) for name in BUILTINS]

@@ -19,7 +19,7 @@ from gt4py.next import fingerprinting
 from gt4py.next.otf import arguments, artifacts, stages
 from gt4py.next.program_processors.codegens.gtfn import gtfn_module
 from gt4py.next.program_processors.runners import gtfn
-from gt4py.next.type_system import type_translation
+from gt4py.next.type_system import type_specifications as ts, type_translation
 from gt4py.next import custom_layout_allocators as next_allocators
 
 from next_tests.integration_tests import cases
@@ -157,3 +157,76 @@ def test_gtfn_file_cache(program_example):
         bare_gtfn_translation_step(compilable_program)
         == cached_gtfn_translation_step.cache[cache_key]
     )
+
+
+def _copy_program_source(sizes: dict[gtx.Dimension, int | str]) -> str:
+    """CUDA source, without whitespace, of `out ← as_fieldop(deref)(inp)` on a cartesian domain of `sizes`."""
+    dims = list(sizes)
+    params = [gtx.as_field(dims, np.empty([2] * len(dims))) for _ in range(2)]
+    domain = im.domain(
+        gtx.GridType.CARTESIAN,
+        {d: (0, im.ref(n) if isinstance(n, str) else n) for d, n in sizes.items()},
+    )
+    symbolic = [
+        im.sym(n, ts.ScalarType(kind=ts.ScalarKind.INT32))
+        for n in sizes.values()
+        if isinstance(n, str)
+    ]
+    program = itir.Program(
+        id="copy",
+        params=[
+            *(
+                im.sym(name, type_translation.from_value(p))
+                for name, p in zip(("out", "inp"), params)
+            ),
+            *symbolic,
+        ],
+        function_definitions=[],
+        declarations=[],
+        body=[
+            itir.SetAt(
+                expr=im.as_fieldop(im.lambda_("a")(im.deref("a")), domain)("inp"),
+                domain=domain,
+                target=im.ref("out"),
+            )
+        ],
+    )
+    module = gtfn_module.GTFNTranslationStep(device_type=gtx.DeviceType.CUDA)(
+        stages.CompilableProgramDef(
+            data=program,
+            args=arguments.CompileTimeArgs.from_concrete(
+                *params, *(np.int32(2) for _ in symbolic), offset_provider={}
+            ),
+        )
+    )
+    return "".join(module.source_code.split())
+
+
+IDim, JDim, XDim = gtx.Dimension("I"), gtx.Dimension("J"), gtx.Dimension("X")
+K = gtx.Dimension("K", kind=gtx.DimensionKind.VERTICAL)
+
+
+def test_vertical_dim_on_threads_beyond_three_dims():
+    source = _copy_program_source({IDim: 100, JDim: 116, XDim: 1, K: 80})
+
+    # 100 * 116 * 80 points, about 185k threads per launch: each thread loops 5 levels
+    assert "keys<I_t,J_t,K_t,X_t>" in source
+    assert (
+        "usingloop_block_sizes_t=gridtools::meta::list<gridtools::meta::list<K_t,gridtools::integral_constant<int,5>>>;"
+        in source
+    )
+    assert "gpu<generated::block_sizes_t,generated::loop_block_sizes_t>" in source
+
+
+def test_vertical_loop_block_needs_static_sizes():
+    source = _copy_program_source({IDim: "n", JDim: 116, XDim: 1, K: 80})
+
+    assert "keys<I_t,J_t,K_t,X_t>" in source
+    assert "usingloop_block_sizes_t=gridtools::meta::list<>;" in source
+
+
+def test_three_dims_keep_their_mapping():
+    source = _copy_program_source({IDim: 1000, JDim: 1000, K: 80})
+
+    assert "keys<I_t,J_t,K_t>" in source
+    assert "usingloop_block_sizes_t=gridtools::meta::list<>;" in source
