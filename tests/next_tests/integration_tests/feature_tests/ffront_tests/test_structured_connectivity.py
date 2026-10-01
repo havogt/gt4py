@@ -108,6 +108,13 @@ def chained(c: gtx.Field[[Cell, K], float]) -> gtx.Field[[Cell, K], float]:
 
 
 @gtx.field_operator
+def vertex_temporary_shift(v: gtx.Field[[Vertex, K], float]) -> gtx.Field[[Edge, K], float]:
+    vt = v * 3.0
+    e = vt(E2C2V[1])
+    return e * 2.0
+
+
+@gtx.field_operator
 def v2e_sum(e: gtx.Field[[Edge, K], float]) -> gtx.Field[[Vertex, K], float]:
     return neighbor_sum(e(V2E), axis=V2EDim)
 
@@ -273,6 +280,21 @@ def test_chained(exec_alloc_descriptor, rng):
 
     actual = _call(
         chained, exec_alloc_descriptor, _as_field(exec_alloc_descriptor, Cell, c), out_entity=Cell
+    )
+
+    _assert_matches(actual, reference)
+
+
+def test_one_color_temporary_read_per_color(exec_alloc_descriptor, rng):
+    # the per-colour branches are shifted slices of a one-colour (X extent 1) temporary
+    v = _torus_field(rng, Vertex)
+    reference = 6.0 * _neighbor(v, [("E2C2V", 1)], range(N_COLORS[Edge]))
+
+    actual = _call(
+        vertex_temporary_shift,
+        exec_alloc_descriptor,
+        _as_field(exec_alloc_descriptor, Vertex, v),
+        out_entity=Edge,
     )
 
     _assert_matches(actual, reference)
