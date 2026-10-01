@@ -151,12 +151,18 @@ def test_shared_memory_staging_structure():
     )
 
     maps = [node.map for node in state.nodes() if isinstance(node, dace_nodes.MapEntry)]
-    blocks = [m for m in maps if m.schedule == dace.ScheduleType.GPU_ThreadBlock]
-    assert len(blocks) == 2
-    assert all([int(r[1] - r[0] + 1) for r in m.range] == [TILE[1], TILE[0]] for m in blocks)
+    (block,) = [m for m in maps if m.schedule == dace.ScheduleType.GPU_ThreadBlock]
+    assert [int(r[1] - r[0] + 1) for r in block.range] == [TILE[1], TILE[0]]
     (k_map,) = [m for m in maps if m.params == [K]]
     assert k_map.schedule == dace.ScheduleType.Sequential
     assert kernels[0].map.range[0][2] == K_CHUNK
+    assert sum(m.gpu_force_syncthreads for m in maps) == 2
+    hoisted = [
+        name
+        for name, d in sdfg.arrays.items()
+        if d.storage == dace.StorageType.Register and name.startswith("__gt_smem_hoisted_c")
+    ]
+    assert len(hoisted) == 1 and tuple(sdfg.arrays[hoisted[0]].shape) == (1,)
 
     code = [c for c in sdfg.generate_code() if c.language == "cu"][0].clean_code
     assert "__shared__ double" in code

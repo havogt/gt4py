@@ -23,6 +23,7 @@ from dace.sdfg import nodes as dace_nodes
 
 _PREFIX = "__gt_smem"
 _MAX_STATIC_SHARED_BYTES = 48 * 1024
+_MAX_HOISTED_ELEMENTS = 16
 
 
 class StagingRefusedError(NotImplementedError):
@@ -302,12 +303,16 @@ class _ScopeCopier:
                     )
         return mapping
 
-    def route_in(self, outer_src: dace_nodes.AccessNode) -> str:
-        """Bring `outer_src` into the innermost entry of the chain; returns the out-connector."""
+    def route_in(
+        self,
+        outer_src: dace_nodes.AccessNode,
+        entries: Optional[Sequence[dace_nodes.MapEntry]] = None,
+    ) -> str:
+        """Bring `outer_src` into the last of `entries` (default: the chain); returns the connector."""
         full = dace.Memlet.from_array(outer_src.data, self.sdfg.arrays[outer_src.data])
         src: dace_nodes.Node = outer_src
         src_conn: Optional[str] = None
-        for entry in self.entries:
+        for entry in self.entries if entries is None else entries:
             key = (entry, outer_src)
             if key not in self.in_routes:
                 conn = f"{outer_src.data}_{len(self.in_routes)}"
@@ -318,6 +323,111 @@ class _ScopeCopier:
             src, src_conn = entry, self.in_routes[key]
         assert src_conn is not None
         return src_conn
+
+    def enable_hoisting(
+        self,
+        k: str,
+        x: str,
+        x_lo: Any,
+        n_x: int,
+        guard_ranges: dict[str, str],
+        label: str,
+        avoid: set[str],
+    ) -> None:
+        """Load k-invariant inputs once per thread, before the vertical loop.
+
+        The entries of the chain are `[kernel, thread block, vertical loop, wrap,
+        guard]`; the loads run in a copy of the guard between the thread-block
+        map and the vertical loop, into registers indexed by the colour.
+        """
+        self.hoist = (k, x, x_lo, n_x, guard_ranges, label, avoid)
+        self.hoist_map: Optional[tuple[dace_nodes.MapEntry, dace_nodes.MapExit]] = None
+        self.hoisted: dict[tuple[str, str], dace_nodes.AccessNode] = {}
+
+    def _hoistable(self, edge: Any) -> bool:
+        if getattr(self, "hoist", None) is None:
+            return False
+        k, _, _, _, _, _, avoid = self.hoist
+        memlet = edge.data
+        if memlet.data in avoid or self.sdfg.arrays[memlet.data].storage in (
+            dace.StorageType.GPU_Shared,
+            dace.StorageType.Register,
+        ):
+            return False
+        if k in {str(sym) for sym in memlet.subset.free_symbols}:
+            return False
+        if isinstance(edge.dst, dace_nodes.Tasklet) and k in edge.dst.free_symbols:
+            return False
+        sizes = [dace_symbolic.simplify(size) for size in memlet.subset.size()]
+        return (
+            all(size.is_Integer for size in sizes)
+            and int(functools.reduce(lambda a, b: a * b, sizes, 1)) <= _MAX_HOISTED_ELEMENTS
+        )
+
+    def connect_input(
+        self,
+        edge: Any,
+        outer_src: dace_nodes.AccessNode,
+        dst: dace_nodes.Node,
+    ) -> None:
+        """Connect the copy `dst` of `edge.dst` to the data `edge` reads."""
+        if not self._hoistable(edge):
+            conn = self.route_in(outer_src)
+            self.state.add_edge(self.entries[-1], conn, dst, edge.dst_conn, self.memlet(edge.data))
+            return
+        _, x, x_lo, n_x, guard_ranges, label, _ = self.hoist
+        memlet = edge.data
+        sizes = [int(dace_symbolic.simplify(size)) for size in memlet.subset.size()]
+        rest = [size for size in sizes if size != 1]
+        key = (memlet.data, str(memlet.subset))
+        if key not in self.hoisted:
+            if self.hoist_map is None:
+                self.hoist_map = self.state.add_map(
+                    f"{label}_hoist",
+                    guard_ranges,
+                    schedule=dace.ScheduleType.Sequential,
+                    unroll=True,
+                )
+            h_entry, h_exit = self.hoist_map
+            desc = self.sdfg.arrays[memlet.data]
+            name, _ = self.sdfg.add_array(
+                f"{_PREFIX}_hoisted_{memlet.data}",
+                shape=(n_x, *rest),
+                dtype=desc.dtype,
+                storage=dace.StorageType.Register,
+                lifetime=dace.AllocationLifetime.Scope,
+                transient=True,
+                find_new_name=True,
+            )
+            register = dace_subsets.Range(
+                [(f"{x} - ({x_lo})", f"{x} - ({x_lo})", 1)] + [(0, size - 1, 1) for size in rest]
+            )
+            conn = self.route_in(outer_src, [*self.entries[:2], h_entry])
+            inner = self.state.add_access(name)
+            self.state.add_edge(
+                h_entry,
+                conn,
+                inner,
+                None,
+                dace.Memlet(
+                    data=memlet.data, subset=copy.deepcopy(memlet.subset), other_subset=register
+                ),
+            )
+            full = dace.Memlet.from_array(name, self.sdfg.arrays[name])
+            h_exit.add_in_connector(f"IN_{name}")
+            h_exit.add_out_connector(f"OUT_{name}")
+            self.state.add_edge(inner, None, h_exit, f"IN_{name}", copy.deepcopy(full))
+            outer = self.state.add_access(name)
+            self.state.add_edge(h_exit, f"OUT_{name}", outer, None, copy.deepcopy(full))
+            self.hoisted[key] = outer
+        outer = self.hoisted[key]
+        conn = self.route_in(outer, self.entries[2:])
+        use = dace_subsets.Range(
+            [(f"{x} - ({x_lo})", f"{x} - ({x_lo})", 1)] + [(0, size - 1, 1) for size in rest]
+        )
+        self.state.add_edge(
+            self.entries[-1], conn, dst, edge.dst_conn, dace.Memlet(data=outer.data, subset=use)
+        )
 
     def route_out(self, outer_dst: dace_nodes.AccessNode) -> str:
         """Connect the innermost exit of the chain to `outer_dst`; returns the in-connector."""
@@ -394,13 +504,17 @@ def apply_staging(
     tile: tuple[int, int] = (32, 16),
     k_chunk: int = 40,
     double_buffer: bool = True,
+    single_barrier: bool = False,
+    hoist: bool = True,
+    launch_bounds: str = "0",
 ) -> dace_nodes.MapEntry:
     """Compute transients of a producer kernel in shared memory inside their consumer.
 
     The consumer becomes one kernel over horizontal tiles of `tile` threads
-    (core plus halo) and chunks of `k_chunk` levels. Per level, one thread-block
-    map computes the producer's dataflow of `data` on the tile into a shared
-    array, the next one runs the consumer on the core. The producer keeps its
+    (core plus halo) and chunks of `k_chunk` levels, with one thread per tile
+    point looping over the levels. Per level, the producer's dataflow of `data`
+    is computed on the tile into a shared array, then the consumer runs on the
+    core; the colour loops are unrolled. The producer keeps its
     other outputs and is removed if it has none; the transients are removed.
 
     Requirements, all checked before the SDFG is modified: both maps are
@@ -421,6 +535,11 @@ def apply_staging(
         tile: Threads per block in I and J, halo included.
         k_chunk: Vertical levels per block.
         double_buffer: Alternate between two tile buffers per level.
+        single_barrier: With `double_buffer`, synchronise only after the
+            producer of each level.
+        hoist: Load the k-invariant inputs of both bodies once per thread,
+            before the vertical loop, into registers.
+        launch_bounds: `gpu_launch_bounds` of the kernel ("0": the block size).
 
     Returns:
         The map entry of the new kernel.
@@ -508,7 +627,7 @@ def apply_staging(
         staged[st.data] = dataclasses.replace(st, tile=tile_name)
 
     kb, tj, ti = f"{_PREFIX}_kb", f"{_PREFIX}_tj", f"{_PREFIX}_ti"
-    pj, pi, cj, ci = f"{_PREFIX}_pj", f"{_PREFIX}_pi", f"{_PREFIX}_cj", f"{_PREFIX}_ci"
+    lj, li = f"{_PREFIX}_lj", f"{_PREFIX}_li"
     label = f"{_PREFIX}_{consumer_entry.map.label}"
 
     kernel_entry, kernel_exit = state.add_map(
@@ -521,65 +640,75 @@ def apply_staging(
         schedule=dace.ScheduleType.GPU_Device,
     )
     kernel_entry.map.gpu_block_size = [tile_i, tile_j, 1]
-    kernel_entry.map.gpu_launch_bounds = "0"
+    kernel_entry.map.gpu_launch_bounds = launch_bounds
+    tb_entry, tb_exit = state.add_map(
+        f"{label}_tb",
+        {lj: f"0:{tile_j}", li: f"0:{tile_i}"},
+        schedule=dace.ScheduleType.GPU_ThreadBlock,
+    )
     k_entry, k_exit = state.add_map(
         f"{label}_k",
         {k: f"{kb}:Min({kb} + {k_chunk}, {c_k[1]} + 1)"},
         schedule=dace.ScheduleType.Sequential,
     )
-
-    def tb_map(suffix: str, lj: str, li: str) -> tuple[dace_nodes.MapEntry, dace_nodes.MapExit]:
-        return state.add_map(
-            f"{label}_{suffix}",
-            {lj: f"0:{tile_j}", li: f"0:{tile_i}"},
-            schedule=dace.ScheduleType.GPU_ThreadBlock,
-        )
-
-    tbp_entry, tbp_exit = tb_map("tb_producer", pj, pi)
-    tbc_entry, tbc_exit = tb_map("tb_consumer", cj, ci)
+    # The barriers: one after the producer (read after write of the tile) and,
+    #  without a second buffer, one after the consumer (write after read).
+    pw_entry, pw_exit = state.add_map(
+        f"{label}_producer_wrap", {f"{_PREFIX}_pw": "0:1"}, schedule=dace.ScheduleType.Sequential
+    )
+    pw_entry.map.gpu_force_syncthreads = True
+    cw_entry, cw_exit = state.add_map(
+        f"{label}_consumer_wrap", {f"{_PREFIX}_cw": "0:1"}, schedule=dace.ScheduleType.Sequential
+    )
+    cw_entry.map.gpu_force_syncthreads = not (double_buffer and single_barrier)
+    p_ranges = {
+        x: f"{p_x[0]}:{p_x[1]}+1",
+        j: f"Max({p_j[0]}, {tj} - {halo} + {lj}):Min({p_j[1]}, {tj} - {halo} + {lj})+1",
+        i: f"Max({p_i[0]}, {ti} - {halo} + {li}):Min({p_i[1]}, {ti} - {halo} + {li})+1",
+    }
+    c_ranges = {
+        x: f"{c_x[0]}:{c_x[1]}+1",
+        j: f"Max({c_j[0]}, {tj} - {halo} + {lj}, {tj}):"
+        f"Min({c_j[1]}, {tj} - {halo} + {lj}, {tj} + {core_j - 1})+1",
+        i: f"Max({c_i[0]}, {ti} - {halo} + {li}, {ti}):"
+        f"Min({c_i[1]}, {ti} - {halo} + {li}, {ti} + {core_i - 1})+1",
+    }
     pg_entry, pg_exit = state.add_map(
-        f"{label}_producer",
-        {
-            x: f"{p_x[0]}:{p_x[1]}+1",
-            j: f"Max({p_j[0]}, {tj} - {halo} + {pj}):Min({p_j[1]}, {tj} - {halo} + {pj})+1",
-            i: f"Max({p_i[0]}, {ti} - {halo} + {pi}):Min({p_i[1]}, {ti} - {halo} + {pi})+1",
-        },
-        schedule=dace.ScheduleType.Sequential,
+        f"{label}_producer", p_ranges, schedule=dace.ScheduleType.Sequential, unroll=True
     )
     cg_entry, cg_exit = state.add_map(
-        f"{label}_consumer",
-        {
-            x: f"{c_x[0]}:{c_x[1]}+1",
-            j: f"Max({c_j[0]}, {tj} - {halo} + {cj}, {tj}):"
-            f"Min({c_j[1]}, {tj} - {halo} + {cj}, {tj} + {core_j - 1})+1",
-            i: f"Max({c_i[0]}, {ti} - {halo} + {ci}, {ti}):"
-            f"Min({c_i[1]}, {ti} - {halo} + {ci}, {ti} + {core_i - 1})+1",
-        },
-        schedule=dace.ScheduleType.Sequential,
+        f"{label}_consumer", c_ranges, schedule=dace.ScheduleType.Sequential, unroll=True
     )
 
     for st in staged.values():
         node = state.add_access(st.tile)
         full = dace.Memlet.from_array(st.tile, sdfg.arrays[st.tile])
-        for scope_node in (pg_exit, tbp_exit, tbc_entry, cg_entry):
+        for scope_node in (pg_exit, pw_exit, cw_entry, cg_entry):
             scope_node.add_in_connector(f"IN_{st.tile}")
             scope_node.add_out_connector(f"OUT_{st.tile}")
-        state.add_edge(pg_exit, f"OUT_{st.tile}", tbp_exit, f"IN_{st.tile}", copy.deepcopy(full))
-        state.add_edge(tbp_exit, f"OUT_{st.tile}", node, None, copy.deepcopy(full))
-        state.add_edge(node, None, tbc_entry, f"IN_{st.tile}", copy.deepcopy(full))
-        state.add_edge(tbc_entry, f"OUT_{st.tile}", cg_entry, f"IN_{st.tile}", copy.deepcopy(full))
+        state.add_edge(pg_exit, f"OUT_{st.tile}", pw_exit, f"IN_{st.tile}", copy.deepcopy(full))
+        state.add_edge(pw_exit, f"OUT_{st.tile}", node, None, copy.deepcopy(full))
+        state.add_edge(node, None, cw_entry, f"IN_{st.tile}", copy.deepcopy(full))
+        state.add_edge(cw_entry, f"OUT_{st.tile}", cg_entry, f"IN_{st.tile}", copy.deepcopy(full))
 
     in_routes: dict[tuple[dace_nodes.MapEntry, dace_nodes.AccessNode], str] = {}
     rebase = functools.partial(_index_rebase, ti=ti, tj=tj, halo=halo, double_buffer=double_buffer)
+    written = {e.data.data for e in state.out_edges(c_exit)} | {
+        e.data.data for e in state.out_edges(p_exit)
+    }
 
     # Producer: copy the dataflow of the staged transients.
     copier = _ScopeCopier(
         sdfg,
         state,
-        [kernel_entry, k_entry, tbp_entry, pg_entry],
-        [pg_exit, tbp_exit, k_exit, kernel_exit],
+        [kernel_entry, tb_entry, k_entry, pw_entry, pg_entry],
+        [pg_exit, pw_exit, k_exit, tb_exit, kernel_exit],
         in_routes,
     )
+    if hoist:
+        copier.enable_hoisting(
+            k, x, p_x[0], int(p_x[1] - p_x[0] + 1), p_ranges, f"{label}_producer", written
+        )
     mapping = copier.copy_nodes(cone)
     _connect_inputs(state, copier, producer_entry, mapping)
     for edge in staged_writes:
@@ -598,10 +727,14 @@ def apply_staging(
     copier = _ScopeCopier(
         sdfg,
         state,
-        [kernel_entry, k_entry, tbc_entry, cg_entry],
-        [cg_exit, tbc_exit, k_exit, kernel_exit],
+        [kernel_entry, tb_entry, k_entry, cw_entry, cg_entry],
+        [cg_exit, cw_exit, k_exit, tb_exit, kernel_exit],
         in_routes,
     )
+    if hoist:
+        copier.enable_hoisting(
+            k, x, c_x[0], int(c_x[1] - c_x[0] + 1), c_ranges, f"{label}_consumer", written
+        )
     mapping = copier.copy_nodes(c_body)
     for read in reads:
         edge = read.edge
@@ -673,10 +806,7 @@ def _connect_inputs(
         if skip and edge.data.data in skip:
             continue
         outer = next(state.in_edges_by_connector(old_entry, "IN_" + edge.src_conn[4:]))
-        conn = copier.route_in(outer.src)
-        state.add_edge(
-            copier.entries[-1], conn, mapping[edge.dst], edge.dst_conn, copier.memlet(edge.data)
-        )
+        copier.connect_input(edge, outer.src, mapping[edge.dst])
 
 
 def _connect_empty_entry(
@@ -700,6 +830,9 @@ def gt_stage_in_shared_memory(
     tile: tuple[int, int] = (32, 16),
     k_chunk: int = 40,
     double_buffer: bool = True,
+    single_barrier: bool = False,
+    hoist: bool = True,
+    launch_bounds: str = "0",
 ) -> int:
     """Apply `apply_staging()` to pairs of top-level maps given by label.
 
@@ -710,6 +843,9 @@ def gt_stage_in_shared_memory(
         tile: See `apply_staging()`.
         k_chunk: See `apply_staging()`.
         double_buffer: See `apply_staging()`.
+        single_barrier: See `apply_staging()`.
+        hoist: See `apply_staging()`.
+        launch_bounds: See `apply_staging()`.
 
     Returns:
         The number of pairs staged; a pair whose maps are not found is skipped.
@@ -743,6 +879,9 @@ def gt_stage_in_shared_memory(
                     tile=tile,
                     k_chunk=k_chunk,
                     double_buffer=double_buffer,
+                    single_barrier=single_barrier,
+                    hoist=hoist,
+                    launch_bounds=launch_bounds,
                 )
                 count += 1
                 break
