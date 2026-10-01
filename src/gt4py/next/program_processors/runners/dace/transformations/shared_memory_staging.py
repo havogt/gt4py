@@ -243,6 +243,12 @@ def _check_scope_free(nodes: Sequence[dace_nodes.Node], what: str) -> None:
             _refuse(f"The {what} contains a nested scope or SDFG ({node}).")
 
 
+def _substituted(subset: dace_subsets.Range, old: Any, new: Any) -> dace_subsets.Range:
+    result = copy.deepcopy(subset)
+    result.replace({old: new})
+    return result
+
+
 class _ScopeCopier:
     """Copies nodes of a top-level map body into a new scope chain, renaming transients."""
 
@@ -260,6 +266,13 @@ class _ScopeCopier:
         self.inner: set[str] = set()
         self.in_routes = in_routes
         self.out_routes: dict[dace_nodes.AccessNode, str] = {}
+        self.hoist: Optional[tuple[str, str, Any, int, dict[str, str], str, set[str]]] = None
+        self.hoist_map: Optional[tuple[dace_nodes.MapEntry, dace_nodes.MapExit]] = None
+        self.hoisted: dict[tuple[str, str], dace_nodes.AccessNode] = {}
+        self.prefetch: Optional[tuple[str, str]] = None
+        self.preload_map: Optional[tuple[dace_nodes.MapEntry, dace_nodes.MapExit]] = None
+        self.prefetch_map: Optional[tuple[dace_nodes.MapEntry, dace_nodes.MapExit]] = None
+        self.prefetched: dict[tuple[str, str], dace_nodes.AccessNode] = {}
 
     def data_name(self, name: str) -> str:
         if name not in self.inner:
@@ -341,11 +354,9 @@ class _ScopeCopier:
         map and the vertical loop, into registers indexed by the colour.
         """
         self.hoist = (k, x, x_lo, n_x, guard_ranges, label, avoid)
-        self.hoist_map: Optional[tuple[dace_nodes.MapEntry, dace_nodes.MapExit]] = None
-        self.hoisted: dict[tuple[str, str], dace_nodes.AccessNode] = {}
 
     def _hoistable(self, edge: Any) -> bool:
-        if getattr(self, "hoist", None) is None:
+        if self.hoist is None:
             return False
         k, _, _, _, _, _, avoid = self.hoist
         memlet = edge.data
@@ -364,6 +375,96 @@ class _ScopeCopier:
             and int(functools.reduce(lambda a, b: a * b, sizes, 1)) <= _MAX_HOISTED_ELEMENTS
         )
 
+    def enable_prefetch(self, kb: str, k_stop: str) -> None:
+        """Load the level-dependent inputs one level ahead, before the barrier.
+
+        Requires `enable_hoisting()`. The loads of level `kb` run before the
+        vertical loop; inside it, after the guard, the loads of the next level
+        below `k_stop` overwrite the registers.
+        """
+        self.prefetch = (kb, k_stop)
+
+    def _prefetchable(self, edge: Any) -> bool:
+        if self.prefetch is None or self.hoist is None:
+            return False
+        k, _, _, _, _, _, avoid = self.hoist
+        memlet = edge.data
+        if memlet.data in avoid or self.sdfg.arrays[memlet.data].storage in (
+            dace.StorageType.GPU_Shared,
+            dace.StorageType.Register,
+        ):
+            return False
+        if isinstance(edge.dst, dace_nodes.Tasklet) and k in edge.dst.free_symbols:
+            return False
+        sizes = [dace_symbolic.simplify(size) for size in memlet.subset.size()]
+        return (
+            all(size.is_Integer for size in sizes)
+            and int(functools.reduce(lambda a, b: a * b, sizes, 1)) <= _MAX_HOISTED_ELEMENTS
+        )
+
+    def _register_array(self, prefix: str, memlet: dace.Memlet) -> tuple[str, list[int]]:
+        assert self.hoist is not None
+        _, _, _, n_x, _, _, _ = self.hoist
+        sizes = [int(dace_symbolic.simplify(size)) for size in memlet.subset.size()]
+        rest = [size for size in sizes if size != 1]
+        name, _ = self.sdfg.add_array(
+            f"{_PREFIX}_{prefix}_{memlet.data}",
+            shape=(n_x, *rest),
+            dtype=self.sdfg.arrays[memlet.data].dtype,
+            storage=dace.StorageType.Register,
+            lifetime=dace.AllocationLifetime.Scope,
+            transient=True,
+            find_new_name=True,
+        )
+        return name, rest
+
+    def _register_subset(self, rest: list[int]) -> dace_subsets.Range:
+        assert self.hoist is not None
+        _, x, x_lo, _, _, _, _ = self.hoist
+        return dace_subsets.Range(
+            [(f"{x} - ({x_lo})", f"{x} - ({x_lo})", 1)] + [(0, size - 1, 1) for size in rest]
+        )
+
+    def _load(
+        self,
+        scope: tuple[dace_nodes.MapEntry, dace_nodes.MapExit],
+        entries: list[dace_nodes.MapEntry],
+        outer_src: dace_nodes.AccessNode,
+        subset: dace_subsets.Range,
+        name: str,
+        rest: list[int],
+    ) -> dace_nodes.AccessNode:
+        """Copy `outer_src[subset]` into the register array `name` inside `scope`."""
+        entry, exit_ = scope
+        conn = self.route_in(outer_src, entries)
+        inner = self.state.add_access(name)
+        self.state.add_edge(
+            entry,
+            conn,
+            inner,
+            None,
+            dace.Memlet(
+                data=outer_src.data, subset=subset, other_subset=self._register_subset(rest)
+            ),
+        )
+        full = dace.Memlet.from_array(name, self.sdfg.arrays[name])
+        exit_.add_in_connector(f"IN_{name}")
+        exit_.add_out_connector(f"OUT_{name}")
+        self.state.add_edge(inner, None, exit_, f"IN_{name}", copy.deepcopy(full))
+        return inner
+
+    def _use(
+        self, outer: dace_nodes.AccessNode, rest: list[int], edge: Any, dst: dace_nodes.Node
+    ) -> None:
+        conn = self.route_in(outer, self.entries[2:])
+        self.state.add_edge(
+            self.entries[-1],
+            conn,
+            dst,
+            edge.dst_conn,
+            dace.Memlet(data=outer.data, subset=self._register_subset(rest)),
+        )
+
     def connect_input(
         self,
         edge: Any,
@@ -371,63 +472,108 @@ class _ScopeCopier:
         dst: dace_nodes.Node,
     ) -> None:
         """Connect the copy `dst` of `edge.dst` to the data `edge` reads."""
-        if not self._hoistable(edge):
+        if self.hoist is None:
             conn = self.route_in(outer_src)
             self.state.add_edge(self.entries[-1], conn, dst, edge.dst_conn, self.memlet(edge.data))
             return
-        _, x, x_lo, n_x, guard_ranges, label, _ = self.hoist
+        k, _, _, _, guard_ranges, label, _ = self.hoist
         memlet = edge.data
-        sizes = [int(dace_symbolic.simplify(size)) for size in memlet.subset.size()]
-        rest = [size for size in sizes if size != 1]
         key = (memlet.data, str(memlet.subset))
-        if key not in self.hoisted:
-            if self.hoist_map is None:
-                self.hoist_map = self.state.add_map(
-                    f"{label}_hoist",
-                    guard_ranges,
-                    schedule=dace.ScheduleType.Sequential,
-                    unroll=True,
+        if self._hoistable(edge):
+            if key not in self.hoisted:
+                if self.hoist_map is None:
+                    self.hoist_map = self.state.add_map(
+                        f"{label}_hoist",
+                        guard_ranges,
+                        schedule=dace.ScheduleType.Sequential,
+                        unroll=True,
+                    )
+                name, rest = self._register_array("hoisted", memlet)
+                self._load(
+                    self.hoist_map,
+                    [*self.entries[:2], self.hoist_map[0]],
+                    outer_src,
+                    copy.deepcopy(memlet.subset),
+                    name,
+                    rest,
                 )
-            h_entry, h_exit = self.hoist_map
-            desc = self.sdfg.arrays[memlet.data]
-            name, _ = self.sdfg.add_array(
-                f"{_PREFIX}_hoisted_{memlet.data}",
-                shape=(n_x, *rest),
-                dtype=desc.dtype,
-                storage=dace.StorageType.Register,
-                lifetime=dace.AllocationLifetime.Scope,
-                transient=True,
-                find_new_name=True,
-            )
-            register = dace_subsets.Range(
-                [(f"{x} - ({x_lo})", f"{x} - ({x_lo})", 1)] + [(0, size - 1, 1) for size in rest]
-            )
-            conn = self.route_in(outer_src, [*self.entries[:2], h_entry])
-            inner = self.state.add_access(name)
-            self.state.add_edge(
-                h_entry,
-                conn,
-                inner,
-                None,
-                dace.Memlet(
-                    data=memlet.data, subset=copy.deepcopy(memlet.subset), other_subset=register
-                ),
-            )
-            full = dace.Memlet.from_array(name, self.sdfg.arrays[name])
-            h_exit.add_in_connector(f"IN_{name}")
-            h_exit.add_out_connector(f"OUT_{name}")
-            self.state.add_edge(inner, None, h_exit, f"IN_{name}", copy.deepcopy(full))
-            outer = self.state.add_access(name)
-            self.state.add_edge(h_exit, f"OUT_{name}", outer, None, copy.deepcopy(full))
-            self.hoisted[key] = outer
-        outer = self.hoisted[key]
-        conn = self.route_in(outer, self.entries[2:])
-        use = dace_subsets.Range(
-            [(f"{x} - ({x_lo})", f"{x} - ({x_lo})", 1)] + [(0, size - 1, 1) for size in rest]
-        )
-        self.state.add_edge(
-            self.entries[-1], conn, dst, edge.dst_conn, dace.Memlet(data=outer.data, subset=use)
-        )
+                outer = self.state.add_access(name)
+                full = dace.Memlet.from_array(name, self.sdfg.arrays[name])
+                self.state.add_edge(self.hoist_map[1], f"OUT_{name}", outer, None, full)
+                self.hoisted[key] = outer
+            self._use(self.hoisted[key], self._register_array_rest(memlet), edge, dst)
+            return
+        if self._prefetchable(edge):
+            assert self.prefetch is not None
+            kb, k_stop = self.prefetch
+            if key not in self.prefetched:
+                if self.preload_map is None:
+                    self.preload_map = self.state.add_map(
+                        f"{label}_preload",
+                        guard_ranges,
+                        schedule=dace.ScheduleType.Sequential,
+                        unroll=True,
+                    )
+                    pf_ranges = {
+                        f"{_PREFIX}_pf": f"0:Min(1, Max(0, {k_stop} - {k} - 1))",
+                        **guard_ranges,
+                    }
+                    self.prefetch_map = self.state.add_map(
+                        f"{label}_prefetch",
+                        pf_ranges,
+                        schedule=dace.ScheduleType.Sequential,
+                        unroll=True,
+                    )
+                    # loads for the next level only after this level's reads
+                    self.state.add_edge(
+                        self.exits[0], None, self.prefetch_map[0], None, dace.Memlet()
+                    )
+                name, rest = self._register_array("prefetched", memlet)
+                k_sym = dace_symbolic.symbol(k)
+                self._load(
+                    self.preload_map,
+                    [*self.entries[:2], self.preload_map[0]],
+                    outer_src,
+                    _substituted(memlet.subset, k_sym, dace_symbolic.symbol(kb)),
+                    name,
+                    rest,
+                )
+                before = self.state.add_access(name)
+                full = dace.Memlet.from_array(name, self.sdfg.arrays[name])
+                self.state.add_edge(
+                    self.preload_map[1], f"OUT_{name}", before, None, copy.deepcopy(full)
+                )
+                assert self.prefetch_map is not None
+                self._load(
+                    self.prefetch_map,
+                    [*self.entries[:4], self.prefetch_map[0]],
+                    outer_src,
+                    _substituted(memlet.subset, k_sym, k_sym + 1),
+                    name,
+                    rest,
+                )
+                after = self.state.add_access(name)
+                chain = [self.prefetch_map[1], self.exits[1], self.exits[2]]
+                for depth, exit_ in enumerate(chain[1:], start=1):
+                    exit_.add_in_connector(f"IN_{name}")
+                    exit_.add_out_connector(f"OUT_{name}")
+                    self.state.add_edge(
+                        chain[depth - 1], f"OUT_{name}", exit_, f"IN_{name}", copy.deepcopy(full)
+                    )
+                self.state.add_edge(chain[-1], f"OUT_{name}", after, None, copy.deepcopy(full))
+                self.prefetched[key] = before
+            self._use(self.prefetched[key], self._register_array_rest(memlet), edge, dst)
+            return
+        conn = self.route_in(outer_src)
+        self.state.add_edge(self.entries[-1], conn, dst, edge.dst_conn, self.memlet(edge.data))
+
+    @staticmethod
+    def _register_array_rest(memlet: dace.Memlet) -> list[int]:
+        return [
+            size
+            for size in (int(dace_symbolic.simplify(s)) for s in memlet.subset.size())
+            if size != 1
+        ]
 
     def route_out(self, outer_dst: dace_nodes.AccessNode) -> str:
         """Connect the innermost exit of the chain to `outer_dst`; returns the in-connector."""
@@ -506,6 +652,7 @@ def apply_staging(
     double_buffer: bool = True,
     single_barrier: bool = False,
     hoist: bool = True,
+    prefetch: bool = False,
     launch_bounds: str = "0",
 ) -> dace_nodes.MapEntry:
     """Compute transients of a producer kernel in shared memory inside their consumer.
@@ -539,6 +686,8 @@ def apply_staging(
             producer of each level.
         hoist: Load the k-invariant inputs of both bodies once per thread,
             before the vertical loop, into registers.
+        prefetch: With `hoist`, load the producer's level-dependent inputs of
+            the next level before the barrier of the current one.
         launch_bounds: `gpu_launch_bounds` of the kernel ("0": the block size).
 
     Returns:
@@ -709,6 +858,8 @@ def apply_staging(
         copier.enable_hoisting(
             k, x, p_x[0], int(p_x[1] - p_x[0] + 1), p_ranges, f"{label}_producer", written
         )
+        if prefetch:
+            copier.enable_prefetch(kb, f"Min({kb} + {k_chunk}, {c_k[1]} + 1)")
     mapping = copier.copy_nodes(cone)
     _connect_inputs(state, copier, producer_entry, mapping)
     for edge in staged_writes:
@@ -832,6 +983,7 @@ def gt_stage_in_shared_memory(
     double_buffer: bool = True,
     single_barrier: bool = False,
     hoist: bool = True,
+    prefetch: bool = False,
     launch_bounds: str = "0",
 ) -> int:
     """Apply `apply_staging()` to pairs of top-level maps given by label.
@@ -845,6 +997,7 @@ def gt_stage_in_shared_memory(
         double_buffer: See `apply_staging()`.
         single_barrier: See `apply_staging()`.
         hoist: See `apply_staging()`.
+        prefetch: See `apply_staging()`.
         launch_bounds: See `apply_staging()`.
 
     Returns:
@@ -881,6 +1034,7 @@ def gt_stage_in_shared_memory(
                     double_buffer=double_buffer,
                     single_barrier=single_barrier,
                     hoist=hoist,
+                    prefetch=prefetch,
                     launch_bounds=launch_bounds,
                 )
                 count += 1
