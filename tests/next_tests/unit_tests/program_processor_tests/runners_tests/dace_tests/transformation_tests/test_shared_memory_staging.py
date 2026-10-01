@@ -143,6 +143,12 @@ def test_shared_memory_staging_structure():
 
     tiles = [name for name, d in sdfg.arrays.items() if d.storage == dace.StorageType.GPU_Shared]
     assert len(tiles) == 1 and tuple(sdfg.arrays[tiles[0]].shape) == (*TILE, 1, 2)
+    assert tuple(sdfg.arrays[tiles[0]].strides) == (
+        1,
+        TILE[0],
+        TILE[0] * TILE[1],
+        TILE[0] * TILE[1],
+    )
 
     maps = [node.map for node in state.nodes() if isinstance(node, dace_nodes.MapEntry)]
     blocks = [m for m in maps if m.schedule == dace.ScheduleType.GPU_ThreadBlock]
