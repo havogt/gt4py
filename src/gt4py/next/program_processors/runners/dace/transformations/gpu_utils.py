@@ -405,31 +405,35 @@ def gt_set_gpu_blocksize(
     setter = GPUSetBlockSize(**kwargs)
 
     configured_maps = 0
-    for state in sdfg.states():
-        scope_dict: Union[dict[Any, Any], None] = None
-        cfg_id = state.parent_graph.cfg_id
-        state_id = state.block_id
-        for node in state.nodes():
-            if not isinstance(node, dace_nodes.MapEntry):
-                continue
-            if scope_dict is None:
-                scope_dict = state.scope_dict()
-            if scope_dict[node] is not None:
-                continue
-            candidate = {GPUSetBlockSize.map_entry: node}
-            setter.setup_match(
-                sdfg=sdfg,
-                cfg_id=cfg_id,
-                state_id=state_id,
-                subgraph=candidate,
-                expr_index=0,
-                override=True,
-            )
-            if setter.can_be_applied(state, 0, sdfg, False):
-                setter.apply(state, sdfg)
-                if validate_all:
-                    sdfg.validate()
-                configured_maps += 1
+    for nsdfg in sdfg.all_sdfgs_recursive():
+        for state in nsdfg.all_states():
+            scope_dict: Union[dict[Any, Any], None] = None
+            cfg_id = state.parent_graph.cfg_id
+            state_id = state.block_id
+            for node in state.nodes():
+                if not isinstance(node, dace_nodes.MapEntry):
+                    continue
+                # In a nested SDFG, any other GPU schedule is a Map inside a kernel.
+                if nsdfg is not sdfg and node.map.schedule != dace.dtypes.ScheduleType.GPU_Device:
+                    continue
+                if scope_dict is None:
+                    scope_dict = state.scope_dict()
+                if scope_dict[node] is not None:
+                    continue
+                candidate = {GPUSetBlockSize.map_entry: node}
+                setter.setup_match(
+                    sdfg=nsdfg,
+                    cfg_id=cfg_id,
+                    state_id=state_id,
+                    subgraph=candidate,
+                    expr_index=0,
+                    override=True,
+                )
+                if setter.can_be_applied(state, 0, nsdfg, False):
+                    setter.apply(state, nsdfg)
+                    if validate_all:
+                        sdfg.validate()
+                    configured_maps += 1
 
     if validate and (not validate_all):
         sdfg.validate()

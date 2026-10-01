@@ -380,3 +380,37 @@ def test_set_gpu_maxnreg():
         gpu_maxnreg=128,
     )
     assert me.gpu_maxnreg == 128
+
+
+def test_set_gpu_properties_in_nested_sdfg():
+    inner = dace.SDFG(util.unique_name("inner"))
+    inner_state = inner.add_state(is_start_block=True)
+    for name in "AB":
+        inner.add_array(
+            name, shape=(100, 80), dtype=dace.float64, storage=dace.StorageType.GPU_Global
+        )
+    _, inner_me, _ = inner_state.add_mapped_tasklet(
+        "inner_map",
+        map_ranges={"__i0": "0:100", "__i1": "0:80"},
+        inputs={"__in": dace.Memlet("A[__i0, __i1]")},
+        code="__out = __in + 1.0",
+        outputs={"__out": dace.Memlet("B[__i0, __i1]")},
+        external_edges=True,
+        schedule=dace.dtypes.ScheduleType.GPU_Device,
+    )
+
+    sdfg = dace.SDFG(util.unique_name("outer"))
+    state = sdfg.add_state(is_start_block=True)
+    for name in "AB":
+        sdfg.add_array(
+            name, shape=(100, 80), dtype=dace.float64, storage=dace.StorageType.GPU_Global
+        )
+    nsdfg = state.add_nested_sdfg(inner, {"A"}, {"B"})
+    state.add_edge(state.add_access("A"), None, nsdfg, "A", dace.Memlet("A[0:100, 0:80]"))
+    state.add_edge(nsdfg, "B", state.add_access("B"), None, dace.Memlet("B[0:100, 0:80]"))
+    sdfg.validate()
+
+    configured = gtx_dace_fieldview_gpu_utils.gt_set_gpu_blocksize(sdfg=sdfg, block_size=(32, 8, 1))
+
+    assert configured == 1
+    assert inner_me.map.gpu_block_size == [32, 8, 1]
