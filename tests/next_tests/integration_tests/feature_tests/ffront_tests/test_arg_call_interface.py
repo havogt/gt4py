@@ -248,6 +248,35 @@ def test_direct_fo_call_returning_tuple_result_on_domain(cartesian_case):
     np.testing.assert_array_equal(result[1].asnumpy(), inp.asnumpy()[:-2] + 1)
 
 
+@pytest.mark.uses_origin
+@pytest.mark.uses_tuple_returns
+def test_direct_fo_call_returning_tuple_result_on_repeated_domain(cartesian_case):
+    @field_operator
+    def testee(inp: IField) -> tuple[IField, IField]:
+        return (inp, inp + 1)
+
+    size = cartesian_case.default_sizes[IDim]
+    inp = cases.allocate(cartesian_case, testee, "inp").unique()()
+    call = testee.with_backend(cartesian_case.backend)
+
+    results = [
+        call(inp, domain=({IDim: (1, size - 1)}, {IDim: (0, size - 2)}), offset_provider={})
+        for _ in range(2)
+    ]
+    shifted = call(inp, domain=({IDim: (0, size - 2)}, {IDim: (2, size)}), offset_provider={})
+
+    for result in results:
+        assert result[0].domain == gtx.domain({IDim: (1, size - 1)})
+        assert result[1].domain == gtx.domain({IDim: (0, size - 2)})
+        np.testing.assert_array_equal(result[0].asnumpy(), inp.asnumpy()[1:-1])
+        np.testing.assert_array_equal(result[1].asnumpy(), inp.asnumpy()[:-2] + 1)
+    assert not np.shares_memory(results[0][0].asnumpy(), results[1][0].asnumpy())
+    assert shifted[0].domain == gtx.domain({IDim: (0, size - 2)})
+    assert shifted[1].domain == gtx.domain({IDim: (2, size)})
+    np.testing.assert_array_equal(shifted[0].asnumpy(), inp.asnumpy()[:-2])
+    np.testing.assert_array_equal(shifted[1].asnumpy(), inp.asnumpy()[2:] + 1)
+
+
 @pytest.mark.uses_scan
 def test_direct_scan_call_returning_result_on_domain(cartesian_case):
     @field_operator

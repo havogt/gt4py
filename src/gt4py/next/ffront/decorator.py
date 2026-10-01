@@ -20,7 +20,7 @@ import types
 import typing
 import warnings
 from collections.abc import Callable
-from typing import Any, Generic, Optional, Sequence, TypeAlias
+from typing import Any, Generic, Hashable, Optional, Sequence, TypeAlias
 
 import numpy as np
 
@@ -653,17 +653,20 @@ class FieldOperator(_CompilableGTEntryPointMixin[ffront_stages.DSLFieldOperatorD
     def _output_allocation_plans(self) -> dict[Any, Optional[list[_OutputAllocationPlan]]]:
         return {}
 
-    def _allocate_output(self, domain: common.Domain | tuple[common.Domain | tuple, ...]) -> Any:
-        plans = self._output_allocation_plans.get(domain)
+    def _allocate_output(self, domain_like: Any) -> Any:
+        key = _domain_like_key(domain_like)
+        plans = self._output_allocation_plans.get(key) if key is not None else None
         if plans is not None:
             return tuple(plan.allocate() for plan in plans)
         assert self.backend is not None
         operator_type = self.__gt_type__()
         assert isinstance(operator_type, ts_ffront.FieldOperatorType | ts_ffront.ScanOperatorType)
+        domain = utils.tree_map(common.domain)(domain_like)
         result = _allocate_from_type(operator_type.definition.returns, domain, self.backend)
-        self._output_allocation_plans[domain] = _OutputAllocationPlan.from_allocated(
-            result, self.backend
-        )
+        if key is not None:
+            self._output_allocation_plans[key] = _OutputAllocationPlan.from_allocated(
+                result, self.backend
+            )
         return result
 
     def __call__(self, *args: Any, enable_jit: bool | None = None, **kwargs: Any) -> Any:
@@ -674,7 +677,7 @@ class FieldOperator(_CompilableGTEntryPointMixin[ffront_stages.DSLFieldOperatorD
             if "out" in kwargs:
                 out = kwargs.pop("out")
             elif "domain" in kwargs:
-                result = self._allocate_output(utils.tree_map(common.domain)(kwargs.pop("domain")))
+                result = self._allocate_output(kwargs.pop("domain"))
                 out = result
             else:
                 raise errors.MissingArgumentError(None, "out", True)
@@ -770,6 +773,24 @@ class _OutputAllocationPlan:
             strides=self.byte_strides,
         )
         return self.field_type(self.domain, array)
+
+
+def _domain_like_key(domain_like: Any) -> Optional[Hashable]:
+    """A hashable key that is equal for equal domain-like arguments, or `None` if there is none."""
+    if isinstance(domain_like, dict):
+        key: Hashable = (dict, tuple(domain_like.items()))
+    elif isinstance(domain_like, tuple):
+        elements = tuple(_domain_like_key(d) for d in domain_like)
+        if any(element is None for element in elements):
+            return None
+        key = elements
+    else:
+        key = domain_like
+    try:
+        hash(key)
+    except TypeError:
+        return None
+    return key
 
 
 def _allocate_from_type(
