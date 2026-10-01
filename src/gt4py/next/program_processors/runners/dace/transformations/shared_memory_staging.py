@@ -493,9 +493,12 @@ def apply_staging(
     # All checks done: modify the SDFG.
     for st in staged.values():
         desc = sdfg.arrays[st.data]
+        n_x = desc.shape[2]
+        # I is thread-x: unit stride avoids shared-memory bank conflicts
         tile_name = sdfg.add_array(
             st.tile,
-            shape=(tile_i, tile_j, desc.shape[2], 2 if double_buffer else 1),
+            shape=(tile_i, tile_j, n_x, 2 if double_buffer else 1),
+            strides=(1, tile_i, tile_i * tile_j, tile_i * tile_j * n_x),
             dtype=desc.dtype,
             storage=dace.StorageType.GPU_Shared,
             lifetime=dace.AllocationLifetime.Scope,
