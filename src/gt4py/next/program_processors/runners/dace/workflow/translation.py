@@ -9,7 +9,6 @@
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Sequence
 from typing import Any, Optional
 
 import dace
@@ -129,33 +128,6 @@ def find_structured_unit_strides_dims(
                     and dim not in dims
                 )
     return dims or None
-
-
-def with_unit_strides_dims(
-    auto_optimize_args: dict[str, Any], unit_strides_dims: Sequence[common.Dimension]
-) -> dict[str, Any]:
-    """Make `gt_auto_optimize()` put `unit_strides_dims[0]` on the innermost loop / GPU thread-x.
-
-    `unit_strides_dims[1]` goes to thread-y. The kind of `unit_strides_dims[0]` becomes
-    `unit_strides_kind`, which also selects the transient strides.
-    """
-    hooks = dict(auto_optimize_args.get("optimization_hooks") or {})
-    user_hook = hooks.get(gtx_transformations.GT4PyAutoOptHook.TopLevelDataFlowPost)
-
-    def set_iteration_order(sdfg: dace.SDFG) -> None:
-        if user_hook is not None:
-            user_hook(sdfg)
-        # `gt_auto_optimize()` later moves the Map parameters of `unit_strides_kind` to the
-        #  right, keeping their relative order, which is the one set here.
-        gtx_transformations.gt_set_iteration_order(
-            sdfg, unit_strides_dim=list(unit_strides_dims), validate=False
-        )
-
-    hooks[gtx_transformations.GT4PyAutoOptHook.TopLevelDataFlowPost] = set_iteration_order
-    return auto_optimize_args | {
-        "unit_strides_kind": unit_strides_dims[0].kind,
-        "optimization_hooks": hooks,
-    }
 
 
 def make_sdfg_call_async(sdfg: dace.SDFG, gpu: bool) -> None:
@@ -465,7 +437,7 @@ class DaCeTranslator(
                 self.unit_strides_dims
                 or find_structured_unit_strides_dims(ir, offset_provider_type)
             ):
-                auto_optimize_args = with_unit_strides_dims(auto_optimize_args, unit_strides_dims)
+                auto_optimize_args = auto_optimize_args | {"unit_strides_dims": unit_strides_dims}
 
             gtx_transformations.gt_auto_optimize(
                 sdfg,
