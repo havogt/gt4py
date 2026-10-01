@@ -950,7 +950,10 @@ def _gt_auto_configure_maps_and_strides(
             validate=False,
             validate_all=validate_all,
         )
-    elif prefered_direction_kind is not None:
+    # After `unit_strides_dims` this keeps their order and moves the parameters of
+    #  other kinds left of the remaining ones, i.e. outermost in the collapsed GPU
+    #  `z` dimension.
+    if prefered_direction_kind is not None:
         gtx_transformations.gt_set_iteration_order(
             sdfg=sdfg,
             unit_strides_kind=prefered_direction_kind,
