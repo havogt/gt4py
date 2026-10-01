@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 from gt4py import next as gtx
-from gt4py.next import errors, scan
+from gt4py.next import common, errors, scan
 from gt4py.next.ffront.decorator import field_operator, program
 
 from next_tests.integration_tests import cases
@@ -270,6 +270,8 @@ def test_direct_fo_call_returning_tuple_result_on_repeated_domain(cartesian_case
         assert result[1].domain == gtx.domain({IDim: (0, size - 2)})
         np.testing.assert_array_equal(result[0].asnumpy(), inp.asnumpy()[1:-1])
         np.testing.assert_array_equal(result[1].asnumpy(), inp.asnumpy()[:-2] + 1)
+        for field in result:
+            assert field.__gt_buffer_info__ == common.BufferInfo.from_ndarray(field.ndarray)
     assert not np.shares_memory(results[0][0].asnumpy(), results[1][0].asnumpy())
     assert shifted[0].domain == gtx.domain({IDim: (0, size - 2)})
     assert shifted[1].domain == gtx.domain({IDim: (2, size)})

@@ -721,10 +721,12 @@ class _OutputAllocationPlan:
     dtype: Any
     shape: tuple[int, ...]
     byte_strides: tuple[int, ...]
+    elem_strides: tuple[int, ...]
     byte_span: int
     byte_alignment: int
     array_ns: types.ModuleType
     byte_bounds: Callable[[Any], tuple[int, int]]
+    device: core_defs.Device
 
     @classmethod
     def from_allocated(
@@ -755,24 +757,37 @@ class _OutputAllocationPlan:
                     dtype=array.dtype,
                     shape=array.shape,
                     byte_strides=array.strides,
+                    elem_strides=tuple(s // array.itemsize for s in array.strides),
                     byte_span=sum(s * (n - 1) for s, n in zip(array.strides, array.shape))
                     + array.itemsize,
                     byte_alignment=allocator.byte_alignment,
                     array_ns=xp,
                     byte_bounds=byte_bounds,
+                    device=field.__gt_buffer_info__.device,
                 )
             )
         return plans
 
     def allocate(self) -> nd_array_field.NdArrayField:
         buffer = self.array_ns.empty((self.byte_span + self.byte_alignment - 1,), dtype=np.uint8)
-        offset = -self.byte_bounds(buffer)[0] % self.byte_alignment
+        buffer_start = self.byte_bounds(buffer)[0]
+        offset = -buffer_start % self.byte_alignment
         array = self.array_ns.lib.stride_tricks.as_strided(
             buffer[offset : offset + self.byte_span].view(self.dtype),
             shape=self.shape,
             strides=self.byte_strides,
         )
-        return self.field_type(self.domain, array)
+        field = self.field_type(self.domain, array)
+        # fills the `functools.cached_property`, which `BufferInfo.from_ndarray()` would compute
+        field.__dict__["__gt_buffer_info__"] = common.BufferInfo(
+            data_ptr=buffer_start + offset,
+            ndim=len(self.shape),
+            shape=self.shape,
+            elem_strides=self.elem_strides,
+            byte_strides=self.byte_strides,
+            device=self.device,
+        )
+        return field
 
 
 def _domain_like_key(domain_like: Any) -> Optional[Hashable]:
