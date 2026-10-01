@@ -63,6 +63,7 @@ from .remove_access_node_copies import RemoveAccessNodeCopies
 from .remove_scalar_copies import RemoveScalarCopies
 from .remove_views import RemovePointwiseViews
 from .scan_loop_unrolling import ScanLoopUnrolling
+from .shared_memory_staging import apply_staging, gt_stage_in_shared_memory
 from .simplify import (
     GT4PyMapBufferElimination,
     GT4PyMoveTaskletIntoMap,
@@ -127,6 +128,7 @@ __all__ = [
     "TrivialMapDimensionFolding",
     "VerticalMapFusionCallback",
     "VerticalMapSplitCallback",
+    "apply_staging",
     "constants",
     "gt_apply_concat_where_replacement_on_sdfg",
     "gt_auto_optimize",
@@ -152,6 +154,7 @@ __all__ = [
     "gt_set_iteration_order",
     "gt_simplify",
     "gt_split_access_nodes",
+    "gt_stage_in_shared_memory",
     "gt_substitute_compiletime_symbols",
     "gt_vertical_map_split_fusion",
     "inline_dataflow_into_map",
