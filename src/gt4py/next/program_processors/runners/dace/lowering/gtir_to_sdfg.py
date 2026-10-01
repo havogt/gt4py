@@ -1323,6 +1323,7 @@ class GTIRToSDFG(eve.NodeVisitor, SDFGBuilder):
 
         def construct_output_for_nested_sdfg(
             inner_data: gtir_to_sdfg_types.FieldopData,
+            domain: Any,
         ) -> gtir_to_sdfg_types.FieldopData:
             """
             This function makes a data container that lives inside a nested SDFG, denoted by `inner_data`,
@@ -1342,7 +1343,30 @@ class GTIRToSDFG(eve.NodeVisitor, SDFGBuilder):
                 # example, when the lambda constructs a tuple of some input fields.
                 # We copy this data to a new node, which we use as output.
                 nsdfg_node.remove_out_connector(inner_data.dc_node.data)
-                inner_data = lambda_ctx.copy_data(self, inner_data, domain=None)
+                # Copying only the inferred domain gives the result the shape of the
+                #  domain, which can be static, instead of that of the input field.
+                field_domain = (
+                    gtir_domain.get_field_domain(domain)
+                    if isinstance(domain, domain_utils.SymbolicDomain)
+                    and isinstance(inner_data.gt_type, ts.FieldType)
+                    else None
+                )
+                if field_domain is not None:
+                    domain_symbols = {
+                        str(sym)
+                        for r in field_domain
+                        for bound in (r.start, r.stop)
+                        for sym in dace.symbolic.pystr_to_symbolic(bound).free_symbols
+                    }
+                    new_symbols = domain_symbols - set(nsdfg_node.symbol_mapping)
+                    if new_symbols <= set(ctx.sdfg.symbols):
+                        for sym in new_symbols:
+                            if sym not in lambda_ctx.sdfg.symbols:
+                                lambda_ctx.sdfg.add_symbol(sym, ctx.sdfg.symbols[sym])
+                            nsdfg_node.symbol_mapping[sym] = dace.symbol(sym, ctx.sdfg.symbols[sym])
+                    else:
+                        field_domain = None
+                inner_data = lambda_ctx.copy_data(self, inner_data, domain=field_domain)
                 nsdfg_node.add_out_connector(inner_data.dc_node.data)
             elif lambda_ctx.state.degree(inner_data.dc_node) == 0:
                 # Isolated access node will make validation fail.
@@ -1368,7 +1392,12 @@ class GTIRToSDFG(eve.NodeVisitor, SDFGBuilder):
 
             return outer_data
 
-        return gtx_utils.tree_map(construct_output_for_nested_sdfg)(lambda_result)
+        result_domain = getattr(node.expr.annex, "domain", None)
+        if result_domain is None or isinstance(result_domain, tuple) != isinstance(
+            lambda_result, tuple
+        ):
+            result_domain = gtx_utils.tree_map(lambda _: None)(lambda_result)
+        return gtx_utils.tree_map(construct_output_for_nested_sdfg)(lambda_result, result_domain)
 
     def visit_Literal(
         self,

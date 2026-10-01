@@ -1952,6 +1952,62 @@ def test_gtir_let_lambda_with_tuple1():
     assert np.allclose(z_fields[1], b_ref)
 
 
+def test_gtir_let_lambda_returning_input_field_on_output_domain():
+    testee = gtir.Program(
+        id="let_lambda_returning_input_field_on_output_domain",
+        function_definitions=[],
+        params=[
+            gtir.Sym(id="x", type=IFTYPE),
+            gtir.Sym(id="y", type=IFTYPE),
+            gtir.Sym(id="z", type=ts.TupleType(types=[IFTYPE, IFTYPE])),
+        ],
+        declarations=[],
+        body=[
+            gtir.SetAt(
+                expr=im.let("t", im.op_as_fieldop("plus")("x", "y"))(im.make_tuple("t", "x")),
+                domain=im.make_tuple(
+                    im.get_field_domain(
+                        gtx_common.GridType.CARTESIAN, im.tuple_get(0, "z"), [IDim]
+                    ),
+                    im.get_field_domain(
+                        gtx_common.GridType.CARTESIAN, im.tuple_get(1, "z"), [IDim]
+                    ),
+                ),
+                target=gtir.SymRef(id="z"),
+            )
+        ],
+    )
+
+    a = np.random.rand(N)
+    b = np.random.rand(N)
+
+    sdfg = build_dace_sdfg(testee, CARTESIAN_OFFSETS)
+
+    (lambda_node,) = [
+        node
+        for node, _ in sdfg.all_nodes_recursive()
+        if isinstance(node, dace.nodes.NestedSDFG) and node.sdfg.label.startswith("lambda")
+    ]
+    for conn in lambda_node.out_connectors:
+        shape = lambda_node.sdfg.arrays[conn].shape
+        assert not any("__x_" in str(size) for size in shape)
+
+    z_fields = (np.zeros_like(a), np.zeros_like(a))
+    tuple_symbols = {
+        "__z_0_IDim_range_0": 1,
+        "__z_0_IDim_range_1": N - 1,
+        "__z_0_IDim_stride": 1,
+        "__z_1_IDim_range_0": 1,
+        "__z_1_IDim_range_1": N - 1,
+        "__z_1_IDim_stride": 1,
+    }
+
+    sdfg(a, b, z_fields[0][1 : N - 1], z_fields[1][1 : N - 1], **FSYMBOLS, **tuple_symbols)
+    assert np.allclose(z_fields[0][1 : N - 1], (a + b)[1 : N - 1])
+    assert np.allclose(z_fields[1][1 : N - 1], a[1 : N - 1])
+    assert np.all(z_fields[0][[0, N - 1]] == 0) and np.all(z_fields[1][[0, N - 1]] == 0)
+
+
 def test_gtir_let_lambda_with_tuple2():
     inner_domain = im.get_field_domain(gtx_common.GridType.CARTESIAN, "x", [IDim])
     val = np.random.rand()
