@@ -727,6 +727,8 @@ class _OutputAllocationPlan:
     array_ns: types.ModuleType
     byte_bounds: Callable[[Any], tuple[int, int]]
     device: core_defs.Device
+    #: `"numpy"` or `"cupy"` to construct the array directly on the buffer
+    array_kind: Optional[str]
 
     @classmethod
     def from_allocated(
@@ -764,19 +766,37 @@ class _OutputAllocationPlan:
                     array_ns=xp,
                     byte_bounds=byte_bounds,
                     device=field.__gt_buffer_info__.device,
+                    array_kind=xp.__name__ if xp.__name__ in ("numpy", "cupy") else None,
                 )
             )
         return plans
 
     def allocate(self) -> nd_array_field.NdArrayField:
         buffer = self.array_ns.empty((self.byte_span + self.byte_alignment - 1,), dtype=np.uint8)
-        buffer_start = self.byte_bounds(buffer)[0]
-        offset = -buffer_start % self.byte_alignment
-        array = self.array_ns.lib.stride_tricks.as_strided(
-            buffer[offset : offset + self.byte_span].view(self.dtype),
-            shape=self.shape,
-            strides=self.byte_strides,
-        )
+        if self.array_kind == "cupy":
+            buffer_start = buffer.data.ptr
+            offset = -buffer_start % self.byte_alignment
+            array = self.array_ns.ndarray(
+                self.shape, dtype=self.dtype, memptr=buffer.data + offset, strides=self.byte_strides
+            )
+        elif self.array_kind == "numpy":
+            buffer_start = buffer.__array_interface__["data"][0]
+            offset = -buffer_start % self.byte_alignment
+            array = self.array_ns.ndarray(
+                self.shape,
+                dtype=self.dtype,
+                buffer=buffer,
+                offset=offset,
+                strides=self.byte_strides,
+            )
+        else:
+            buffer_start = self.byte_bounds(buffer)[0]
+            offset = -buffer_start % self.byte_alignment
+            array = self.array_ns.lib.stride_tricks.as_strided(
+                buffer[offset : offset + self.byte_span].view(self.dtype),
+                shape=self.shape,
+                strides=self.byte_strides,
+            )
         field = self.field_type(self.domain, array)
         # fills the `functools.cached_property`, which `BufferInfo.from_ndarray()` would compute
         field.__dict__["__gt_buffer_info__"] = common.BufferInfo(
