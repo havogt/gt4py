@@ -24,6 +24,7 @@ from gt4py.next.iterator import ir as gtir
 from gt4py.next.iterator.ir_utils import domain_utils, ir_makers as im
 from gt4py.next.iterator.transforms import infer_domain
 from gt4py.next.iterator.transforms import pass_manager
+from gt4py.next.iterator.type_system import type_specifications as it_ts
 from gt4py.next.type_system import type_specifications as ts
 
 from next_tests.integration_tests.cases_utils import (
@@ -40,6 +41,7 @@ from next_tests.integration_tests.cases_utils import (
 )
 
 from gt4py.next.program_processors.runners.dace import lowering as dace_lowering
+from gt4py.next.program_processors.runners.dace.lowering import gtir_to_sdfg_lambda
 
 
 @pytest.fixture
@@ -2141,6 +2143,154 @@ def test_gtir_if_values_with_let_bound_literal():
     assert np.allclose(c, np.where(a < b, a * 2.0, b))
 
 
+def test_gtir_if_values_with_shift_on_let_bound_iterator():
+    OFFSET = 1
+    testee = gtir.Program(
+        id="if_values_with_shift_on_let_bound_iterator",
+        function_definitions=[],
+        params=[
+            gtir.Sym(id="x", type=IFTYPE),
+            gtir.Sym(id="y", type=IFTYPE),
+            gtir.Sym(id="z", type=IFTYPE),
+        ],
+        declarations=[],
+        body=[
+            gtir.SetAt(
+                expr=im.as_fieldop(
+                    im.lambda_("a", "b")(
+                        im.if_(
+                            im.less(im.deref("a"), im.deref("b")),
+                            im.let("it", "a")(im.deref(im.shift(IOff, OFFSET)("it"))),
+                            im.deref("b"),
+                        )
+                    )
+                )("x", "y"),
+                domain=apply_margin_on_field_domain(
+                    im.get_field_domain(gtx_common.GridType.CARTESIAN, "z", [IDim]),
+                    IDim,
+                    (0, OFFSET),
+                ),
+                target=gtir.SymRef(id="z"),
+            )
+        ],
+    )
+
+    a = np.random.rand(N)
+    b = np.random.rand(N)
+    c = np.zeros_like(a)
+
+    sdfg = build_dace_sdfg(testee, CARTESIAN_OFFSETS)
+
+    sdfg(a, b, c, **FSYMBOLS)
+    assert np.allclose(c[:-OFFSET], np.where(a < b, np.roll(a, -OFFSET), b)[:-OFFSET])
+
+
+def test_gtir_if_values_with_neighbors():
+    testee = gtir.Program(
+        id="if_values_with_neighbors",
+        function_definitions=[],
+        params=[
+            gtir.Sym(id="edges", type=EFTYPE),
+            gtir.Sym(id="v_in", type=VFTYPE),
+            gtir.Sym(id="vertices", type=VFTYPE),
+        ],
+        declarations=[],
+        body=[
+            gtir.SetAt(
+                expr=im.as_fieldop(
+                    im.lambda_("e", "v")(
+                        im.if_(
+                            im.less(im.deref("v"), 0.5),
+                            im.reduce("plus", 0.0)(im.neighbors("V2E", "e")),
+                            im.deref("v"),
+                        )
+                    )
+                )("edges", "v_in"),
+                domain=im.get_field_domain(gtx_common.GridType.UNSTRUCTURED, "vertices", [Vertex]),
+                target=gtir.SymRef(id="vertices"),
+            )
+        ],
+    )
+
+    connectivity_V2E = SIMPLE_MESH.offset_provider["V2E"]
+    e = np.random.rand(SIMPLE_MESH.num_edges)
+    v_in = np.random.rand(SIMPLE_MESH.num_vertices)
+    v = np.empty_like(v_in)
+
+    sdfg = build_dace_sdfg(testee, SIMPLE_MESH.offset_provider)
+
+    sdfg(
+        e,
+        v_in,
+        v,
+        gt_conn_V2E=connectivity_V2E.ndarray,
+        **FSYMBOLS,
+        **make_mesh_symbols(SIMPLE_MESH),
+        __v_in_Vertex_range_0=0,
+        __v_in_Vertex_range_1=SIMPLE_MESH.num_vertices,
+        __v_in_Vertex_stride=1,
+    )
+    v_ref = np.where(v_in < 0.5, e[connectivity_V2E.asnumpy()].sum(axis=1), v_in)
+    assert np.allclose(v, v_ref)
+
+
+def test_gtir_if_values_with_shift_on_let_bound_dynamically_shifted_iterator():
+    MARGIN = 2
+    testee = gtir.Program(
+        id="if_values_with_shift_on_let_bound_dynamically_shifted_iterator",
+        function_definitions=[],
+        params=[
+            gtir.Sym(id="x", type=IFTYPE),
+            gtir.Sym(id="y", type=IFTYPE),
+            gtir.Sym(id="x_offset", type=ts.FieldType(dims=[IDim], dtype=SIZE_TYPE)),
+            gtir.Sym(id="z", type=IFTYPE),
+        ],
+        declarations=[],
+        body=[
+            gtir.SetAt(
+                expr=im.as_fieldop(
+                    im.lambda_("a", "b", "off")(
+                        im.let("s", im.shift(IOff, im.deref("off"))("a"))(
+                            im.if_(
+                                im.less(im.deref("a"), im.deref("b")),
+                                im.let("it", "s")(im.deref(im.shift(IOff, 1)("it"))),
+                                im.deref("b"),
+                            )
+                        )
+                    )
+                )("x", "y", "x_offset"),
+                domain=apply_margin_on_field_domain(
+                    im.get_field_domain(gtx_common.GridType.CARTESIAN, "z", [IDim]),
+                    IDim,
+                    (0, MARGIN),
+                ),
+                target=gtir.SymRef(id="z"),
+            )
+        ],
+    )
+
+    a = np.random.rand(N)
+    b = np.random.rand(N)
+    a_offset = np.arange(N, dtype=np.int32) % 2
+    c = np.zeros_like(a)
+
+    sdfg = build_dace_sdfg(testee, CARTESIAN_OFFSETS)
+
+    sdfg(
+        a,
+        b,
+        a_offset,
+        c,
+        **FSYMBOLS,
+        __x_offset_IDim_range_0=0,
+        __x_offset_IDim_range_1=N,
+        __x_offset_IDim_stride=1,
+    )
+    i = np.arange(N - MARGIN)
+    ref = np.where(a[i] < b[i], a[i + a_offset[i] + 1], b[i])
+    assert np.allclose(c[: N - MARGIN], ref)
+
+
 def test_gtir_index():
     MARGIN = 2
     assert (MARGIN * 2) < N
@@ -2455,3 +2605,27 @@ def test_gtir_scan_single_level_output():
     sdfg(a, b, c, **symbols)
     assert np.allclose(b, ref + VAL0)
     assert np.allclose(c, np.concatenate([c[:, :-1], ref[:, -1:] + VAL1], axis=1))
+
+
+@pytest.mark.parametrize("defined_dims, raises", [([], False), ([IDim], True)])
+def test_gtir_shift_of_value(defined_dims: list[gtx_common.Dimension], raises: bool):
+    sdfg = dace.SDFG("shift_of_value")
+    state = sdfg.add_state()
+    sdfg.add_scalar("a_value", dace.float64, transient=True)
+    value = gtir_to_sdfg_lambda.ValueExpr(state.add_access("a_value"), FLOAT_TYPE)
+    lambda_translator = gtir_to_sdfg_lambda.LambdaToDataflow(
+        sdfg=sdfg,
+        state=state,
+        subgraph_builder=None,  # type: ignore[arg-type]
+        symbol_map={"a": value},
+    )
+    shift_node = im.shift(IOff, 1)("a")
+    shift_node.args[0].type = it_ts.IteratorType(
+        position_dims=[IDim], defined_dims=defined_dims, element_type=FLOAT_TYPE
+    )
+
+    if raises:
+        with pytest.raises(ValueError, match="requires an iterator"):
+            lambda_translator.visit(shift_node)
+    else:
+        assert lambda_translator.visit(shift_node) is value
