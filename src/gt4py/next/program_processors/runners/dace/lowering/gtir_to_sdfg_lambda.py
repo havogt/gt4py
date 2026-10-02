@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import abc
+import collections
 import copy
 import dataclasses
 from typing import (
@@ -41,6 +42,7 @@ from gt4py.next.iterator.ir_utils import (
     misc as itir_misc,
 )
 from gt4py.next.iterator.transforms import symbol_ref_utils
+from gt4py.next.iterator.type_system import type_specifications as it_ts
 from gt4py.next.program_processors.runners.dace import (
     library_nodes as gtx_library_nodes,
     sdfg_args as gtx_dace_args,
@@ -771,7 +773,7 @@ class LambdaToDataflow(eve.NodeVisitor):
             field_dims = [dim for dim, _ in arg.field_domain]
             arg_desc = arg.field.desc(self.sdfg)
             if deref_on_input_memlet and all(
-                isinstance(arg.indices[dim], SymbolExpr) for dim, _ in arg.field_domain
+                isinstance(arg.indices.get(dim), SymbolExpr) for dim, _ in arg.field_domain
             ):
                 # If the iterator is just dereferenced inside the branch state,
                 # we can access the array outside the nested SDFG and pass the
@@ -1046,35 +1048,35 @@ class LambdaToDataflow(eve.NodeVisitor):
             nsdfg.add_scalar("__cond", dace.dtypes.bool)
             input_memlets["__cond"] = condition_value
 
-        # Collect all field iterators that are shifted inside any of the then/else
-        # branch expressions. Iterator shift expressions require the field argument
-        # as iterator, therefore the corresponding array has to be passed with full
-        # shape into the nested SDFG where the if_ expression is lowered. When the
-        # branch expression simply does `deref` on the iterator, without any shifting,
-        # it corresponds to a direct element access. Such `deref` expressions can
+        # Collect the field iterators that are only dereferenced inside the then/else
+        # branch expressions, i.e. every reference to the iterator is the argument of
+        # a `deref`. Such a `deref` corresponds to a direct element access, which can
         # be lowered outside the nested SDFG, so that just the local value (a scalar
-        # or a list of values) is passed as input to the nested SDFG.
-        shifted_iterator_symbols = set()
-        for branch_expr in node.args[1:3]:
-            for shift_node in eve.walk_values(branch_expr).filter(
-                lambda x: cpm.is_applied_shift(x)
-            ):
-                shifted_iterator_symbols |= (
-                    eve.walk_values(shift_node)
-                    .if_isinstance(gtir.SymRef)
-                    .map(lambda x: str(x.id))
-                    .filter(lambda x: isinstance(self.symbol_map.get(x, None), IteratorExpr))
-                    .to_set()
-                )
+        # or a list of values) is passed as input to the nested SDFG. Any other use,
+        # e.g. `shift`, `neighbors` or an alias bound by `let`, requires the field
+        # argument as iterator, therefore the corresponding array has to be passed
+        # with full shape into the nested SDFG where the if_ expression is lowered.
         iterator_symbols = {
             sym_name
             for sym_name, sym_type in self.symbol_map.items()
             if isinstance(sym_type, IteratorExpr)
         }
-        direct_deref_iterators = (
-            set(symbol_ref_utils.collect_symbol_refs(node.args[1:3], iterator_symbols))
-            - shifted_iterator_symbols
+        iterator_ref_counts = collections.Counter(
+            eve.walk_values(node.args[1:3])
+            .if_isinstance(gtir.SymRef)
+            .map(lambda x: str(x.id))
+            .filter(lambda x: x in iterator_symbols)
         )
+        deref_counts = collections.Counter(
+            eve.walk_values(node.args[1:3])
+            .filter(lambda x: cpm.is_call_to(x, "deref") and isinstance(x.args[0], gtir.SymRef))
+            .map(lambda x: str(x.args[0].id))
+        )
+        direct_deref_iterators = {
+            sym_name
+            for sym_name, count in iterator_ref_counts.items()
+            if deref_counts[sym_name] == count
+        }
 
         for nstate, arg in zip([tstate, fstate], node.args[1:3]):
             # visit each if-branch in the corresponding state of the nested SDFG
@@ -1811,9 +1813,6 @@ class LambdaToDataflow(eve.NodeVisitor):
         offset_provider_arg, offset_value_arg, it = self._visit_shift_multidim(
             node.args[0], node.fun.args
         )
-        if not isinstance(it, (IteratorExpr, IndexIteratorExpr)):
-            # a scalar has the same value at every position
-            return it
         offset_provider_type: gtx_common.NeighborConnectivityType | None = None
         if isinstance(offset_provider_arg, gtir.CartesianOffset):
             shifted_dims = {
@@ -1828,7 +1827,21 @@ class LambdaToDataflow(eve.NodeVisitor):
             )
             assert isinstance(offset_provider_type, gtx_common.NeighborConnectivityType)
             shifted_dims = {offset_provider_type.source_dim, offset_provider_type.codomain}
-        if shifted_dims.isdisjoint(dim for dim, _ in it.field_domain):
+        if not isinstance(it, (IteratorExpr, IndexIteratorExpr)):
+            it_type = node.args[0].type
+            if isinstance(it_type, ts.ScalarType) or (
+                isinstance(it_type, it_ts.IteratorType)
+                and shifted_dims.isdisjoint(it_type.defined_dims)
+            ):
+                # the value is constant along the shifted dimensions
+                return it
+            raise ValueError(
+                f"Shift of '{node.args[0]}' along {sorted(dim.value for dim in shifted_dims)}"
+                f" requires an iterator, got '{type(it).__name__}' for type '{it_type}'."
+            )
+        if {gtx_common.as_non_staggered(dim) for dim in shifted_dims}.isdisjoint(
+            gtx_common.as_non_staggered(dim) for dim, _ in it.field_domain
+        ):
             # the field is constant along the shifted dimensions
             return it
 
