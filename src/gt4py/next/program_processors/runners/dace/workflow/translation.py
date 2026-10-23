@@ -346,6 +346,21 @@ _DERIVED_OPTIMIZATION_ARGS: Final[frozenset[str]] = frozenset(
 )
 
 
+def add_gpu_trace_markers(sdfg: dace.SDFG) -> None:
+    """Add GPU TX markers for trace visualization tools to an SDFG with GPU-scheduled nodes."""
+    if not any(
+        getattr(node, "schedule", dace.dtypes.ScheduleType.Default) in dace.dtypes.GPU_SCHEDULES
+        for node, _ in sdfg.all_nodes_recursive()
+    ):
+        return
+
+    sdfg.instrument = dace.dtypes.InstrumentationType.GPU_TX_MARKERS
+    for node, _ in sdfg.all_nodes_recursive():
+        # Also adds markers to map scopes that are NOT scheduled on GPU
+        if isinstance(node, (dace.nodes.MapEntry, dace.sdfg.SDFGState)):
+            node.instrument = dace.dtypes.InstrumentationType.GPU_TX_MARKERS
+
+
 @dataclasses.dataclass(frozen=True)
 class DaCeTranslator(
     workflow.ChainableWorkflowMixin[
@@ -367,6 +382,7 @@ class DaCeTranslator(
     disable_itir_transforms: bool = False
     disable_field_origin_on_program_arguments: bool = False
     use_max_domain_range_on_unstructured_shift: bool | None = None
+    add_gpu_trace_markers: bool = False
 
     def __post_init__(self) -> None:
         if self.auto_optimize_args and (
@@ -456,6 +472,9 @@ class DaCeTranslator(
 
         if self.use_metrics:
             add_instrumentation(sdfg, on_gpu)
+
+        if self.add_gpu_trace_markers and on_gpu:
+            add_gpu_trace_markers(sdfg)
 
         return sdfg
 

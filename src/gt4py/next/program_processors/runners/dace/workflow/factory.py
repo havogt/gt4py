@@ -59,6 +59,7 @@ def make_dace_translator(
     disable_itir_transforms: bool = False,
     disable_field_origin_on_program_arguments: bool = False,
     use_max_domain_range_on_unstructured_shift: bool | None = None,
+    add_gpu_trace_markers: bool | None = None,
 ) -> DaCeTranslator:
     """
     Build the GTIR -> SDFG translation step.
@@ -79,6 +80,8 @@ def make_dace_translator(
             as program arguments have zero-based origin, which skips the range
             start-symbols `_range_0`.
         use_max_domain_range_on_unstructured_shift: See `DaCeTranslator`.
+        add_gpu_trace_markers: Add GPU trace markers to the generated code.
+            Defaults to the value in `config`.
 
     Returns:
         The translation step, targeting `cfg.device_type`.
@@ -124,6 +127,9 @@ def make_dace_translator(
         disable_itir_transforms=disable_itir_transforms,
         disable_field_origin_on_program_arguments=disable_field_origin_on_program_arguments,
         use_max_domain_range_on_unstructured_shift=use_max_domain_range_on_unstructured_shift,
+        add_gpu_trace_markers=(
+            config.ADD_GPU_TRACE_MARKERS if add_gpu_trace_markers is None else add_gpu_trace_markers
+        ),
     )
 
 
@@ -134,28 +140,21 @@ def make_dace_bindings(
     return functools.partial(bindings_step.bind_sdfg, bind_func_name=cfg.bind_func_name)
 
 
-def make_dace_compiler(
-    cfg: DaCeConfig, /, *, add_gpu_trace_markers: bool | None = None
-) -> DaCeCompiler:
+def make_dace_compiler(cfg: DaCeConfig, /) -> DaCeCompiler:
     """
     Build the compilation step, targeting `cfg.device_type`.
 
     Args:
         cfg: The toolchain configuration.
-        add_gpu_trace_markers: Add GPU trace markers to the generated code.
-            Defaults to the value in `config`.
 
     Returns:
         The compilation step.
     """
-    if add_gpu_trace_markers is None:
-        add_gpu_trace_markers = config.ADD_GPU_TRACE_MARKERS
     return DaCeCompiler(
         bind_func_name=cfg.bind_func_name,
         cache_lifetime=cfg.cache_lifetime,
         device_type=cfg.device_type,
         cmake_build_type=cfg.cmake_build_type,
-        add_gpu_trace_markers=add_gpu_trace_markers,
     )
 
 
@@ -185,9 +184,9 @@ def make_dace_compile_workflow(
     builder: a `functools.partial` of the default one to change a step-local
     setting, e.g. `translation=functools.partial(make_dace_translator, use_metrics=False)`,
     or any callable taking the config to replace the step. The translation
-    step is wrapped in the cache here, after its builder ran, so a custom
-    translation step is cached like the default one. A custom step builder is
-    responsible for configuring its step from `cfg`.
+    and bindings steps are wrapped in the cache together here, after their
+    builders ran, so custom steps are cached like the default ones. A custom
+    step builder is responsible for configuring its step from `cfg`.
 
     Args:
         cfg: The toolchain configuration. Defaults to `DaCeConfig()`.
@@ -201,14 +200,10 @@ def make_dace_compile_workflow(
     if cfg is None:
         cfg = DaCeConfig()
 
-    translation_step = translation(cfg)
-    compilation_step = compilation(cfg)
-
-    if cfg.cached_translation:
-        translation_step = cache.persistent_translation_cache(
-            translation_step, "dace", cfg.cache_lifetime
-        )
-
-    return recipes.OTFCompileWorkflow(
-        translation=translation_step, bindings=bindings(cfg), compilation=compilation_step
+    source_step: workflow.Workflow[stages.CompilableProgramDef, artifacts.ExtensionSource] = (
+        recipes.OTFSourceWorkflow(translation=translation(cfg), bindings=bindings(cfg))
     )
+    if cfg.cached_translation:
+        source_step = cache.persistent_translation_cache(source_step, "dace", cfg.cache_lifetime)
+
+    return recipes.OTFCompileWorkflow(source=source_step, compilation=compilation(cfg))

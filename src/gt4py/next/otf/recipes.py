@@ -14,11 +14,43 @@ from gt4py.next.otf import artifacts, stages, workflow
 
 
 @dataclasses.dataclass(frozen=True)
-class OTFCompileWorkflow(
-    workflow.NamedStepSequence[stages.CompilableProgramDef, artifacts.CompilationArtifact]
+class OTFSourceWorkflow(
+    workflow.NamedStepSequence[stages.CompilableProgramDef, artifacts.ExtensionSource]
 ):
-    """The typical compiled backend steps composed into a workflow."""
+    """The steps producing the source of a compiled backend, cached as one unit."""
 
     translation: stages.TranslationStep
     bindings: workflow.Workflow[artifacts.ProgramSource, artifacts.ExtensionSource]
+
+    def __call__(self, inp: stages.CompilableProgramDef) -> artifacts.ExtensionSource:
+        source = super().__call__(inp)
+        # Computed before the source is cached, so it is stored with it.
+        source.fingerprint  # noqa: B018 [useless-expression]
+        return source
+
+
+@dataclasses.dataclass(frozen=True)
+class OTFCompileWorkflow(
+    workflow.NamedStepSequence[stages.CompilableProgramDef, artifacts.CompilationArtifact]
+):
+    """The typical compiled backend steps composed into a workflow.
+
+    ``source`` is an `OTFSourceWorkflow`, possibly wrapped in a `workflow.CachedStep`.
+    """
+
+    source: workflow.Workflow[stages.CompilableProgramDef, artifacts.ExtensionSource]
     compilation: workflow.Workflow[artifacts.ExtensionSource, artifacts.CompilationArtifact]
+
+    @property
+    def _source_workflow(self) -> OTFSourceWorkflow:
+        source = self.source.step if isinstance(self.source, workflow.CachedStep) else self.source
+        assert isinstance(source, OTFSourceWorkflow)
+        return source
+
+    @property
+    def translation(self) -> stages.TranslationStep:
+        return self._source_workflow.translation
+
+    @property
+    def bindings(self) -> workflow.Workflow[artifacts.ProgramSource, artifacts.ExtensionSource]:
+        return self._source_workflow.bindings

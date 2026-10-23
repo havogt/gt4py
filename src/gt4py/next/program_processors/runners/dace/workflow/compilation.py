@@ -36,38 +36,6 @@ SDFGExtensionSource: TypeAlias = artifacts.ExtensionSource[
 ]
 
 
-def _add_tx_markers(program_source: SDFGExtensionSource) -> tuple[SDFGExtensionSource, dace.SDFG]:
-    """
-    Add GPU TX markers to the SDFG of the given extension source.
-
-    Returns the modified extension source and the modified SDFG.
-    """
-    sdfg = dace.SDFG.from_json(program_source.program_source.source_code)
-
-    has_gpu_schedule = any(
-        getattr(node, "schedule", dace.dtypes.ScheduleType.Default) in dace.dtypes.GPU_SCHEDULES
-        for node, _ in sdfg.all_nodes_recursive()
-    )
-
-    if not has_gpu_schedule:
-        return program_source, sdfg  # No GPU schedule, no need to add TX markers.
-
-    sdfg.instrument = dace.dtypes.InstrumentationType.GPU_TX_MARKERS
-    for node, _ in sdfg.all_nodes_recursive():
-        # Also adds markers to map scopes that are NOT scheduled on GPU
-        if isinstance(node, (dace.nodes.MapEntry, dace.sdfg.SDFGState)):
-            node.instrument = dace.dtypes.InstrumentationType.GPU_TX_MARKERS
-
-    sdfg_json = gtx_wfdcommon.serialize_sdfg_as_json(sdfg)
-
-    new_program_source = dataclasses.replace(
-        program_source,
-        program_source=dataclasses.replace(program_source.program_source, source_code=sdfg_json),  # type: ignore[arg-type] # The source code is typed as a `str`, but we assign a JSON dictionary.
-    )
-
-    return new_program_source, sdfg
-
-
 def _map_storage_to_device(storage: dace.StorageType) -> core_defs.DeviceType:
     if storage == dace.StorageType.CPU_Heap:
         device = core_defs.DeviceType.CPU
@@ -282,9 +250,6 @@ class DaCeCompiler(
     bind_func_name: str
     cache_lifetime: config.BuildCacheLifetime
     device_type: core_defs.DeviceType
-    add_gpu_trace_markers: bool = dataclasses.field(
-        default_factory=lambda: config.ADD_GPU_TRACE_MARKERS
-    )
     cmake_build_type: config.CMakeBuildType = dataclasses.field(
         default_factory=lambda: config.CMAKE_BUILD_TYPE
     )
@@ -333,11 +298,6 @@ class DaCeCompiler(
             device_type=self.device_type,
             cmake_build_type=self.cmake_build_type,
         ):
-            # Add TX markers to the generated GPU code for trace visualization tools.
-            sdfg = None
-            if self.add_gpu_trace_markers and self.device_type == core_defs.CUPY_DEVICE_TYPE:
-                inp, sdfg = _add_tx_markers(inp)
-
             # A build is complete exactly when its build data says COMPILED: it is
             # written atomically after a completed compile and withdrawn under the
             # lock before a rebuild, so it can be checked without the lock.
@@ -352,8 +312,7 @@ class DaCeCompiler(
             sdfg_build_folder = gtx_cache.get_cache_folder(
                 inp, self.cache_lifetime, build_context_id=self._build_context_id
             )
-            if sdfg is None:
-                sdfg = dace.SDFG.from_json(inp.program_source.source_code)
+            sdfg = dace.SDFG.from_json(inp.program_source.source_code)
             sdfg.build_folder = sdfg_build_folder
 
             with locking.lock(sdfg_build_folder):

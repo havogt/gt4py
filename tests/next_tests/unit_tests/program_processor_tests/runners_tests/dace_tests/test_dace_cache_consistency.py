@@ -81,7 +81,6 @@ def _compiler() -> dace_wf_compilation.DaCeCompiler:
         bind_func_name="bind",
         cache_lifetime=config.BuildCacheLifetime.SESSION,
         device_type=core_defs.DeviceType.CPU,
-        add_gpu_trace_markers=False,
     )
 
 

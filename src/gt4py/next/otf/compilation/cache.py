@@ -40,12 +40,12 @@ BINDINGS_NAME_SUFFIX: Final[str] = "_pyext"
 #: Directory under the cache base holding the translation caches, one
 #: sub-directory per backend. Unlike a build cache folder, which holds the
 #: artifacts of one compiled program variant, these hold the output of the
-#: translation step: an optimized SDFG or generated source per translated
-#: program.
+#: translation and bindings steps: the extension source (an optimized SDFG or
+#: generated source, with its bindings) per translated program.
 TRANSLATION_CACHE_DIR_NAME: Final[str] = "translation_cache"
 
-#: Backends that persist the output of their translation step, i.e. those whose
-#: builders wrap it with `persistent_translation_cache`.
+#: Backends that persist the output of their translation and bindings steps, i.e.
+#: those whose builders wrap them with `persistent_translation_cache`.
 TRANSLATION_CACHE_BACKENDS: Final[tuple[str, ...]] = ("dace", "gtfn")
 
 StartT = TypeVar("StartT")
@@ -70,10 +70,10 @@ def persistent_translation_cache(
     step: workflow.Workflow[StartT, EndT], backend: str, lifetime: config.BuildCacheLifetime
 ) -> workflow.CachedStep[StartT, EndT, str]:
     """
-    Wrap a translation step in the persistent translation cache of `backend`.
+    Wrap the source steps (translation and bindings) in the persistent translation cache of `backend`.
 
     Args:
-        step: The translation step to cache.
+        step: The steps to cache.
         backend: Name of the backend family, which selects the cache folder.
         lifetime: Build-cache lifetime, which selects the cache base path.
 
@@ -119,11 +119,10 @@ def cache_folder_path(
     The folder name layout is documented by ``CACHE_FOLDER_NAME_PATTERN``; keep the
     two in sync when changing the naming scheme here.
     """
-    fingerprinter = fingerprinting.strict_fingerprinter
     slug = ext_source.program_source.entry_point.name
     if ext_source.binding_source:
         slug = f"{slug}{BINDINGS_NAME_SUFFIX}"
-    folder_name = f"{slug}_{fingerprinter(ext_source)}_{config.BUILD_CACHE_VERSION_ID}"
+    folder_name = f"{slug}_{ext_source.fingerprint}_{config.BUILD_CACHE_VERSION_ID}"
     if build_context_id:
         folder_name = f"{folder_name}_{build_context_id}"
     return (get_cache_base_path(lifetime) / folder_name).absolute()

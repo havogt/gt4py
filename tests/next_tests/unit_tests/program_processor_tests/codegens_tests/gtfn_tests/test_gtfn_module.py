@@ -136,11 +136,11 @@ def test_gtfn_file_cache(program_example):
     )
     cached_gtfn_translation_step = gtfn.make_gtfn_compile_workflow(
         gtfn.GTFNConfig(cached_translation=True)
-    ).translation
+    ).source
 
     bare_gtfn_translation_step = gtfn.make_gtfn_compile_workflow(
         gtfn.GTFNConfig(cached_translation=False)
-    ).translation
+    ).source
 
     cache_key = cached_gtfn_translation_step.cache_key(compilable_program)
 

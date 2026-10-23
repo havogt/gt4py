@@ -8,11 +8,12 @@
 
 """Tests for the compilation stage of the dace backend workflow.
 
-Covers the GPU TX-marker instrumentation and external workspace handling of
-``CompiledDaceProgram`` / ``DaCeCompilationArtifact``.
+Covers the GPU TX-marker instrumentation of the translated SDFG and external
+workspace handling of ``CompiledDaceProgram`` / ``DaCeCompilationArtifact``.
 """
 
 import contextlib
+import dataclasses
 import pathlib
 import pickle
 import unittest.mock as mock
@@ -28,7 +29,9 @@ from gt4py.next import config
 from gt4py.next.otf import artifacts
 from gt4py.next.otf.binding import interface
 from gt4py.next.program_processors.runners.dace.workflow import (
+    common as gtx_wfdcommon,
     compilation as dace_wf_compilation,
+    translation as dace_wf_translation,
 )
 
 
@@ -101,7 +104,6 @@ def program_source() -> dace_wf_compilation.SDFGExtensionSource:
 def _run_compiler(
     inp: artifacts.ExtensionSource,
     *,
-    add_gpu_trace_markers: bool = False,
     cmake_build_type: config.CMakeBuildType = config.CMakeBuildType.RELEASE,
     device_type: core_defs.DeviceType = core_defs.DeviceType.CPU,
 ) -> tuple[dace_wf_compilation.DaCeCompilationArtifact, dace.SDFG]:
@@ -113,7 +115,6 @@ def _run_compiler(
         bind_func_name="bind",
         cache_lifetime=config.BuildCacheLifetime.SESSION,
         device_type=device_type,
-        add_gpu_trace_markers=add_gpu_trace_markers,
         cmake_build_type=cmake_build_type,
     )
 
@@ -121,11 +122,6 @@ def _run_compiler(
         mock.patch.object(dace.SDFG, "compile", autospec=True) as compile_mock,
         mock.patch.object(
             dace_wf_compilation.locking, "lock", lambda *args, **kwargs: contextlib.nullcontext()
-        ),
-        # Pretend cupy/CUDA is available so the `device_type == CUPY_DEVICE_TYPE` guard
-        # can be exercised on a CPU-only machine.
-        mock.patch.object(
-            dace_wf_compilation.core_defs, "CUPY_DEVICE_TYPE", core_defs.DeviceType.CUDA
         ),
         mock.patch("gt4py.next.otf.compilation.common.get_device_arch", return_value="xyz"),
     ):
@@ -135,35 +131,59 @@ def _run_compiler(
     return artifact, compile_input
 
 
-def test_compiler_applies_tx_markers_for_gpu(program_source):
-    """On a CUDA target with the flag on, the compiler applies the markers to the SDFG."""
-    _, compile_input = _run_compiler(
-        program_source, add_gpu_trace_markers=True, device_type=core_defs.DeviceType.CUDA
+def _with_sdfg(
+    inp: dace_wf_compilation.SDFGExtensionSource, sdfg: dace.SDFG
+) -> dace_wf_compilation.SDFGExtensionSource:
+    return dataclasses.replace(
+        inp,
+        program_source=dataclasses.replace(
+            inp.program_source, source_code=gtx_wfdcommon.serialize_sdfg_as_json(sdfg)
+        ),
     )
 
-    assert compile_input.instrument == _TX
-    map_entries = [
-        n for n, _ in compile_input.all_nodes_recursive() if isinstance(n, dace_nodes.MapEntry)
-    ]
+
+def test_tx_markers_instrument_gpu_sdfg():
+    sdfg = _make_sdfg_with_gpu_map()
+
+    dace_wf_translation.add_gpu_trace_markers(sdfg)
+
+    assert sdfg.instrument == _TX
+    map_entries = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace_nodes.MapEntry)]
     assert map_entries and all(me.instrument == _TX for me in map_entries)
 
 
-def test_compiler_skips_tx_markers_when_flag_disabled(program_source):
-    """With the flag off the compiler must not touch instrumentation, even on CUDA."""
-    _, compile_input = _run_compiler(
-        program_source, add_gpu_trace_markers=False, device_type=core_defs.DeviceType.CUDA
+def test_tx_markers_skip_sdfg_without_gpu_schedule():
+    sdfg, _, _ = _make_nested_sdfg()
+
+    dace_wf_translation.add_gpu_trace_markers(sdfg)
+
+    assert sdfg.instrument == _NONE
+
+
+def test_tx_markers_source_is_deterministic(program_source):
+    """Instrumenting the same SDFG twice gives the same source: the GUIDs dace assigns
+    when the SDFG is loaded are not part of the serialized source."""
+    sources = []
+    for _ in range(2):
+        sdfg = dace.SDFG.from_json(program_source.program_source.source_code)
+        dace_wf_translation.add_gpu_trace_markers(sdfg)
+        sources.append(_with_sdfg(program_source, sdfg))
+
+    assert sources[0].fingerprint == sources[1].fingerprint
+
+
+def test_tx_markers_change_build_folder(program_source):
+    sdfg = dace.SDFG.from_json(program_source.program_source.source_code)
+    dace_wf_translation.add_gpu_trace_markers(sdfg)
+    instrumented = _with_sdfg(program_source, sdfg)
+
+    artifact_base, _ = _run_compiler(program_source, device_type=core_defs.DeviceType.CUDA)
+    artifact_with_markers, compile_input = _run_compiler(
+        instrumented, device_type=core_defs.DeviceType.CUDA
     )
 
-    assert compile_input.instrument == _NONE
-
-
-def test_compiler_skips_tx_markers_for_non_gpu_device(program_source):
-    """On a CPU target the markers must not be applied even with the flag on."""
-    _, compile_input = _run_compiler(
-        program_source, add_gpu_trace_markers=True, device_type=core_defs.DeviceType.CPU
-    )
-
-    assert compile_input.instrument == _NONE
+    assert artifact_base.library_path != artifact_with_markers.library_path
+    assert compile_input.instrument == _TX
 
 
 def test_dace_compilation_artifact_pickle_round_trip(tmp_path: pathlib.Path):
@@ -181,41 +201,15 @@ def test_dace_compilation_artifact_pickle_round_trip(tmp_path: pathlib.Path):
     assert restored == artifact
 
 
-@pytest.mark.parametrize("add_gpu_trace_markers", [False, True])
-def test_same_artifact(add_gpu_trace_markers, program_source):
-    """Same SDFG and compile settings must produce the same artifact.
-
-    We also test the case ``add_gpu_trace_markers=True`` to verify that the modified
-    SDFG has the same fingerprint, for the same input SDFG and compilation settings.
-    This way, we verify that the GUIDs elements are removed from the JSON source code.
-    """
-    artifact_1, sdfg_1 = _run_compiler(
-        program_source,
-        add_gpu_trace_markers=add_gpu_trace_markers,
-        device_type=core_defs.DeviceType.CUDA,
-    )
-    artifact_2, sdfg_2 = _run_compiler(
-        program_source,
-        add_gpu_trace_markers=add_gpu_trace_markers,
-        device_type=core_defs.DeviceType.CUDA,
-    )
+def test_same_artifact(program_source):
+    """Same SDFG and compile settings must produce the same artifact."""
+    artifact_1, sdfg_1 = _run_compiler(program_source, device_type=core_defs.DeviceType.CUDA)
+    artifact_2, sdfg_2 = _run_compiler(program_source, device_type=core_defs.DeviceType.CUDA)
 
     assert artifact_1.library_path == artifact_2.library_path
     assert (
         sdfg_1.hash_sdfg() == sdfg_2.hash_sdfg()
     )  # might contain different GUIDs, `hash_sdfg()` ignores them
-
-
-def test_apply_tx_markers_changes_artifact(program_source):
-    """Different instrumentation settings must produce a different artifact."""
-    artifact_base, _ = _run_compiler(
-        program_source, device_type=core_defs.DeviceType.CUDA, add_gpu_trace_markers=False
-    )
-    artifact_with_markers, _ = _run_compiler(
-        program_source, device_type=core_defs.DeviceType.CUDA, add_gpu_trace_markers=True
-    )
-
-    assert artifact_base.library_path != artifact_with_markers.library_path
 
 
 # `CXXFLAGS`, `CUDAFLAGS` and `HIPFLAGS` feed `compiler.cpu.args`, `compiler.cuda.args`

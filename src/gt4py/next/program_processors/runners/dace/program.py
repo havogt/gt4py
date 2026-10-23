@@ -78,19 +78,16 @@ class Program(decorator.Program, dace.frontend.python.common.SDFGConvertible):
 
         otf_workflow = self.backend.executor
         assert hasattr(otf_workflow, "translation")
-        otf_workflow_translation = (
-            otf_workflow.translation.step
-            if isinstance(otf_workflow.translation, workflow.CachedStep)
-            else otf_workflow.translation
-        )  # Same for the translation stage, which could be a `CachedStep` depending on backend configuration.
+        otf_workflow_translation = otf_workflow.translation
         # TODO(ricoh): switch 'disable_itir_transforms=True' because we ran them separately previously
         # and so we can ensure the SDFG does not know any runtime info it shouldn't know. Remove with
         # the other parts of the workaround when possible.
         sdfg = dace.SDFG.from_json(
-            otf_workflow_translation.replace(  # type: ignore[union-attr]
+            otf_workflow_translation.replace(
                 disable_itir_transforms=True,
                 disable_field_origin_on_program_arguments=True,
                 use_metrics=False,
+                add_gpu_trace_markers=False,
             )(gtir_stage).source_code
         )
 

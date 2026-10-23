@@ -38,11 +38,11 @@ def test_make_gtfn_toolchain_device():
     gpu_version = gtfn.make_gtfn_toolchain(gtfn.GTFNConfig(gpu=True))
 
     assert cpu_version.name == "run_gtfn_cpu"
-    assert isinstance(cpu_version.executor.translation, workflow.CachedStep)
-    assert cpu_version.executor.translation.step.device_type is core_defs.DeviceType.CPU
+    assert isinstance(cpu_version.executor.source, workflow.CachedStep)
+    assert cpu_version.executor.translation.device_type is core_defs.DeviceType.CPU
     assert gpu_version.name == "run_gtfn_gpu"
-    assert isinstance(gpu_version.executor.translation, workflow.CachedStep)
-    assert gpu_version.executor.translation.step.device_type is core_defs.DeviceType.CUDA
+    assert isinstance(gpu_version.executor.source, workflow.CachedStep)
+    assert gpu_version.executor.translation.device_type is core_defs.DeviceType.CUDA
 
     # The compilation step now also carries device_type so it can stamp the artifact.
     assert cpu_version.executor.compilation.device_type is core_defs.DeviceType.CPU
@@ -147,10 +147,10 @@ def test_step_builder_partial_keeps_config_settings():
         ),
     )
 
+    assert isinstance(toolchain.executor.source, workflow.CachedStep)
     translation = toolchain.executor.translation
-    assert isinstance(translation, workflow.CachedStep)
-    assert translation.step.enable_itir_transforms is False
-    assert translation.step.device_type is cfg.device_type
+    assert translation.enable_itir_transforms is False
+    assert translation.device_type is cfg.device_type
     compilation = toolchain.executor.compilation
     assert compilation.device_type is cfg.device_type
     assert compilation.builder_factory.cmake_extra_flags == ["-DEXTRA=ON"]
@@ -165,13 +165,14 @@ def test_custom_step_builder_output_is_cached():
 
     toolchain = gtfn.make_gtfn_toolchain(translation=lambda cfg: custom_step)
 
-    assert isinstance(toolchain.executor.translation, workflow.CachedStep)
-    assert toolchain.executor.translation.step is custom_step
+    assert isinstance(toolchain.executor.source, workflow.CachedStep)
+    assert toolchain.executor.translation is custom_step
 
 
 def test_uncached_translation():
     toolchain = gtfn.make_gtfn_toolchain(gtfn.GTFNConfig(cached_translation=False))
 
+    assert not isinstance(toolchain.executor.source, workflow.CachedStep)
     assert isinstance(toolchain.executor.translation, gtfn_module.GTFNTranslationStep)
 
 
@@ -202,5 +203,5 @@ def test_translation_step_requires_device_type():
 def test_compile_workflow_without_config_caches_translation():
     workflow_ = gtfn.make_gtfn_compile_workflow()
 
-    assert isinstance(workflow_.translation, workflow.CachedStep)
-    assert isinstance(workflow_.translation.step, gtfn_module.GTFNTranslationStep)
+    assert isinstance(workflow_.source, workflow.CachedStep)
+    assert isinstance(workflow_.translation, gtfn_module.GTFNTranslationStep)

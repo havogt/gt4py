@@ -250,9 +250,9 @@ def make_gtfn_compile_workflow(
     step-local setting, e.g.
     `translation=functools.partial(make_gtfn_translation, enable_itir_transforms=False)`,
     or any callable taking the config to replace the step. The translation
-    step is wrapped in the cache here, after its builder ran, so a custom
-    translation step is cached like the default one. A custom step builder is
-    responsible for configuring its step from `cfg`.
+    and bindings steps are wrapped in the cache together here, after their
+    builders ran, so custom steps are cached like the default ones. A custom
+    step builder is responsible for configuring its step from `cfg`.
 
     Args:
         cfg: The toolchain configuration. Defaults to `GTFNConfig()`.
@@ -266,17 +266,13 @@ def make_gtfn_compile_workflow(
     if cfg is None:
         cfg = GTFNConfig()
 
-    translation_step = translation(cfg)
-    compilation_step = compilation(cfg)
-
-    if cfg.cached_translation:
-        translation_step = cache.persistent_translation_cache(
-            translation_step, "gtfn", cfg.cache_lifetime
-        )
-
-    return recipes.OTFCompileWorkflow(
-        translation=translation_step, bindings=bindings(cfg), compilation=compilation_step
+    source_step: workflow.Workflow[stages.CompilableProgramDef, artifacts.ExtensionSource] = (
+        recipes.OTFSourceWorkflow(translation=translation(cfg), bindings=bindings(cfg))
     )
+    if cfg.cached_translation:
+        source_step = cache.persistent_translation_cache(source_step, "gtfn", cfg.cache_lifetime)
+
+    return recipes.OTFCompileWorkflow(source=source_step, compilation=compilation(cfg))
 
 
 def make_gtfn_toolchain(

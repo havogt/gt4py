@@ -25,9 +25,11 @@ describable without reaching for an IR.
 from __future__ import annotations
 
 import dataclasses
+import functools
 from collections.abc import Callable
 from typing import Generic, Optional, Protocol, TypeAlias, TypeVar, runtime_checkable
 
+from gt4py.next import fingerprinting
 from gt4py.next.otf.binding import interface
 
 
@@ -142,6 +144,11 @@ class ExtensionSource(Generic[CodeSpecT, TargetCodeSpecT]):
 
     program_source: ProgramSource[CodeSpecT]
     binding_source: Optional[BindingSource[CodeSpecT, TargetCodeSpecT]]
+
+    @functools.cached_property
+    def fingerprint(self) -> str:
+        """Strict fingerprint of the source, which names its build folder."""
+        return fingerprinting.strict_fingerprinter(self)
 
     @property
     def library_deps(self) -> tuple[interface.LibraryDependency, ...]:

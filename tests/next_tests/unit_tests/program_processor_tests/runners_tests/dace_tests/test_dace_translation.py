@@ -524,3 +524,38 @@ def test_translation_source_code_invariant_under_guid_change():
     first_source_fingerprint = fingerprinting.strict_fingerprinter(first_source)
     second_source_fingerprint = fingerprinting.strict_fingerprinter(second_source)
     assert first_source_fingerprint == second_source_fingerprint
+
+
+@pytest.mark.parametrize("add_gpu_trace_markers", [False, True])
+def test_generate_sdfg_gpu_trace_markers(
+    add_gpu_trace_markers: bool, device_type: core_defs.DeviceType, monkeypatch
+):
+    """The translator adds GPU trace markers to GPU SDFGs only, and only if asked to."""
+    instrumented = []
+    monkeypatch.setattr(dace_wf_translation, "add_gpu_trace_markers", instrumented.append)
+    ir = itir.Program(
+        id=f"field_ir_trace_markers_{add_gpu_trace_markers}",
+        declarations=[],
+        function_definitions=[],
+        params=[itir.Sym(id="x", type=IFTYPE), itir.Sym(id="y", type=IFTYPE)],
+        body=[
+            itir.SetAt(
+                expr=im.op_as_fieldop("plus")("x", 1.0),
+                domain=im.get_field_domain(gtx_common.GridType.CARTESIAN, "y", IFTYPE.dims),
+                target=itir.SymRef(id="y"),
+            ),
+        ],
+    )
+
+    sdfg = dace_wf_translation.DaCeTranslator(
+        device_type=device_type,
+        auto_optimize=False,
+        auto_optimize_args=None,
+        async_sdfg_call=False,
+        unstructured_horizontal_has_unit_stride=False,
+        use_metrics=False,
+        add_gpu_trace_markers=add_gpu_trace_markers,
+    ).generate_sdfg(ir, offset_provider={}, column_axis=None)
+
+    expected = add_gpu_trace_markers and device_type != core_defs.DeviceType.CPU
+    assert instrumented == ([sdfg] if expected else [])
