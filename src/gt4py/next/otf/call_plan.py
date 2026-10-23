@@ -56,7 +56,11 @@ SCALAR_TYPES: frozenset[type] = frozenset(
 #: where kind is "scalar" or "zero_dim_field".
 Patch = tuple[bool, int | str, str, str]
 
-stats = {"hits": 0, "misses": 0, "plans": 0, "rejected": 0}
+#: Replay each plan as a CUDA graph (needs SDFGs built for the per-thread default stream).
+GRAPHS: bool = os.environ.get("GT4PY_CALL_PLAN_GRAPHS", "0") == "1"
+MAX_GRAPHS_PER_PLAN = 4
+
+stats = {"hits": 0, "misses": 0, "plans": 0, "rejected": 0, "captures": 0}
 rejections: dict[str, str] = {}
 
 

@@ -46,6 +46,7 @@ class DaCeDecoratedProgram:
         device_type: core_defs.DeviceType = core_defs.DeviceType.CPU,
     ) -> None:
         self._fun = fun
+        self._device_type = device_type
         # Retrieve metrics level from GT4Py environment variable.
         self._collect_time = metrics.is_level_enabled(metrics.PERFORMANCE)
         self._collect_time_arg = np.array(
@@ -124,11 +125,20 @@ class DaCeDecoratedProgram:
         fast_call = fun.sdfg_program.fast_call
         do_gpu_check = config.DEBUG
 
-        def replay(args: tuple[Any, ...], kwargs: dict[str, Any]) -> None:
+        def convert(args: tuple[Any, ...], kwargs: dict[str, Any]) -> None:
             for i, ctype, is_kw, src, zero_dim in conversions:
                 value = kwargs[src] if is_kw else args[src]  # type: ignore[index]  # `src` is a str iff `is_kw`
                 argv[i] = ctype(value.as_scalar() if zero_dim else value)
+
+        def call() -> None:
             fast_call(argv, init_argv, do_gpu_check=do_gpu_check)
+
+        if call_plan.GRAPHS and self._device_type == core_defs.DeviceType.CUDA:
+            return _make_graph_replay(convert, call, argv, [c[0] for c in conversions])
+
+        def replay(args: tuple[Any, ...], kwargs: dict[str, Any]) -> None:
+            convert(args, kwargs)
+            call()
 
         return replay
 
@@ -138,3 +148,44 @@ class DaCeDecoratedProgram:
         This method should be called before the first call to the program.
         """
         self._fun.external_workspace = external_workspace
+
+
+def _make_graph_replay(
+    convert: Callable[[tuple[Any, ...], dict[str, Any]], None],
+    call: Callable[[], None],
+    argv: list[Any],
+    scalar_slots: list[int],
+) -> Callable[[tuple[Any, ...], dict[str, Any]], None]:
+    """Turn each replay into a CUDA graph launch, one graph per value of the re-converted scalars.
+
+    Requires the SDFG to launch on the per-thread default stream (compiled with
+    `--default-stream per-thread`): the legacy default stream cannot be captured.
+    """
+    import cupy as cp
+
+    stream = cp.cuda.Stream.ptds
+    graphs: dict[tuple, Any] = {}
+    counts = [0, 0]  # graph hits, captures
+
+    def graph_replay(args: tuple[Any, ...], kwargs: dict[str, Any]) -> None:
+        convert(args, kwargs)
+        if counts[1] > call_plan.MAX_GRAPHS_PER_PLAN and counts[1] > counts[0]:
+            call()  # the scalars change too often for a graph to pay off
+            return
+        key = tuple(argv[i].value for i in scalar_slots)
+        if (graph := graphs.get(key)) is None:
+            if len(graphs) >= call_plan.MAX_GRAPHS_PER_PLAN:
+                graphs.clear()
+            stream.begin_capture(cp.cuda.runtime.streamCaptureModeThreadLocal)
+            try:
+                call()
+            finally:
+                graph = stream.end_capture()
+            graphs[key] = graph
+            counts[1] += 1
+            call_plan.stats["captures"] += 1
+        else:
+            counts[0] += 1
+        graph.launch(stream)
+
+    return graph_replay
