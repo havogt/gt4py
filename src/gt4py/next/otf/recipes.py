@@ -41,6 +41,18 @@ class OTFCompileWorkflow(
     source: workflow.Workflow[stages.CompilableProgramDef, artifacts.ExtensionSource]
     compilation: workflow.Workflow[artifacts.ExtensionSource, artifacts.CompilationArtifact]
 
+    def lookup(self, inp: stages.CompilableProgramDef) -> artifacts.CompilationArtifact | None:
+        """Return the artifact of a completed build of `inp`, or None, without building.
+
+        Requires the `source` and `compilation` steps to support `lookup`.
+        """
+        if not (hasattr(self.source, "lookup") and hasattr(self.compilation, "lookup")):
+            return None
+        source = self.source.lookup(inp)
+        if source is None:
+            return None
+        return self.compilation.lookup(source)
+
     @property
     def _source_workflow(self) -> OTFSourceWorkflow:
         source = self.source.step if isinstance(self.source, workflow.CachedStep) else self.source

@@ -234,3 +234,18 @@ def test_cached_step_persistent_recovers_from_corrupt_entry(tmp_path):
     pkls[0].write_bytes(pkls[0].read_bytes()[:4])  # truncate as if killed mid-write
 
     assert cached(5) == 6  # recomputed, not crashed
+
+
+def test_cached_step_lookup_never_runs_the_step():
+    calls: list[int] = []
+
+    def step(x: int) -> int:
+        calls.append(x)
+        return x + 1
+
+    cached = workflow.CachedStep.in_memory(step=step, input_fingerprinter=lambda x: x)
+
+    assert cached.lookup(1) is None
+    assert cached(1) == 2
+    assert cached.lookup(1) == 2
+    assert calls == [1]

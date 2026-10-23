@@ -6,6 +6,8 @@
 # Please, refer to the LICENSE file in the root directory.
 # SPDX-License-Identifier: BSD-3-Clause
 
+import dataclasses
+
 import pytest
 
 from gt4py._core import filecache
@@ -64,3 +66,37 @@ def test_cached_source_carries_its_fingerprint(cached_source, monkeypatch):
     reloaded = cached_source.cache[key]
 
     assert reloaded.fingerprint == expected
+
+
+@dataclasses.dataclass(frozen=True)
+class _LookupCompiler:
+    built: tuple[str, ...]
+
+    def __call__(self, source: artifacts.ExtensionSource) -> str:
+        return source.program_source.entry_point.name
+
+    def lookup(self, source: artifacts.ExtensionSource) -> str | None:
+        name = source.program_source.entry_point.name
+        return name if name in self.built else None
+
+
+def test_compile_workflow_lookup_composes_step_lookups(cached_source):
+    compile_workflow = recipes.OTFCompileWorkflow(
+        source=cached_source, compilation=_LookupCompiler(built=("built", "unbuilt_source"))
+    )
+    cached_source("built")
+    cached_source("not_built")
+
+    assert compile_workflow.lookup("built") == "built"
+    assert compile_workflow.lookup("not_built") is None
+    assert compile_workflow.lookup("unbuilt_source") is None
+    assert calls == ["translation", "bindings"] * 2
+
+
+def test_compile_workflow_lookup_needs_lookup_on_every_step(cached_source):
+    cached_source("built")
+    compile_workflow = recipes.OTFCompileWorkflow(
+        source=cached_source, compilation=lambda source: source.program_source.entry_point.name
+    )
+
+    assert compile_workflow.lookup("built") is None

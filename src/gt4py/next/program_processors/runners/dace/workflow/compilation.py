@@ -293,7 +293,8 @@ class DaCeCompiler(
             return None
         return self._make_artifact(inp, build_folder / data.module)
 
-    def __call__(self, inp: SDFGExtensionSource) -> DaCeCompilationArtifact:
+    def lookup(self, inp: SDFGExtensionSource) -> DaCeCompilationArtifact | None:
+        """Return the artifact of a completed build of `inp`, or None, without building."""
         with gtx_wfdcommon.dace_context(
             device_type=self.device_type,
             cmake_build_type=self.cmake_build_type,
@@ -301,14 +302,18 @@ class DaCeCompiler(
             # A build is complete exactly when its build data says COMPILED: it is
             # written atomically after a completed compile and withdrawn under the
             # lock before a rebuild, so it can be checked without the lock.
-            if (
-                artifact := self._completed_build(
-                    inp,
-                    gtx_cache.cache_folder_path(inp, self.cache_lifetime, self._build_context_id),
-                )
-            ) is not None:
-                return artifact
+            return self._completed_build(
+                inp, gtx_cache.cache_folder_path(inp, self.cache_lifetime, self._build_context_id)
+            )
 
+    def __call__(self, inp: SDFGExtensionSource) -> DaCeCompilationArtifact:
+        if (artifact := self.lookup(inp)) is not None:
+            return artifact
+
+        with gtx_wfdcommon.dace_context(
+            device_type=self.device_type,
+            cmake_build_type=self.cmake_build_type,
+        ):
             sdfg_build_folder = gtx_cache.get_cache_folder(
                 inp, self.cache_lifetime, build_context_id=self._build_context_id
             )

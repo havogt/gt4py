@@ -45,6 +45,8 @@ class CompilationTask:
     executor: Callable[[Any], artifacts.CompilationArtifact]
     #: Reason this task is known not to be shippable to another process, if any.
     no_offload_reason: str | None = None
+    #: Returns the artifact of an already completed build without building, or None.
+    lookup: Callable[[], artifacts.CompilationArtifact | None] | None = None
 
     def compile(self, with_refs: bool = False) -> artifacts.CompilationArtifact:
         return self.executor(self.construct_compilable(with_refs))

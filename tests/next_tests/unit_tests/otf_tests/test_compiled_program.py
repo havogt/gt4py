@@ -10,6 +10,8 @@ import collections
 import concurrent.futures
 import contextvars
 import gc
+import multiprocessing
+import pathlib
 import traceback
 import weakref
 
@@ -17,10 +19,11 @@ import pytest
 
 from gt4py import eve, next as gtx
 from gt4py.next import utils
-from gt4py.next import errors, backend, broadcast, common
+from gt4py.next import errors, backend, broadcast, common, config
 from gt4py.next.iterator.transforms.collapse_tuple import CollapseTuple
 from gt4py.next.iterator.ir_utils import ir_makers as im
-from gt4py.next.otf import arguments, compiled_program, workflow
+from gt4py.next.otf import arguments, compiled_program, runners, workflow
+from gt4py.next.otf.compilation import compiler as gtx_compiler
 from gt4py.next.type_system import type_specifications as ts
 from gt4py.next.iterator import ir as itir
 from gt4py.next.program_processors.runners import gtfn
@@ -193,10 +196,26 @@ class _DeferredRunner:
         pass
 
 
+def _route_every_compilation_to(runner, monkeypatch) -> None:
+    make_compilation_task = compiled_program.compilation_tasks.make_compilation_task
+
+    def make_compilation_task_without_lookup(*args, **kwargs):
+        # A build of the same program left in the cache by another test would
+        # otherwise bypass the runner.
+        return dataclasses.replace(make_compilation_task(*args, **kwargs), lookup=None)
+
+    monkeypatch.setattr(
+        compiled_program.compilation_tasks,
+        "make_compilation_task",
+        make_compilation_task_without_lookup,
+    )
+    monkeypatch.setattr(compiled_program.runners, "get_default_runner", lambda: runner)
+
+
 @pytest.fixture
 def deferred_runner(monkeypatch):
     runner = _DeferredRunner()
-    monkeypatch.setattr(compiled_program.runners, "get_default_runner", lambda: runner)
+    _route_every_compilation_to(runner, monkeypatch)
     return runner
 
 
@@ -219,7 +238,7 @@ class _NoOpRunner:
 @pytest.fixture
 def noop_runner(monkeypatch):
     runner = _NoOpRunner()
-    monkeypatch.setattr(compiled_program.runners, "get_default_runner", lambda: runner)
+    _route_every_compilation_to(runner, monkeypatch)
     return runner
 
 
@@ -427,3 +446,54 @@ def test_metrics_source_key_finalizer_removes_cache_entry_when_pool_is_deleted()
             compiled_program._pools_per_root = _pools_per_root
 
     ctx.run(test_f)
+
+
+@pytest.fixture
+def persistent_gtfn(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "BUILD_CACHE_LIFETIME", config.BuildCacheLifetime.PERSISTENT)
+    monkeypatch.setattr(config, "BUILD_CACHE_DIR", tmp_path / ".gt4py_cache")
+    runners.reset_default_runner()
+    yield gtfn.make_gtfn_toolchain(name_postfix="_persistent")
+    runners.reset_default_runner()
+
+
+def _run_and_check(prog) -> None:
+    out = gtx.zeros(domain={TDim: 2}, dtype=bool)
+    prog(cond=True, out=out, offset_provider={})
+    assert out.asnumpy().all()
+
+
+def test_warm_cache_starts_no_compilation_workers(testee_prog, persistent_gtfn, monkeypatch):
+    monkeypatch.setattr(config, "BUILD_JOBS_MODE", config.BuildJobsMode.PROCESS)
+    monkeypatch.setattr(config, "BUILD_JOBS", 1)
+    testee_prog.with_backend(persistent_gtfn).compile(cond=[True], offset_provider={})
+    compiled_program.wait_for_compilation()
+    assert runners._default_runner is None
+
+    warm = testee_prog.with_backend(persistent_gtfn).compile(cond=[True], offset_provider={})
+
+    assert runners._default_runner is None
+    assert multiprocessing.active_children() == []
+    _run_and_check(warm)
+
+
+def test_cold_cache_builds_under_the_build_folder_lock(testee_prog, persistent_gtfn, monkeypatch):
+    monkeypatch.setattr(config, "BUILD_JOBS_MODE", config.BuildJobsMode.SERIAL)
+    locked: list[pathlib.Path] = []
+    real_lock = gtx_compiler.locking.lock
+
+    def recording_lock(directory, *args, **kwargs):
+        if pathlib.Path(directory).name.startswith("prog_"):
+            locked.append(pathlib.Path(directory))
+        return real_lock(directory, *args, **kwargs)
+
+    monkeypatch.setattr(gtx_compiler.locking, "lock", recording_lock)
+
+    cold = testee_prog.with_backend(persistent_gtfn).compile(cond=[True], offset_provider={})
+    assert len(locked) == 1
+    assert locked[0].parent == config.BUILD_CACHE_DIR.resolve()
+
+    warm = testee_prog.with_backend(persistent_gtfn).compile(cond=[True], offset_provider={})
+    assert len(locked) == 1
+    _run_and_check(cold)
+    _run_and_check(warm)

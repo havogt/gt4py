@@ -359,3 +359,10 @@ class CachedStep(
 
     def cache_key(self, inp: StartT) -> str:
         return self.step_fingerprinter((self._step_fingerprint, self.input_fingerprinter(inp)))
+
+    def lookup(self, inp: StartT) -> EndT | None:
+        """Return the cached result for `inp`, or None, without running the step."""
+        try:
+            return self.cache[self.cache_key(inp)]
+        except KeyError:
+            return None

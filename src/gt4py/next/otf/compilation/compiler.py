@@ -106,16 +106,26 @@ class CPPCompiler(
             else ""
         )
 
+    def lookup(
+        self, inp: artifacts.ExtensionSource[CPPLikeCodeSpecT, artifacts.PythonCodeSpec]
+    ) -> CPPCompilationArtifact | None:
+        """Return the artifact of a completed build of `inp`, or None, without building."""
+        if self.force_recompile:
+            return None
+        # Build data is written atomically and says COMPILED only after a
+        # completed build, so a usable build can be taken without the lock.
+        src_dir = cache.cache_folder_path(inp, self.cache_lifetime, self._build_context_id)
+        data = build_data.read_data(src_dir)
+        if not is_usable(data, src_dir):
+            return None
+        return self._make_artifact(src_dir, data.module, data.entry_point_name)
+
     def __call__(
         self,
         inp: artifacts.ExtensionSource[CPPLikeCodeSpecT, artifacts.PythonCodeSpec],
     ) -> CPPCompilationArtifact:
-        if not self.force_recompile:
-            # Build data is written atomically and says COMPILED only after a
-            # completed build, so a usable build can be taken without the lock.
-            src_dir = cache.cache_folder_path(inp, self.cache_lifetime, self._build_context_id)
-            if is_usable(data := build_data.read_data(src_dir), src_dir):
-                return self._make_artifact(src_dir, data.module, data.entry_point_name)
+        if (artifact := self.lookup(inp)) is not None:
+            return artifact
 
         src_dir = cache.get_cache_folder(inp, self.cache_lifetime, self._build_context_id)
 

@@ -117,6 +117,45 @@ def test_make_compilation_task_decomposes_standard_backend():
     assert callable(task.compile().load())
 
 
+@dataclasses.dataclass(frozen=True)
+class _LookupExecutor:
+    def __call__(self, compilable):
+        return _NoOpArtifact()
+
+    def lookup(self, compilable):
+        return ("looked up", compilable)
+
+
+def test_make_compilation_task_probes_executor_lookup():
+    backend = next_backend.Backend(
+        name="test_backend",
+        executor=_LookupExecutor(),
+        allocator=None,
+        transforms=lambda inp: ("lowered", inp.data),
+    )
+
+    task = compilation_tasks.make_compilation_task(
+        backend, definition_stage="definition", compile_time_args=arguments.CompileTimeArgs.empty()
+    )
+
+    assert task.lookup() == ("looked up", ("lowered", "definition"))
+
+
+def test_make_compilation_task_without_executor_lookup():
+    backend = next_backend.Backend(
+        name="test_backend",
+        executor=lambda compilable: _NoOpArtifact(),
+        allocator=None,
+        transforms=lambda inp: inp,
+    )
+
+    task = compilation_tasks.make_compilation_task(
+        backend, definition_stage=None, compile_time_args=arguments.CompileTimeArgs.empty()
+    )
+
+    assert task.lookup is None
+
+
 def test_make_compilation_task_is_opaque_for_customized_compile():
     class _WrapperBackend:
         def __init__(self, wrapped):
@@ -143,6 +182,7 @@ def test_make_compilation_task_is_opaque_for_customized_compile():
     )
 
     assert task.no_offload_reason is not None
+    assert task.lookup is None
     assert callable(task.compile().load())
     assert backend.compile_called
 

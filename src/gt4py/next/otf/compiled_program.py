@@ -687,14 +687,21 @@ class CompiledProgramsPool(Generic[ffront_stages.DSLDefinitionT]):
             offset_provider=offset_provider,
         )
 
-        # The default runner is resolved at each submission, so the pool never
-        # holds on to a runner that `wait_for_compilation` has already shut down.
-        runner = runners.get_default_runner()
-        future = runner.submit(
-            compilation_tasks.make_compilation_task(
-                self.backend, self.definition_stage, compile_time_args
-            )
+        task = compilation_tasks.make_compilation_task(
+            self.backend, self.definition_stage, compile_time_args
         )
+        # A completed build is taken here, before any runner, so that a warm cache
+        # never starts compilation workers.
+        artifact = task.lookup() if task.lookup is not None else None
+        if artifact is not None:
+            future: concurrent.futures.Future[artifacts.CompilationArtifact] = (
+                concurrent.futures.Future()
+            )
+            future.set_result(artifact)
+        else:
+            # The default runner is resolved at each submission, so the pool never
+            # holds on to a runner that `wait_for_compilation` has already shut down.
+            future = runners.get_default_runner().submit(task)
         if future.done():
             # Eager so compile() raises now; otherwise the error stays in the
             # already-resolved future until the next call touches this key.

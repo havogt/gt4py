@@ -18,6 +18,7 @@ decomposed for offloading at all, and what may cross the process boundary
 from __future__ import annotations
 
 import dataclasses
+import functools
 import os
 import pathlib
 import tempfile
@@ -175,6 +176,10 @@ def make_compilation_task(
             ),
         )
 
+    lookup = getattr(backend.executor, "lookup", None)
     return runners.CompilationTask(
-        name=name, construct_compilable=construct_compilable, executor=backend.executor
+        name=name,
+        construct_compilable=construct_compilable,
+        executor=backend.executor,
+        lookup=functools.partial(lookup, compilable) if lookup is not None else None,
     )
