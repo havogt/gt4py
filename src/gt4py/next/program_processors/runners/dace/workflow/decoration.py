@@ -8,14 +8,17 @@
 
 from __future__ import annotations
 
+import ctypes
 import functools
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Sequence
 
 import numpy as np
 
 from gt4py._core import definitions as core_defs
-from gt4py.next import common as gtx_common, utils as gtx_utils
+from gt4py.next import common as gtx_common, config, utils as gtx_utils
 from gt4py.next.instrumentation import metrics
+from gt4py.next.otf import call_plan
 from gt4py.next.program_processors.runners.dace import sdfg_callable
 from gt4py.next.program_processors.runners.dace.workflow import common as gtx_wfdcommon
 
@@ -94,6 +97,40 @@ class DaCeDecoratedProgram:
             metrics.add_sample_to_current_source(
                 metrics.COMPUTE_METRIC, self._collect_time_arg[0].item()
             )
+
+    @functools.cached_property
+    def _sdfg_arg_index(self) -> dict[str, int]:
+        return {name: i for i, name in enumerate(self._fun.sdfg_program.sdfg.arglist())}
+
+    def make_replay(
+        self, patches: Sequence[call_plan.Patch]
+    ) -> Callable[[tuple[Any, ...], dict[str, Any]], None] | None:
+        """Snapshot the argument vector of the last call as a replay that only re-converts `patches`."""
+        fun = self._fun
+        if fun.csdfg_argv is None or self._collect_time:
+            return None
+        arg_index = self._sdfg_arg_index
+        conversions = []
+        for is_kw, src, name, kind in patches:
+            if (i := arg_index.get(name)) is None:
+                continue  # unused or demoted
+            ctype = fun.sdfg_argtypes[i].dtype.as_ctypes()
+            conversions.append((i, ctype, is_kw, src, kind == "zero_dim_field"))
+        # The binding updates pointer arguments in place, so the vector must not share them.
+        argv = [
+            type(a)(a.value) if isinstance(a, ctypes._SimpleCData) else a for a in fun.csdfg_argv
+        ]
+        init_argv = fun.csdfg_init_argv
+        fast_call = fun.sdfg_program.fast_call
+        do_gpu_check = config.DEBUG
+
+        def replay(args: tuple[Any, ...], kwargs: dict[str, Any]) -> None:
+            for i, ctype, is_kw, src, zero_dim in conversions:
+                value = kwargs[src] if is_kw else args[src]  # type: ignore[index]  # `src` is a str iff `is_kw`
+                argv[i] = ctype(value.as_scalar() if zero_dim else value)
+            fast_call(argv, init_argv, do_gpu_check=do_gpu_check)
+
+        return replay
 
     def set_external_workspace(self, external_workspace: gtx_wfdcommon.ExternalWorkspace) -> None:
         """Set the external workspace for the underlying compiled program.

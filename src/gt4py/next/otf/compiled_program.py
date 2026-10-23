@@ -32,7 +32,7 @@ from gt4py.next.ffront import (
     type_translation,
 )
 from gt4py.next.instrumentation import hook_machinery, metrics
-from gt4py.next.otf import arguments, artifacts, compilation_tasks, runners
+from gt4py.next.otf import arguments, artifacts, call_plan, compilation_tasks, runners
 from gt4py.next.type_system import type_info, type_specifications as ts
 from gt4py.next.utils import tree_map
 
@@ -470,6 +470,36 @@ class CompiledProgramsPool(Generic[ffront_stages.DSLDefinitionT]):
 
         with compiled_program_call_context(self, key, args, kwargs, offset_provider):
             compiled_program(*args, **kwargs, offset_provider=offset_provider)
+
+    def lookup(
+        self, *args: Any, offset_provider: common.OffsetProvider, **kwargs: Any
+    ) -> artifacts.ExecutableProgram | None:
+        """Return the compiled variant a call with these arguments would run, without running it."""
+        if self._is_generic or self._primitive_values_extractor is not None:
+            return None
+        canonical_args, canonical_kwargs = self._args_canonicalizer(*args, **kwargs)
+        key = (
+            self._argument_descriptor_cache_key_from_args(*canonical_args, **canonical_kwargs),
+            common.hash_offset_provider_items_by_id(offset_provider),
+            None,
+        )
+        return self.compiled_programs.get(key)
+
+    @functools.cached_property
+    def call_plans(self) -> call_plan.ProgramCallPlans | None:
+        if (
+            not call_plan.ENABLED
+            or self._is_generic
+            or self._primitive_values_extractor is not None
+            or self.argument_descriptor_mapping is None
+        ):
+            return None
+        func_type = self.program_type.definition
+        return call_plan.make_program_call_plans(
+            list(func_type.pos_or_kw_args),
+            dict(func_type.pos_or_kw_args),
+            self.argument_descriptor_mapping,
+        )
 
     def _describe_argument_descriptors(self, descriptor_values: tuple[Hashable, ...]) -> str:
         exprs = [

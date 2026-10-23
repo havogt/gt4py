@@ -46,7 +46,7 @@ from gt4py.next.ffront import (
 from gt4py.next.ffront.gtcallable import GTCallable
 from gt4py.next.instrumentation import hook_machinery, metrics
 from gt4py.next.iterator import ir as itir
-from gt4py.next.otf import arguments, compiled_program, options, workflow
+from gt4py.next.otf import arguments, call_plan, compiled_program, options, workflow
 from gt4py.next.type_system import type_info, type_specifications as ts, type_translation
 
 
@@ -381,6 +381,25 @@ class Program(_CompilableGTEntryPointMixin[ffront_stages.DSLProgramDef]):
     ) -> None:
         if offset_provider is None:
             offset_provider = {}
+
+        pool = self.__dict__.get("_compiled_programs")
+        plans = pool.call_plans if pool is not None and pool.compiled_programs else None
+        if plans is not None and (
+            plans.disabled
+            or metrics.is_any_level_enabled()
+            or len(program_call_context.callbacks) != 1
+            or len(compiled_program.compiled_program_call_context.callbacks) != 1
+        ):
+            plans = None
+        if plans is not None:
+            plan_key = plans.key(args, kwargs, offset_provider)
+            if (plan := plans.plans.get(plan_key)) is not None:
+                plans.misses = 0
+                call_plan.stats["hits"] += 1
+                plan[0](args, kwargs)
+                return
+            call_plan.stats["misses"] += 1
+
         enable_jit = self.compilation_options.enable_jit if enable_jit is None else enable_jit
 
         with program_call_context(
@@ -402,6 +421,14 @@ class Program(_CompilableGTEntryPointMixin[ffront_stages.DSLProgramDef]):
                 self._compiled_programs(
                     *args, **kwargs, offset_provider=offset_provider, enable_jit=enable_jit
                 )
+                if plans is not None:
+                    compiled = self._compiled_programs.lookup(
+                        *args, offset_provider=offset_provider, **kwargs
+                    )
+                    if hasattr(compiled, "make_replay"):
+                        plans.add(plan_key, compiled, args, kwargs, offset_provider)
+                    else:
+                        plans.disabled = True
             else:
                 # Embedded execution.
                 warnings.warn(
