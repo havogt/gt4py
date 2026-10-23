@@ -100,13 +100,13 @@ def get_cache_base_path(lifetime: config.BuildCacheLifetime) -> pathlib.Path:
             raise ValueError("Unsupported caching lifetime.")
 
 
-def get_cache_folder(
+def cache_folder_path(
     ext_source: artifacts.ExtensionSource,
     lifetime: config.BuildCacheLifetime,
     build_context_id: str = "",
 ) -> pathlib.Path:
     """
-    Construct the path to where the build system project artifact of an extension source should be cached.
+    Return the path of the build folder of an extension source, without creating it.
 
     The folder name is salted with ``config.BUILD_CACHE_VERSION_ID`` (defaulting to the gt4py
     version, overridable via the ``GT4PY_BUILD_CACHE_VERSION_ID`` env var) so that a change to
@@ -115,7 +115,6 @@ def get_cache_folder(
 
     An optional ``build_context_id`` can be provided to distinguish between different contexts
     that may produce different artifacts for the same extension source.
-    The returned path points to an existing folder in all cases.
 
     The folder name layout is documented by ``CACHE_FOLDER_NAME_PATTERN``; keep the
     two in sync when changing the naming scheme here.
@@ -127,11 +126,21 @@ def get_cache_folder(
     folder_name = f"{slug}_{fingerprinter(ext_source)}_{config.BUILD_CACHE_VERSION_ID}"
     if build_context_id:
         folder_name = f"{folder_name}_{build_context_id}"
+    return (get_cache_base_path(lifetime) / folder_name).absolute()
 
-    base_path = get_cache_base_path(lifetime)
-    base_path.mkdir(exist_ok=True)
 
-    complete_path = base_path / folder_name
+def get_cache_folder(
+    ext_source: artifacts.ExtensionSource,
+    lifetime: config.BuildCacheLifetime,
+    build_context_id: str = "",
+) -> pathlib.Path:
+    """
+    Construct the path to where the build system project artifact of an extension source should be cached.
+
+    Like `cache_folder_path`, but the returned path points to an existing folder in all cases.
+    """
+    complete_path = cache_folder_path(ext_source, lifetime, build_context_id)
+    complete_path.parent.mkdir(exist_ok=True)
     complete_path.mkdir(exist_ok=True)
 
     # Resolve symlinks to workaround an issue on MacOS where the default tmp directory is a symlink

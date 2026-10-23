@@ -104,3 +104,16 @@ def test_folder_name_round_trips_through_documented_pattern(
     assert match["name"] == expected_name
     assert match["version_id"] == config.BUILD_CACHE_VERSION_ID
     assert match["build_context_id"] == (context_id if with_context_id else None)
+
+
+def test_cache_folder_path_creates_nothing(extension_source_example):
+    path = cache.cache_folder_path(
+        extension_source_example, config.BuildCacheLifetime.SESSION, build_context_id="pure"
+    )
+    assert not path.exists()
+
+    created = cache.get_cache_folder(
+        extension_source_example, config.BuildCacheLifetime.SESSION, build_context_id="pure"
+    )
+    assert created.is_dir()
+    assert created == path.resolve()

@@ -14,12 +14,14 @@ folder whenever the compiled library merely *exists* and never validates it. An
 ``lib<name>.so`` behind; the next run accepts the HIT and every subsequent
 ``load()`` crashes on ``dlopen`` until the folder is cleaned manually.
 
-The compile step therefore records a completion marker after each successful
-compile; a library without the marker is treated as stale and dropped, forcing
-a rebuild.
+The compile step therefore records COMPILED build data after each successful
+compile; a library without it is treated as stale and dropped, forcing a
+rebuild.
 
 Concurrent compiles of one program serialize on a lock over the build folder,
-and the compile step does not read the folder before it holds that lock.
+and the compile step does not read the folder before it holds that lock, apart
+from the build data, which is written atomically: a completed build is reused
+without the lock.
 """
 
 import contextlib
@@ -34,7 +36,7 @@ from gt4py._core import definitions as core_defs, locking
 from gt4py.next import config, fingerprinting
 from gt4py.next.otf import artifacts
 from gt4py.next.otf.binding import interface
-from gt4py.next.otf.compilation import cache as gtx_cache
+from gt4py.next.otf.compilation import build_data, cache as gtx_cache
 from gt4py.next.program_processors.runners.dace.workflow import compilation as dace_wf_compilation
 
 
@@ -109,7 +111,7 @@ def clean_build_folder(request):
 def test_dace_recovers_from_truncated_library(clean_build_folder):
     """A truncated (but present) ``lib<name>.so`` is accepted by dace's
     existence-only cache hit. The compile step must detect the incomplete build
-    (missing completion marker) and rebuild instead of handing out a library
+    (no COMPILED build data) and rebuild instead of handing out a library
     that fails to ``dlopen``."""
     inp = _make_input("truncated_library")
     comp = _compiler()
@@ -120,7 +122,7 @@ def test_dace_recovers_from_truncated_library(clean_build_folder):
 
     # Simulate a build interrupted mid-link: truncated library, no completion marker.
     artifact.library_path.write_bytes(b"\x00" * 64)
-    (build_folder / dace_wf_compilation._COMPILE_COMPLETE_MARKER).unlink()
+    build_data.remove_data(build_folder)
 
     recovered = comp(inp)
 
@@ -139,37 +141,64 @@ def test_dace_recovers_from_empty_folder_mode(clean_build_folder):
     comp(inp)
 
     (build_folder / "FOLDER_MODE").write_text("")
-    (build_folder / dace_wf_compilation._COMPILE_COMPLETE_MARKER).unlink()
+    build_data.remove_data(build_folder)
 
     recovered = comp(inp)
 
     ctypes.CDLL(str(recovered.library_path))
 
 
-def test_dace_interrupted_cache_hit_keeps_library(clean_build_folder, monkeypatch):
-    """A compile step interrupted while dace reuses the complete library must leave the
-    build marked complete. Otherwise the next compile step deletes and rebuilds a library
-    that other processes may be loading at that moment."""
-    inp = _make_input("interrupted_cache_hit")
+def test_dace_completed_build_is_reused_without_lock_or_compile(clean_build_folder, monkeypatch):
+    """A completed build is handed out from its build data alone: no lock, no SDFG
+    parse, no ``sdfg.compile``. In particular the library that other processes may
+    be loading is never touched."""
+    inp = _make_input("reused_without_lock")
     comp = _compiler()
     build_folder = clean_build_folder(comp, inp)
 
     library_path = comp(inp).library_path
-    # A hard link keeps the inode allocated, so a rebuilt library cannot reuse its number.
     pinned_library = build_folder / "pinned_library"
     pinned_library.hardlink_to(library_path)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("not expected on a completed build")
+
+    with monkeypatch.context() as m:
+        m.setattr(dace_wf_compilation.locking, "lock", forbidden)
+        m.setattr(dace.SDFG, "from_json", forbidden)
+        m.setattr(dace.SDFG, "compile", forbidden)
+        artifact = comp(inp)
+
+    assert artifact.library_path.samefile(pinned_library)
+    data = build_data.read_data(build_folder)
+    assert data.status == build_data.BuildStatus.COMPILED
+    assert build_folder / data.module == library_path
+
+
+def test_dace_interrupted_rebuild_is_not_reused(clean_build_folder, monkeypatch):
+    """With ``compiler.use_cache`` off a complete build is rebuilt. The COMPILED build
+    data is withdrawn before the rebuild starts, so a rebuild interrupted midway is
+    not handed out as complete afterwards."""
+    inp = _make_input("interrupted_rebuild")
+    comp = _compiler()
+    build_folder = clean_build_folder(comp, inp)
+    comp(inp)
 
     def interrupted_compile(*args, **kwargs):
         raise KeyboardInterrupt
 
+    real_get_bool = dace.Config.get_bool
+
+    def use_cache_off(*key):
+        return False if key == ("compiler", "use_cache") else real_get_bool(*key)
+
     with monkeypatch.context() as m:
+        m.setattr(dace.Config, "get_bool", use_cache_off)
         m.setattr(dace.SDFG, "compile", interrupted_compile)
         with pytest.raises(KeyboardInterrupt):
             comp(inp)
 
-    comp(inp)
-
-    assert library_path.samefile(pinned_library)
+    assert build_data.read_data(build_folder) is None
 
 
 def test_dace_build_folder_is_probed_under_lock(clean_build_folder, monkeypatch):

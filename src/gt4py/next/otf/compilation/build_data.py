@@ -90,6 +90,10 @@ def write_data(data: BuildData, path: pathlib.Path) -> None:
     file_utils.atomic_write_text(path / _DATAFILE_NAME, json.dumps(data.to_json()))
 
 
+def remove_data(path: pathlib.Path) -> None:
+    (path / _DATAFILE_NAME).unlink(missing_ok=True)
+
+
 def update_status(new_status: BuildStatus, path: pathlib.Path) -> None:
     old_data = read_data(path)
     assert old_data

@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import dataclasses
+import functools
 import pathlib
 from typing import Protocol, TypeGuard, TypeVar
 
@@ -97,16 +98,26 @@ class CPPCompiler(
     fingerprint_builder_factory: bool = True
     force_recompile: bool = False
 
-    def __call__(
-        self,
-        inp: artifacts.ExtensionSource[CPPLikeCodeSpecT, artifacts.PythonCodeSpec],
-    ) -> CPPCompilationArtifact:
-        build_context_id = (
+    @functools.cached_property
+    def _build_context_id(self) -> str:
+        return (
             fingerprinting.strict_fingerprinter(self.builder_factory)
             if self.fingerprint_builder_factory
             else ""
         )
-        src_dir = cache.get_cache_folder(inp, self.cache_lifetime, build_context_id)
+
+    def __call__(
+        self,
+        inp: artifacts.ExtensionSource[CPPLikeCodeSpecT, artifacts.PythonCodeSpec],
+    ) -> CPPCompilationArtifact:
+        if not self.force_recompile:
+            # Build data is written atomically and says COMPILED only after a
+            # completed build, so a usable build can be taken without the lock.
+            src_dir = cache.cache_folder_path(inp, self.cache_lifetime, self._build_context_id)
+            if is_usable(data := build_data.read_data(src_dir), src_dir):
+                return self._make_artifact(src_dir, data.module, data.entry_point_name)
+
+        src_dir = cache.get_cache_folder(inp, self.cache_lifetime, self._build_context_id)
 
         # If we are compiling the same program at the same time (e.g. multiple MPI ranks),
         # we need to make sure that only one of them accesses the same build directory for compilation.

@@ -9,12 +9,13 @@
 from __future__ import annotations
 
 import dataclasses
+import functools
 import json
 import os
 import pathlib
 import warnings
 from collections.abc import Callable, MutableSequence, Sequence
-from typing import Any, Final, TypeAlias
+from typing import Any, TypeAlias
 
 import dace
 import dace.codegen.compiler as dace_compiler
@@ -23,14 +24,11 @@ from gt4py._core import definitions as core_defs, locking
 from gt4py.eve import xtyping
 from gt4py.next import common, config, fingerprinting
 from gt4py.next.otf import artifacts, workflow
-from gt4py.next.otf.compilation import cache as gtx_cache
+from gt4py.next.otf.compilation import build_data, cache as gtx_cache, compiler as gtx_compiler
 from gt4py.next.program_processors.runners.dace.workflow import (
     common as gtx_wfdcommon,
     decoration as gtx_wfddecoration,
 )
-
-
-_COMPILE_COMPLETE_MARKER: Final = ".gt4py_compile_complete"
 
 
 SDFGExtensionSource: TypeAlias = artifacts.ExtensionSource[
@@ -300,38 +298,78 @@ class DaCeCompiler(
         ):
             object.__setattr__(self, "dace_config_nondefaults", dace.Config._data.nondefaults())
 
+    @functools.cached_property
+    def _build_context_id(self) -> str:
+        # The non-default ``dace.Config`` is part of the build folder name so the SDFG
+        # rebuilds when the user changes the backend configuration (PR #2650).
+        return fingerprinting.strict_fingerprinter(self.dace_config_nondefaults)
+
+    def _make_artifact(
+        self, inp: SDFGExtensionSource, library_path: pathlib.Path
+    ) -> DaCeCompilationArtifact:
+        assert inp.binding_source is not None
+        return DaCeCompilationArtifact(
+            library_path=library_path,
+            sdfg_json=json.dumps(inp.program_source.source_code),
+            binding_source_code=inp.binding_source.source_code,
+            bind_func_name=self.bind_func_name,
+            device_type=self.device_type,
+        )
+
+    def _completed_build(
+        self, inp: SDFGExtensionSource, build_folder: pathlib.Path
+    ) -> DaCeCompilationArtifact | None:
+        # `compiler.use_cache` is not implied by `dace_context`: a `DACE_compiler_use_cache`
+        # env var overrides the value set there, and with it off dace rebuilds every time.
+        if not dace.Config.get_bool("compiler", "use_cache"):
+            return None
+        data = build_data.read_data(build_folder)
+        if not gtx_compiler.is_usable(data, build_folder):
+            return None
+        return self._make_artifact(inp, build_folder / data.module)
+
     def __call__(self, inp: SDFGExtensionSource) -> DaCeCompilationArtifact:
         with gtx_wfdcommon.dace_context(
             device_type=self.device_type,
             cmake_build_type=self.cmake_build_type,
         ):
             # Add TX markers to the generated GPU code for trace visualization tools.
+            sdfg = None
             if self.add_gpu_trace_markers and self.device_type == core_defs.CUPY_DEVICE_TYPE:
                 inp, sdfg = _add_tx_markers(inp)
-            else:
-                sdfg = dace.SDFG.from_json(inp.program_source.source_code)
 
-            # Fingerprint the non-default ``dace.Config`` so the SDFG rebuilds when the
-            # user changes the backend configuration (PR #2650).
+            # A build is complete exactly when its build data says COMPILED: it is
+            # written atomically after a completed compile and withdrawn under the
+            # lock before a rebuild, so it can be checked without the lock.
+            if (
+                artifact := self._completed_build(
+                    inp,
+                    gtx_cache.cache_folder_path(inp, self.cache_lifetime, self._build_context_id),
+                )
+            ) is not None:
+                return artifact
+
             sdfg_build_folder = gtx_cache.get_cache_folder(
-                inp,
-                self.cache_lifetime,
-                build_context_id=fingerprinting.strict_fingerprinter(self.dace_config_nondefaults),
+                inp, self.cache_lifetime, build_context_id=self._build_context_id
             )
-            sdfg_build_folder.mkdir(parents=True, exist_ok=True)
-
-            # Configure the SDFG build folder
+            if sdfg is None:
+                sdfg = dace.SDFG.from_json(inp.program_source.source_code)
             sdfg.build_folder = sdfg_build_folder
 
             with locking.lock(sdfg_build_folder):
+                if (artifact := self._completed_build(inp, sdfg_build_folder)) is not None:
+                    return artifact
+
                 # With `compiler.use_cache=True` dace reuses a cached library on mere
                 # *existence*, without validating it; an interrupted build can leave a
                 # truncated, unloadable library behind, or a `FOLDER_MODE` file that was
-                # created but never written, which dace refuses as an unknown mode. The
-                # marker is written only after a completed compile: no marker -> drop
-                # both so dace rebuilds instead of handing out or choking on them.
-                marker = sdfg_build_folder / _COMPILE_COMPLETE_MARKER
-                build_complete = marker.exists()
+                # created but never written, which dace refuses as an unknown mode. Without
+                # COMPILED build data, drop both so dace rebuilds instead of handing out or
+                # choking on them. Withdraw COMPILED before rebuilding over a complete
+                # library, so no one picks it up while it is rewritten.
+                data = build_data.read_data(sdfg_build_folder)
+                build_complete = data is not None and gtx_compiler.is_compiled(data)
+                build_data.remove_data(sdfg_build_folder)
                 if not build_complete:
                     (sdfg_build_folder / "FOLDER_MODE").unlink(missing_ok=True)
 
@@ -348,21 +386,14 @@ class DaCeCompiler(
                         *sdfg_build_folder.glob(f"libdacestub_{sdfg.name}.*"),
                     ):
                         stale.unlink(missing_ok=True)
-                # On a cache hit `sdfg.compile` writes nothing: keep the marker, or an
-                # interruption would make the next compile delete a complete library that
-                # other processes may be loading. `use_cache` is not implied by
-                # `dace_context`: a `DACE_compiler_use_cache` env var overrides the value
-                # set there, and with it off dace rebuilds over the existing library.
-                if not (dace.Config.get_bool("compiler", "use_cache") and library_path.is_file()):
-                    marker.unlink(missing_ok=True)
                 sdfg.compile(validate=False, return_program_handle=False)
-                marker.touch()
+                build_data.write_data(
+                    build_data.BuildData(
+                        status=build_data.BuildStatus.COMPILED,
+                        module=library_path.relative_to(sdfg_build_folder),
+                        entry_point_name=sdfg.name,
+                    ),
+                    sdfg_build_folder,
+                )
 
-        assert inp.binding_source is not None
-        return DaCeCompilationArtifact(
-            library_path=library_path,
-            sdfg_json=json.dumps(inp.program_source.source_code),
-            binding_source_code=inp.binding_source.source_code,
-            bind_func_name=self.bind_func_name,
-            device_type=self.device_type,
-        )
+        return self._make_artifact(inp, library_path)

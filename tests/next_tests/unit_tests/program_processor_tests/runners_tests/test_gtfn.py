@@ -88,7 +88,7 @@ def test_make_gtfn_toolchain_build_type_config(monkeypatch):
 def test_cmake_build_type_changes_build_folder(monkeypatch, tmp_path):
     """Different cmake build types must yield different build folders.
 
-    The compiler passes a fingerprint of the builder factory to `get_cache_folder`
+    The compiler passes a fingerprint of the builder factory to `cache_folder_path`
     as `build_context_id`. Since the builder factory embeds the cmake build type,
     changing it must result in a different id, so that `debug` and `release` builds
     land in different cache folders.
@@ -103,7 +103,7 @@ def test_cmake_build_type_changes_build_folder(monkeypatch, tmp_path):
 
     build_context_ids: list[str] = []
 
-    def fake_get_cache_folder(
+    def fake_cache_folder_path(
         ext_source: object,
         lifetime: config.BuildCacheLifetime,
         build_context_id: str = "",
@@ -118,7 +118,7 @@ def test_cmake_build_type_changes_build_folder(monkeypatch, tmp_path):
     )
 
     with (
-        unittest.mock.patch.object(cache, "get_cache_folder", side_effect=fake_get_cache_folder),
+        unittest.mock.patch.object(cache, "cache_folder_path", side_effect=fake_cache_folder_path),
         unittest.mock.patch.object(build_data, "read_data", return_value=fake_build_data),
         unittest.mock.patch.object(compiler, "module_exists", return_value=True),
         unittest.mock.patch.object(
