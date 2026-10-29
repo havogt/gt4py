@@ -9,12 +9,15 @@
 import ast
 import textwrap
 
+import numpy as np
 import pytest
 
 from gt4py.next import Dimension, DimensionKind, Field, field_operator, int32, int64, scan_operator
+from gt4py.next.ffront import field_operator_ast as foast
 from gt4py.next.ffront.ast_passes import single_static_assign as ssa
 from gt4py.next.ffront.foast_pretty_printer import pretty_format
 from gt4py.next.ffront.func_to_foast import FieldOperatorParser
+from gt4py.next.type_system import type_translation
 
 
 @pytest.mark.parametrize(
@@ -84,3 +87,37 @@ def test_scanop():
     ).strip()
 
     assert pretty_format(scan.foast_stage.foast_node) == expected
+
+
+def test_if_stmt():
+    I = Dimension("I")
+
+    @field_operator
+    def foo(inp: Field[[I], int64]) -> Field[[I], int64]:
+        if True:
+            inp = inp + inp
+        return inp
+
+    expected = textwrap.dedent(
+        f"""
+        @field_operator
+        def foo(inp: Field[[I], int64]) -> Field[[I], int64]:
+          if True:
+            {ssa.unique_name("inp", 0)} = inp + inp
+          else:
+            {ssa.unique_name("inp", 0)} = inp
+          return {ssa.unique_name("inp", 0)}
+        """
+    ).strip()
+
+    assert pretty_format(foo.foast_stage.foast_node) == expected
+
+
+@pytest.mark.parametrize(
+    "value, expected", [(np.float32(1.5), "float32(1.5)"), (np.int64(3), "int64(3)"), (1.5, "1.5")]
+)
+def test_constant(value, expected):
+    loc = foast.SourceLocation(line=1, column=1, filename="none")
+    node = foast.Constant(value=value, type=type_translation.from_value(value), location=loc)
+
+    assert pretty_format(node) == expected

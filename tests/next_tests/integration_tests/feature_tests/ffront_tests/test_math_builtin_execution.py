@@ -7,21 +7,20 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 import math
-from typing import Callable, Optional
+from typing import Callable
 
 import numpy as np
 import pytest
 
 from gt4py.next.ffront import (
-    decorator,
     dialect_ast_enums,
     fbuiltins,
     field_operator_ast as foast,
     stages as ffront_stages,
 )
+from gt4py.next.ffront.decorator import field_operator_from_foast
 from gt4py.next.ffront.foast_passes.type_deduction import FieldOperatorTypeDeduction
-from gt4py.next import backend as next_backend
-from gt4py.next.otf import options
+from gt4py.next.ffront.foast_pretty_printer import pretty_format
 from gt4py.next.type_system import type_translation
 
 from next_tests.integration_tests import cases
@@ -39,7 +38,7 @@ from next_tests.integration_tests.feature_tests.math_builtin_test_data import ma
 #  becomes easier.
 
 
-def make_builtin_field_operator(builtin_name: str, backend: Optional[next_backend.Backend]):
+def make_builtin_foast_stage(builtin_name: str) -> ffront_stages.FOASTOperatorDef:
     # TODO(tehrengruber): creating a field operator programmatically should be
     #  easier than what we need to do here.
     # construct annotation dictionary containing the input argument and return
@@ -106,23 +105,23 @@ def make_builtin_field_operator(builtin_name: str, backend: Optional[next_backen
     )
     typed_foast_node = FieldOperatorTypeDeduction.apply(foast_node)
 
-    return decorator.FieldOperatorFromFoast(
-        definition_stage=None,
-        foast_stage=ffront_stages.FOASTOperatorDef(
-            foast_node=typed_foast_node,
-            closure_vars=closure_vars,
-            grid_type=None,
-        ),
-        compilation_options=options.CompilationOptions(),
-        backend=backend,
+    return ffront_stages.FOASTOperatorDef(
+        foast_node=typed_foast_node, closure_vars=closure_vars, grid_type=None
     )
 
 
 @pytest.mark.parametrize("builtin_name, inputs", math_builtin_test_data())
+def test_field_operator_from_foast_roundtrip(builtin_name: str, inputs):
+    foast_stage = make_builtin_foast_stage(builtin_name)
+
+    roundtrip_node = field_operator_from_foast(foast_stage, backend=None).foast_stage.foast_node
+
+    assert pretty_format(roundtrip_node) == pretty_format(foast_stage.foast_node)
+    assert roundtrip_node.type == foast_stage.foast_node.type
+
+
+@pytest.mark.parametrize("builtin_name, inputs", math_builtin_test_data())
 def test_math_function_builtins_execution(cartesian_case, builtin_name: str, inputs):
-    if cartesian_case.backend is None:
-        # TODO(havogt) find a way that works for embedded
-        pytest.xfail("Test does not have a field view program.")
     if builtin_name == "gamma":
         # numpy has no gamma function
         ref_impl: Callable = np.vectorize(math.gamma)
@@ -133,8 +132,10 @@ def test_math_function_builtins_execution(cartesian_case, builtin_name: str, inp
     expected = ref_impl(*inputs)
     out = cartesian_case.as_field([IDim], np.zeros_like(expected))
 
-    builtin_field_op = make_builtin_field_operator(builtin_name, cartesian_case.backend)
+    builtin_field_op = field_operator_from_foast(
+        make_builtin_foast_stage(builtin_name), backend=cartesian_case.backend
+    )
 
-    builtin_field_op(*inps, out, offset_provider={})
+    builtin_field_op(*inps, out=out, offset_provider={})
 
     assert np.allclose(out.asnumpy(), expected)

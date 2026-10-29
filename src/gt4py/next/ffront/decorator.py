@@ -16,11 +16,14 @@ import abc
 import contextlib
 import dataclasses
 import functools
+import hashlib
+import linecache
+import textwrap
 import types
 import typing
 import warnings
 from collections.abc import Callable
-from typing import Any, Generic, Optional, Self, Sequence, TypeAlias, Unpack, override
+from typing import Any, Generic, Optional, Self, Sequence, TypeAlias, Unpack
 
 from gt4py import eve
 from gt4py._core import definitions as core_defs
@@ -35,7 +38,9 @@ from gt4py.next import (
 )
 from gt4py.next.embedded import operators as embedded_operators
 from gt4py.next.ffront import (
+    fbuiltins,
     field_operator_ast as foast,
+    foast_pretty_printer,
     foast_to_gtir,
     past_process_args,
     stages as ffront_stages,
@@ -592,30 +597,6 @@ class FieldOperator(_CompilableGTEntryPointMixin[ffront_stages.DSLFieldOperatorD
 GTEntryPoint: TypeAlias = Program | FieldOperator
 
 
-# TODO(tehrengruber): This class does not follow the Liskov-Substitution principle as it doesn't
-#  have a field operator definition. Currently implementation is merely a hack to keep the only
-#  test relying on this working. Revisit.
-@dataclasses.dataclass(frozen=True)
-class FieldOperatorFromFoast(FieldOperator):
-    """
-    This version of the field operator does not have a DSL definition.
-
-    FieldOperator AST nodes can be programmatically built, which may be
-    particularly useful in testing and debugging.
-    This class provides the appropriate toolchain entry points.
-    """
-
-    foast_stage: ffront_stages.FOASTOperatorDef
-
-    @override
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        assert self.backend is not None
-        compiled_fo = self.backend.compile(
-            self.foast_stage, arguments.CompileTimeArgs.from_concrete(*args, **kwargs)
-        )
-        return compiled_fo(*args, **kwargs)
-
-
 @typing.overload
 def field_operator(
     definition: Callable,
@@ -760,3 +741,61 @@ def scan_operator(
         )
 
     return scan_operator_inner if definition is None else scan_operator_inner(definition)
+
+
+def _python_type_hint(type_: ts.TypeSpec) -> Any:
+    match type_:
+        case ts.ScalarType():
+            return type_translation.as_dtype(type_).scalar_type
+        case ts.FieldType():
+            return common.Field[list(type_.dims), _python_type_hint(type_.dtype)]  # type: ignore[misc]
+        case ts.TupleType():
+            return tuple[tuple(_python_type_hint(t) for t in type_.types)]  # type: ignore[misc]
+    raise NotImplementedError(f"Type '{type_}' can not be converted to a type hint.")
+
+
+def field_operator_from_foast(
+    foast_def: ffront_stages.FOASTOperatorDef,
+    *,
+    backend: next_backend.Backend | eve.NothingType | None = eve.NOTHING,
+) -> FieldOperator:
+    """
+    Create a field or scan operator from a programmatically built and typed FOAST definition.
+
+    The FOAST is printed to Python source, which is then executed and decorated like a
+    hand-written definition. The result is a regular `FieldOperator`, usable on every backend
+    (including embedded execution) and callable from other field operators.
+    """
+    node = foast_def.foast_node
+    definition = node.definition
+    assert isinstance(definition.type, ts.FunctionType)
+
+    type_hints = {
+        f"__gt_param_type_{i}": _python_type_hint(param.type)
+        for i, param in enumerate(definition.params)
+    }
+    type_hints["__gt_return_type"] = _python_type_hint(definition.type.returns)
+    params = ", ".join(
+        f"{param.id}: __gt_param_type_{i}" for i, param in enumerate(definition.params)
+    )
+    body = textwrap.indent(foast_pretty_printer.pretty_format(definition.body), "    ")
+    source = f"def {definition.id}({params}) -> __gt_return_type:\n{body}\n"
+
+    # `inspect.getsource`, used by the frontend, finds the source of exec'ed code
+    # only through `linecache`.
+    filename = f"<gt4py-foast-{definition.id}-{hashlib.sha256(source.encode()).hexdigest()[:16]}>"
+    linecache.cache[filename] = (len(source), None, source.splitlines(keepends=True), filename)
+    namespace = {**fbuiltins.BUILTINS, **foast_def.closure_vars, **type_hints}
+    exec(compile(source, filename, "exec"), namespace)
+    func = namespace[str(definition.id)]
+
+    if isinstance(node, foast.ScanOperator):
+        return scan_operator(
+            func,
+            axis=node.axis.value,
+            forward=node.forward.value,
+            init=node.init.value,
+            backend=backend,
+            grid_type=foast_def.grid_type,
+        )
+    return field_operator(func, backend=backend, grid_type=foast_def.grid_type)

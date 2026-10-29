@@ -12,6 +12,8 @@ import enum
 import textwrap
 from typing import Any, Final, TypeAlias, Union
 
+import numpy as np
+
 import gt4py.next.ffront.field_operator_ast as foast
 from gt4py.eve.codegen import FormatTemplate as as_fmt, MakoTemplate as as_mako, TemplatedGenerator
 from gt4py.next.ffront import dialect_ast_enums
@@ -110,7 +112,10 @@ class _PrettyPrinter(TemplatedGenerator):
 
     Name = as_fmt("{id}")
 
-    Constant = as_fmt("{value}")
+    def visit_Constant(self, node: foast.Constant, **kwargs: Any) -> str:
+        if isinstance(node.value, np.number) and not isinstance(node.value, (int, float)):
+            return f"{type(node.value).__name__}({node.value})"
+        return str(node.value)
 
     Subscript = as_fmt("{value}[{index}]")
 
@@ -149,7 +154,11 @@ class _PrettyPrinter(TemplatedGenerator):
             args.append(f"{self.visit(k, **kwargs)}={self.visit(v, **kwargs)}")
         return f"{node.func}({', '.join(args)})"
 
+    Starred = as_fmt("*{id}")
+
     Assign = as_fmt("{target} = {value}")
+
+    TupleTargetAssign = as_fmt("{', '.join(targets)} = {value}")
 
     Return = as_fmt("return {value}")
 
@@ -223,14 +232,9 @@ class _PrettyPrinter(TemplatedGenerator):
         true_branch = textwrap.indent(self.visit(node.true_branch, **kwargs), INDENTATION_PREFIX)
         false_branch = textwrap.indent(self.visit(node.false_branch, **kwargs), INDENTATION_PREFIX)
 
-        return "\n".join(
-            [
-                f"if {condition}",
-                true_branch,
-                "else:",
-                false_branch,
-            ]
-        )
+        if not node.false_branch.stmts:
+            return "\n".join([f"if {condition}:", true_branch])
+        return "\n".join([f"if {condition}:", true_branch, "else:", false_branch])
 
 
 def pretty_format(node: foast.LocatedNode) -> str:
