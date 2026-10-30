@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from gt4py.next import field_operator, scan_operator
-from gt4py.next.ffront.decorator import field_operator_from_foast
+from gt4py.next.ffront.foast_to_func import field_operator_from_foast
 
 from next_tests.integration_tests import cases
 from next_tests.integration_tests.cases import (

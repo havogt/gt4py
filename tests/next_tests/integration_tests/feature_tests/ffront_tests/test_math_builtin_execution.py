@@ -18,7 +18,7 @@ from gt4py.next.ffront import (
     field_operator_ast as foast,
     stages as ffront_stages,
 )
-from gt4py.next.ffront.decorator import field_operator_from_foast
+from gt4py.next.ffront.foast_to_func import field_operator_from_foast
 from gt4py.next.ffront.foast_passes.type_deduction import FieldOperatorTypeDeduction
 from gt4py.next.ffront.foast_pretty_printer import pretty_format
 from gt4py.next.type_system import type_translation
