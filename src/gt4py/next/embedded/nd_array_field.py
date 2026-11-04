@@ -17,22 +17,12 @@ import operator
 import weakref
 from collections.abc import Callable, Sequence
 from types import ModuleType
+from typing import Any, ClassVar, Final, Never, Optional, ParamSpec, TypeAlias, TypeVar, cast
 
 import numpy as np
 from numpy import typing as npt
 
 from gt4py._core import definitions as core_defs
-from gt4py.eve.extended_typing import (
-    Any,
-    ClassVar,
-    Final,
-    Never,
-    Optional,
-    ParamSpec,
-    TypeAlias,
-    TypeVar,
-    cast,
-)
 from gt4py.next import common, config
 from gt4py.next.embedded import (
     common as embedded_common,

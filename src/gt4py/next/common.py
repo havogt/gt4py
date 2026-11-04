@@ -17,16 +17,10 @@ import math
 import operator
 import sys
 import types
-from collections.abc import Iterable, Mapping, Sequence
-
-import numpy as np
-
-from gt4py._core import definitions as core_defs
-from gt4py.eve import extended_typing as xtyping, utils
-from gt4py.eve.extended_typing import (
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from typing import (
     TYPE_CHECKING,
     Any,
-    Callable,
     ClassVar,
     Final,
     Generic,
@@ -36,7 +30,6 @@ from gt4py.eve.extended_typing import (
     NoReturn,
     Optional,
     ParamSpec,
-    Protocol,
     Self,
     TypeAlias,
     TypeGuard,
@@ -45,8 +38,13 @@ from gt4py.eve.extended_typing import (
     Unpack,
     cast,
     overload,
-    runtime_checkable,
 )
+
+import numpy as np
+from typing_extensions import Protocol, runtime_checkable
+
+from gt4py._core import definitions as core_defs
+from gt4py.eve import utils, xtyping
 from gt4py.eve.type_definitions import StrEnum
 
 
