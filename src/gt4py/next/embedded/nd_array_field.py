@@ -1399,6 +1399,7 @@ if torch:
         logical_and = staticmethod(_with_tensor_operands(torch.logical_and))
         logical_or = staticmethod(_with_tensor_operands(torch.logical_or))
         logical_xor = staticmethod(_with_tensor_operands(torch.logical_xor))
+        where = staticmethod(_with_tensor_operands(_torch_compat.where))
         power = staticmethod(_torch_compat.pow)
         mod = staticmethod(_torch_compat.remainder)
         invert = staticmethod(_torch_compat.bitwise_invert)
