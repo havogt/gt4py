@@ -7,7 +7,7 @@ tags: [embedded]
 - **Status**: draft
 - **Authors**: Hannes Vogt (@havogt)
 - **Created**: 2026-09-29
-- **Updated**: 2026-09-29
+- **Updated**: 2026-11-06
 
 In the context of embedded execution of `gt4py.next` field operators and programs, facing
 users who hold their data in `torch` tensors (on CPU or CUDA), we decided to support
@@ -64,8 +64,31 @@ Unlike JAX, tensors are mutable, so in-place `__setitem__` works as for NumPy.
   the common embedded skip list.
 - `__gt_buffer_info__` is not implemented, as for JAX, so torch fields cannot be passed to
   compiled backends yet.
-- Out of scope, possible follow-ups: `torch.compile` of embedded programs, autograd through
-  fields, and zero-copy passing of torch fields to gtfn/dace via DLPack.
+- Out of scope, possible follow-ups: zero-copy passing of torch fields to gtfn/dace via DLPack.
+
+## `torch.compile` and connectivities
+
+Embedded programs and field operators called inside a `torch.compile` region run under
+`torch.compiler.nonstrict_trace`, so Dynamo does not trace the embedded Python code itself.
+Torch fields and connectivities are pytree nodes, so their tensors become graph inputs and the
+connectivity tables are not inlined as constants.
+
+Domain inference (`_inverse_image`) needs the values of a table, which the fake tensors of a trace
+do not have. This mirrors [ADR 0029](0029-Connectivities_Under_JAX_Tracing.md) for JAX:
+
+- **A connectivity created outside the compiled region** is flattened with the identity of the
+  concrete connectivity, and domain inference reads that one, also after `restrict`. Domains match
+  eager execution, and a non-contiguous inverse image raises.
+- **A table computed inside the trace** (`as_offset` of a field argument) has no concrete values.
+  Domain inference assumes every target lies inside the field, so the output domain is not
+  narrowed, and the gather clamps its indices to the field: out-of-range targets read the field's
+  boundary value, without an error.
+
+Skip entries read the field's first element and reductions mask the result afterwards, as for
+JAX, so autograd through an operator that is singular at that value gives NaN.
+
+A new connectivity object recompiles, even when it wraps the same tensor, because the flattened
+context holds the identity of the connectivity, not of its buffer.
 
 ## Alternatives considered
 
