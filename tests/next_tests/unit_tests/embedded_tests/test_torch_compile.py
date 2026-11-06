@@ -183,3 +183,150 @@ def test_as_offset_field_fullgraph(torch_device):
         ),
     )
 
+
+@gtx.field_operator
+def _neighbor_sum(v: gtx.Field[gtx.Dims[Vertex], float]) -> gtx.Field[gtx.Dims[Edge], float]:
+    return neighbor_sum(v(E2V), axis=E2VDim)
+
+
+@gtx.field_operator
+def _first_neighbor(v: gtx.Field[gtx.Dims[Vertex], float]) -> gtx.Field[gtx.Dims[Edge], float]:
+    return v(E2V[0])
+
+
+def _skip_value_e2v_table(num_vertices: int) -> np.ndarray:
+    """Two edges per vertex, both entries equal, every seventh second entry a skip value."""
+    vertex = np.arange(4 * num_vertices) // 2
+    table = np.stack([vertex, vertex], axis=1).astype(np.int32)
+    table[::7, 1] = -1
+    return table
+
+
+class _GraphRecorder:
+    def __init__(self):
+        self.graphs = []
+
+    def __call__(self, gm, example_inputs):
+        self.graphs.append(gm)
+        return gm.forward
+
+
+def _reference_neighbor_sum(values: np.ndarray, table: np.ndarray) -> np.ndarray:
+    return np.where(table != -1, values[table], 0.0).sum(axis=1)
+
+
+@pytest.mark.parametrize("num_field_vertices", [300, 600], ids=["narrowing", "covering"])
+def test_premap_with_connectivity_argument_fullgraph(torch_device, num_field_vertices):
+    import torch
+
+    table = _skip_value_e2v_table(300)
+    num_edges = 2 * num_field_vertices
+    values = np.arange(float(num_field_vertices))
+    with torch_device:
+        e2v = gtx.as_connectivity(
+            [Edge, E2VDim], Vertex, torch.asarray(table), skip_value=-1, allocator=torch
+        )
+        v = gtx.as_field([Vertex], values, allocator=torch)
+        out, expected = (gtx.zeros({Edge: num_edges}, allocator=torch) for _ in range(2))
+
+    def step(v, e2v, out):
+        _neighbor_sum(v, out=out, offset_provider={"E2V": e2v})
+        return out
+
+    step(v, e2v, expected)
+    torch._dynamo.reset()
+    recorder = _GraphRecorder()
+    result = torch.compile(step, fullgraph=True, backend=recorder)(v, e2v, out)
+
+    np.testing.assert_allclose(result.asnumpy(), expected.asnumpy())
+    np.testing.assert_allclose(result.asnumpy(), _reference_neighbor_sum(values, table[:num_edges]))
+    (graph,) = recorder.graphs
+    input_shapes = [
+        tuple(node.meta["example_value"].shape) for node in graph.graph.find_nodes(op="placeholder")
+    ]
+    assert table.shape in input_shapes
+    constants = [getattr(graph, node.target) for node in graph.graph.find_nodes(op="get_attr")]
+    assert not any(isinstance(c, torch.Tensor) for c in constants)
+
+
+def test_premap_with_restricted_connectivity_fullgraph(torch_device):
+    import torch
+
+    table = _skip_value_e2v_table(8)
+    with torch_device:
+        e2v = gtx.as_connectivity(
+            [Edge, E2VDim], Vertex, torch.asarray(table), skip_value=-1, allocator=torch
+        )
+        v = gtx.as_field([Vertex], np.arange(4.0), allocator=torch)
+        out = gtx.zeros({Edge: 8}, allocator=torch)
+
+    def step(v, e2v, out):
+        _first_neighbor(v, out=out, offset_provider={"E2V": e2v})
+        return out
+
+    torch._dynamo.reset()
+    result = torch.compile(step, fullgraph=True)(v, e2v, out)
+
+    np.testing.assert_array_equal(result.asnumpy(), np.arange(4.0)[table[:8, 0]])
+
+
+def test_premap_non_contiguous_inverse_image_raises_fullgraph(torch_device):
+    import torch
+
+    with torch_device:
+        e2v = gtx.as_connectivity(
+            [Edge, E2VDim],
+            Vertex,
+            torch.asarray([[0, 0], [5, 5], [1, 1]], dtype=torch.int32),
+            allocator=torch,
+        )
+        v = gtx.as_field([Vertex], np.arange(3.0), allocator=torch)
+        out = gtx.zeros({Edge: 3}, allocator=torch)
+
+    def step(v, e2v, out):
+        _first_neighbor(v, out=out, offset_provider={"E2V": e2v})
+        return out
+
+    torch._dynamo.reset()
+    with pytest.raises(Exception) as excinfo:
+        torch.compile(step, fullgraph=True)(v, e2v, out)
+
+    # Dynamo reports the failed fake run, the error is further down the chain
+    error = excinfo.value
+    while error is not None and not isinstance(error, ValueError):
+        error = error.__cause__ or error.__context__
+    assert error is not None and "non-contiguous" in str(error)
+
+
+def test_recompiles_per_connectivity(torch_device):
+    import torch
+
+    table = _skip_value_e2v_table(8)
+    with torch_device:
+        tensor = torch.asarray(table)
+        v = gtx.as_field([Vertex], np.arange(8.0), allocator=torch)
+        out = gtx.zeros({Edge: 16}, allocator=torch)
+
+    def connectivity(tensor):
+        return gtx.as_connectivity([Edge, E2VDim], Vertex, tensor, skip_value=-1, allocator=torch)
+
+    def step(v, e2v, out):
+        _neighbor_sum(v, out=out, offset_provider={"E2V": e2v})
+        return out
+
+    torch._dynamo.reset()
+    recorder = _GraphRecorder()
+    compiled = torch.compile(step, fullgraph=True, backend=recorder)
+    e2v = connectivity(tensor)
+    compiled(v, e2v, out)
+    compiled(v, e2v, out)
+    assert len(recorder.graphs) == 1
+
+    compiled(v, connectivity(tensor), out)
+    assert len(recorder.graphs) == 2
+
+    np.testing.assert_allclose(
+        compiled(v, connectivity(tensor.clone()), out).asnumpy(),
+        _reference_neighbor_sum(np.arange(8.0), table[:16]),
+    )
+    assert len(recorder.graphs) == 3

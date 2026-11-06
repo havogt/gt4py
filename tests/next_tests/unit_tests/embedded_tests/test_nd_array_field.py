@@ -1921,6 +1921,31 @@ def test_jax_grad_through_premap_with_skip_values():
     np.testing.assert_allclose(jax.grad(loss)(x), [0.25, 1.0 / 6.0, 0.125, 0.0])
 
 
+@pytest.mark.requires_torch
+def test_torch_grad_through_premap_with_skip_values():
+    import torch
+
+    V = Dimension("V")
+    E = Dimension("E")
+    E2VDim = Dimension("E2V", kind=DimensionKind.LOCAL)
+    e2v = common._connectivity(
+        torch.asarray([[0, 1], [2, -1]], dtype=torch.int32),
+        codomain=V,
+        domain=common.domain({E: (0, 2), E2VDim: (0, 2)}),
+        skip_value=-1,
+    )
+    x = torch.tensor([4.0, 9.0, 16.0, -1.0], dtype=torch.float64, requires_grad=True)
+    field = common._field(x, domain=common.domain({V: (0, 4)}))
+
+    with embedded_context.update(offset_provider={"E2V": e2v}):
+        result = fbuiltins.neighbor_sum(fbuiltins.sqrt(field.premap(e2v)), axis=E2VDim)
+    loss = torch.sum(result.ndarray)
+    loss.backward()
+
+    np.testing.assert_allclose(loss.item(), 9.0)
+    np.testing.assert_allclose(x.grad.numpy(), [0.25, 1.0 / 6.0, 0.125, 0.0])
+
+
 def _skip_value_e2v_table(num_vertices: int) -> np.ndarray:
     """Two edges per vertex, both entries equal, every seventh second entry a skip value."""
     vertex = np.arange(4 * num_vertices) // 2
