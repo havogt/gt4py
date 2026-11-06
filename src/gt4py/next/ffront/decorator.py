@@ -14,12 +14,13 @@ from __future__ import annotations
 
 import abc
 import contextlib
+import contextvars
 import dataclasses
 import functools
 import types
 import typing
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from typing import Any, Generic, Optional, Self, Sequence, TypeAlias, Unpack, override
 
 from gt4py import eve
@@ -79,6 +80,28 @@ def embedded_program_call_context(
 ) -> contextlib.AbstractContextManager:
     """Hook called at the beginning and end of an embedded program call."""
     return metrics.metrics_source_key_setter(f"{program.__name__}<'embedded'>")
+
+
+_force_embedded: contextvars.ContextVar[Callable[[Any], bool] | None] = contextvars.ContextVar(
+    "_force_embedded", default=None
+)
+
+
+@contextlib.contextmanager
+def force_embedded(
+    predicate: Callable[[Program | FieldOperator], bool] = lambda _: True,
+) -> Generator[None, None, None]:
+    """Execute top-level calls of programs / field operators matching `predicate` embedded, ignoring their backend."""
+    token = _force_embedded.set(predicate)
+    try:
+        yield
+    finally:
+        _force_embedded.reset(token)
+
+
+def _is_forced_embedded(entry_point: Program | FieldOperator) -> bool:
+    predicate = _force_embedded.get()
+    return predicate is not None and predicate(entry_point)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -359,7 +382,7 @@ class Program(_CompilableGTEntryPointMixin[ffront_stages.DSLProgramDef]):
                     kwarg_types={k: type_translation.from_value(v) for k, v in kwargs.items()},
                 )
 
-            if self.backend is not None:
+            if self.backend is not None and not _is_forced_embedded(self):
                 self._compiled_programs(
                     *args, **kwargs, offset_provider=offset_provider, enable_jit=enable_jit
                 )
@@ -533,7 +556,11 @@ class FieldOperator(_CompilableGTEntryPointMixin[ffront_stages.DSLFieldOperatorD
         return self.foast_stage.closure_vars
 
     def __call__(self, *args: Any, enable_jit: bool | None = None, **kwargs: Any) -> Any:
-        if not next_embedded.context.within_valid_context() and self.backend is not None:
+        if (
+            not next_embedded.context.within_valid_context()
+            and self.backend is not None
+            and not _is_forced_embedded(self)
+        ):
             # non embedded execution
             offset_provider = {**kwargs.pop("offset_provider", {})}
             if "out" not in kwargs:
