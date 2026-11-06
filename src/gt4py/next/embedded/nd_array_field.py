@@ -14,6 +14,7 @@ import functools
 import itertools
 import math
 import operator
+import os
 import weakref
 from collections.abc import Callable, Iterable, Sequence
 from types import ModuleType
@@ -838,6 +839,10 @@ def _structured_premap(
     return stacked
 
 
+def _jax_gather_at_get(xp: ModuleType) -> bool:
+    return xp is jnp and os.environ.get("GT4PY_JAX_GATHER_AT_GET", "1") == "1"
+
+
 def _gather_premap(data: NdArrayField, *connectivities: common.GatherConnectivity) -> NdArrayField:
     """`premap` via a single advanced-index gather (dimension-preserving and -introducing cases)."""
     xp = data.array_ns
@@ -859,12 +864,17 @@ def _gather_premap(data: NdArrayField, *connectivities: common.GatherConnectivit
         index = (
             _connectivity_index_array(conn, new_domain, xp, skip_value_replacement=start) - start
         )
-        if getattr(conn, "_image_unknown", False):
+        if not _jax_gather_at_get(xp) and getattr(conn, "_image_unknown", False):
             # the output domain assumed all targets inside the field; out-of-range ones read its boundary
             index = xp.clip(index, 0, len(data.domain[dim].unit_range) - 1)
         return index
 
-    new_buffer = data._ndarray[tuple(take_index(dim) for dim in data.domain.dims)]
+    indices = tuple(take_index(dim) for dim in data.domain.dims)
+    if _jax_gather_at_get(xp):
+        # XLA's gather clamps out-of-range starts itself: no clip and no negative-index wrap
+        new_buffer = data._ndarray.at[indices].get(mode="clip", wrap_negative_indices=False)
+    else:
+        new_buffer = data._ndarray[indices]
     return data.__class__.from_array(new_buffer, domain=new_domain, dtype=data.dtype)
 
 
@@ -886,7 +896,7 @@ def _row_gather_premap(
         )
         - start
     )
-    if getattr(connectivity, "_image_unknown", False):
+    if not _jax_gather_at_get(xp) and getattr(connectivity, "_image_unknown", False):
         index = xp.clip(index, 0, len(data.domain[codomain].unit_range) - 1)
 
     other_slices = tuple(
@@ -899,7 +909,13 @@ def _row_gather_premap(
         for dim in data.domain.dims
     )
     # a single index array keeps its dimensions in place of the codomain axis
-    gathered = data._ndarray[other_slices][(slice(None),) * codomain_axis + (index,)]
+    row_index = (slice(None),) * codomain_axis + (index,)
+    if _jax_gather_at_get(xp):
+        gathered = data._ndarray[other_slices].at[row_index].get(
+            mode="clip", wrap_negative_indices=False
+        )
+    else:
+        gathered = data._ndarray[other_slices][row_index]
     gathered_dims = [
         *data.domain.dims[:codomain_axis],
         *connectivity.domain.dims,
