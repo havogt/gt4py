@@ -1465,11 +1465,26 @@ if torch:
                 return None
             return _torch_concrete_connectivities.get(self._concrete_id)
 
+        @property
+        def _image_unknown(self) -> bool:
+            return self._concrete() is None and type(self._ndarray) is not torch.Tensor  # type: ignore[attr-defined] # mixin of 'NdArrayConnectivityField'
+
         def _inverse_image(self, image_range: common.UnitRange) -> common.Domain:
+            if self._image_unknown:
+                # values computed inside a trace: assume every target lies in `image_range`
+                return self.domain  # type: ignore[attr-defined] # mixin of 'NdArrayConnectivityField'
             if (concrete := self._concrete()) is None:
                 return super()._inverse_image(image_range)  # type: ignore[misc] # mixin of 'NdArrayConnectivityField'
             with torch.utils._python_dispatch._disable_current_modes():
                 return concrete._inverse_image(image_range)
+
+        def _gather_index(
+            self, index: core_defs.NDArrayObject, image_range: common.UnitRange
+        ) -> core_defs.NDArrayObject:
+            if self._image_unknown:
+                # the output domain assumed all targets inside the field; out-of-range ones read its boundary
+                return torch.clamp(index, 0, len(image_range) - 1)  # type: ignore[call-overload, unused-ignore] # `NDArrayObject` typing is not complete
+            return index
 
         def restrict(self, index: common.AnyIndexSpec) -> NdArrayConnectivityField:
             restricted = super().restrict(index)  # type: ignore[misc] # mixin of 'NdArrayConnectivityField'
