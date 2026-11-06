@@ -1827,6 +1827,16 @@ if torch:
             with torch.utils._python_dispatch._disable_current_modes():
                 return concrete.inverse_image(image_range)
 
+        @property
+        def _image_unknown(self) -> bool:
+            return self._concrete() is None and type(self._ndarray) is not torch.Tensor  # type: ignore[attr-defined] # mixin of 'NdArrayConnectivityField'
+
+        def _image_slices(self, image_range: common.UnitRange) -> Optional[tuple[slice, ...]]:
+            if self._image_unknown:
+                # values computed inside a trace: assume every target lies in `image_range`
+                return tuple(slice(0, n) for n in self._ndarray.shape)  # type: ignore[attr-defined] # mixin of 'NdArrayConnectivityField'
+            return super()._image_slices(image_range)  # type: ignore[misc] # mixin of 'NdArrayConnectivityField'
+
         def restrict(self, index: common.AnyIndexSpec) -> NdArrayConnectivityField:
             restricted = super().restrict(index)  # type: ignore[misc] # mixin of 'NdArrayConnectivityField'
             if (concrete := self._concrete()) is not None and restricted._concrete_id is None:

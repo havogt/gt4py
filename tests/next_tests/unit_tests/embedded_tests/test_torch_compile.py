@@ -13,6 +13,7 @@ import pytest
 
 import gt4py.next as gtx
 from gt4py.next import astype, neighbor_sum
+from gt4py.next.experimental import as_offset
 
 
 pytestmark = pytest.mark.requires_torch
@@ -22,6 +23,7 @@ Vertex = gtx.Dimension("Vertex")
 Edge = gtx.Dimension("Edge")
 E2VDim = gtx.Dimension("E2V", kind=gtx.DimensionKind.LOCAL)
 E2V = gtx.FieldOffset("E2V", source=Vertex, target=(Edge, E2VDim))
+Koff = gtx.FieldOffset("Koff", source=K, target=(K,))
 
 
 @gtx.field_operator
@@ -136,3 +138,35 @@ def test_namedtuple_arg_fullgraph(torch_device):
     result = torch.compile(step, fullgraph=True)(a, b)
 
     np.testing.assert_array_equal(result.asnumpy(), np.arange(3.0) * 11.0)
+
+
+@gtx.field_operator
+def _shift_by_field(
+    a: gtx.Field[gtx.Dims[Edge, K], float], offset: gtx.Field[gtx.Dims[Edge, K], gtx.int32]
+) -> gtx.Field[gtx.Dims[Edge, K], float]:
+    return a(as_offset(Koff, offset))
+
+
+def test_as_offset_field_fullgraph(torch_device):
+    import torch
+
+    values = np.arange(8.0).reshape(2, 4)
+    offsets = np.asarray([[1, 1, 0, -1], [0, 2, 1, 0]], dtype=np.int32)
+    with torch_device:
+        a = gtx.as_field([Edge, K], values, allocator=torch)
+        offset = gtx.as_field([Edge, K], offsets, allocator=torch)
+        beyond = gtx.as_field([Edge, K], np.full((2, 4), 3, dtype=np.int32), allocator=torch)
+
+    def step(a, offset):
+        return _shift_by_field(a, offset, domain={Edge: (0, 2), K: (0, 4)}, offset_provider={})
+
+    torch._dynamo.reset()
+    compiled = torch.compile(step, fullgraph=True)
+
+    np.testing.assert_array_equal(
+        compiled(a, offset).asnumpy(), np.take_along_axis(values, np.arange(4) + offsets, axis=1)
+    )
+    # out-of-range targets read the boundary value under a trace
+    np.testing.assert_array_equal(
+        compiled(a, beyond).asnumpy(), np.repeat(values[:, -1:], 4, axis=1)
+    )
