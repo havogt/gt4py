@@ -91,3 +91,18 @@ def test_unstructured_fullgraph(torch_device):
 
     expected = (np.arange(4.0) + 1.0)[table].sum(axis=1) + (np.arange(4.0) + 1.0)[table[:, 0]]
     np.testing.assert_array_equal(result.asnumpy(), expected)
+
+
+def test_int_index_fullgraph(torch_device):
+    import torch
+
+    with torch_device:
+        f = gtx.as_field([Edge, K], np.arange(6.0).reshape(2, 3), allocator=torch)
+
+    def last_level(f):
+        return f[K(2)]
+
+    torch._dynamo.reset()
+    result = torch.compile(last_level, fullgraph=True)(f)
+
+    np.testing.assert_array_equal(result.asnumpy(), last_level(f).asnumpy())

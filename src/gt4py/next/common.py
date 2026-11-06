@@ -388,7 +388,7 @@ AnyIndexSpec: TypeAlias = AnyIndexElement | AnyIndexSequence
 def is_int_index(p: Any) -> TypeGuard[IntIndex]:
     # should be replaced by isinstance(p, IntIndex), but mypy complains with
     # `Argument 2 to "isinstance" has incompatible type "<typing special form>"; expected "_ClassInfo"  [arg-type]`
-    return isinstance(p, (int, core_defs.INTEGRAL_TYPES))
+    return isinstance(p, (int, *core_defs.INTEGRAL_TYPES))
 
 
 def is_finite_named_range(v: NamedRange) -> TypeGuard[FiniteNamedRange]:
