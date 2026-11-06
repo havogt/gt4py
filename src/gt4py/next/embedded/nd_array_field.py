@@ -15,7 +15,7 @@ import itertools
 import math
 import operator
 import weakref
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from types import ModuleType
 from typing import Any, ClassVar, Final, Never, Optional, ParamSpec, TypeAlias, TypeVar, cast
 
@@ -1404,6 +1404,12 @@ def is_torch_compiling() -> bool:
 _ENCODED_DIMENSION = "__gt4py_dimension__"
 
 
+def _rebuild_sequence(value: tuple | list, items: Iterable[Any]) -> tuple | list:
+    if hasattr(value, "_fields"):
+        return type(value)(*items)
+    return type(value)(items)
+
+
 def _encode_dimensions(value: Any) -> Any:
     # 'Dimension's (also as dict keys, e.g. in 'domain') are no constants for Dynamo
     if isinstance(value, common.Dimension):
@@ -1411,7 +1417,7 @@ def _encode_dimensions(value: Any) -> Any:
     if isinstance(value, dict):
         return {_encode_dimensions(k): _encode_dimensions(v) for k, v in value.items()}
     if isinstance(value, (tuple, list)) and not isinstance(value, common.Field):
-        return type(value)(_encode_dimensions(v) for v in value)
+        return _rebuild_sequence(value, (_encode_dimensions(v) for v in value))
     return value
 
 
@@ -1426,7 +1432,7 @@ def _decode_dimensions(value: Any) -> Any:
     if isinstance(value, dict):
         return {_decode_dimensions(k): _decode_dimensions(v) for k, v in value.items()}
     if isinstance(value, (tuple, list)) and not isinstance(value, common.Field):
-        return type(value)(_decode_dimensions(v) for v in value)
+        return _rebuild_sequence(value, (_decode_dimensions(v) for v in value))
     return value
 
 

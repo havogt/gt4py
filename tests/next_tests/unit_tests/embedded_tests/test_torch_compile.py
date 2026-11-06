@@ -6,6 +6,8 @@
 # Please, refer to the LICENSE file in the root directory.
 # SPDX-License-Identifier: BSD-3-Clause
 
+from typing import NamedTuple
+
 import numpy as np
 import pytest
 
@@ -106,3 +108,31 @@ def test_int_index_fullgraph(torch_device):
     result = torch.compile(last_level, fullgraph=True)(f)
 
     np.testing.assert_array_equal(result.asnumpy(), last_level(f).asnumpy())
+
+
+class _Pair(NamedTuple):
+    a: gtx.Field[gtx.Dims[K], float]
+    b: gtx.Field[gtx.Dims[K], float]
+
+
+@gtx.field_operator
+def _pair_sum(
+    p: tuple[gtx.Field[gtx.Dims[K], float], gtx.Field[gtx.Dims[K], float]],
+) -> gtx.Field[gtx.Dims[K], float]:
+    return p[0] + p[1]
+
+
+def test_namedtuple_arg_fullgraph(torch_device):
+    import torch
+
+    with torch_device:
+        a = gtx.as_field([K], np.arange(3.0), allocator=torch)
+        b = gtx.as_field([K], np.arange(3.0) * 10.0, allocator=torch)
+
+    def step(a, b):
+        return _pair_sum(_Pair(a, b), domain={K: (0, 3)}, offset_provider={})
+
+    torch._dynamo.reset()
+    result = torch.compile(step, fullgraph=True)(a, b)
+
+    np.testing.assert_array_equal(result.asnumpy(), np.arange(3.0) * 11.0)
