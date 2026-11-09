@@ -1273,6 +1273,35 @@ def test_setitem_wrong_domain():
         field[(1, slice(None))] = value_incompatible
 
 
+def _broadcast_field():
+    """A field over D0=[0, 3) x D1=[0, 4) whose D1 axis is broadcast: one stored element per D0 index."""
+    return common._field(
+        np.asarray([[1.0], [2.0], [3.0]]),
+        domain=common.Domain(dims=(D0, D1), ranges=(UnitRange(0, 3), UnitRange(0, 4))),
+    )
+
+
+def test_setitem_whole_broadcast_axis():
+    field = _broadcast_field()
+
+    field[(NamedIndex(D0, 1),)] = 7.0
+
+    assert np.array_equal(field.asnumpy(), [[1.0], [7.0], [3.0]])
+
+
+@pytest.mark.parametrize(
+    "index",
+    [(NamedRange(D1, UnitRange(1, 3)),), (NamedIndex(D1, 2),), (1, 0), (slice(None), slice(0, 1))],
+    ids=["range", "index", "relative-index", "relative-slice"],
+)
+def test_setitem_part_of_broadcast_axis_raises(index):
+    field = _broadcast_field()
+
+    with pytest.raises(ValueError, match="broadcast dimension"):
+        field[index] = 7.0
+    assert np.array_equal(field.asnumpy(), [[1.0], [2.0], [3.0]])
+
+
 def test_nd_array_field_getstate_excludes_cached_properties():
     """Test that __getstate__ only serializes dataclass fields, excluding cached properties."""
     data = np.asarray([[1.0, 2.0], [3.0, 4.0]], dtype=np.float64)

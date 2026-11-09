@@ -375,6 +375,7 @@ class NdArrayField(
         value: common.Field | core_defs.NDArrayObject | core_defs.ScalarT,
     ) -> None:
         target_domain, target_slice = self._slice(index)
+        self._check_assignable(target_domain)
 
         if isinstance(value, common.Field):
             if not value.domain == target_domain:
@@ -447,6 +448,22 @@ class NdArrayField(
         if self.dtype == core_defs.BoolDType():
             return _make_builtin("invert", "invert")(self)
         raise NotImplementedError("'__invert__' not implemented for non-'bool' fields.")
+
+    def _check_assignable(self, target_domain: common.Domain) -> None:
+        # TODO(havogt): a broadcast axis (a size-1 buffer axis spanning a longer range) stores one
+        #   element for its whole range, so assigning to part of the range cannot be represented
+        #   without materializing the axis. Remove once broadcasting has a representation that is
+        #   not a size-1 buffer axis.
+        for dim, rng, size in zip(self.domain.dims, self.domain.ranges, self._ndarray.shape):
+            is_broadcast_axis = size == 1 and not (
+                common.UnitRange.is_finite(rng) and len(rng) == 1
+            )
+            if is_broadcast_axis and (
+                dim not in target_domain.dims or target_domain[dim].unit_range != rng
+            ):
+                raise ValueError(
+                    f"Cannot assign to part of the broadcast dimension '{dim}' of range '{rng}'."
+                )
 
     def _slice(
         self, index: common.AnyIndexSpec
@@ -1025,6 +1042,7 @@ if jnp:
             value: common.Field | core_defs.NDArrayObject | core_defs.ScalarT,
         ) -> None:
             target_domain, target_slice = self._slice(index)
+            self._check_assignable(target_domain)
 
             if isinstance(value, common.Field):
                 if not value.domain == target_domain:
