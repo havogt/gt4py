@@ -486,6 +486,10 @@ def infer_expr(
     if not revisit_already_inferred and hasattr(expr.annex, "domain"):
         return expr, {}
 
+    if keep_existing_domains and hasattr(expr.annex, "domain"):
+        # `_infer_expr` rebuilds every non-leaf node, so the domain has to be read off here
+        domain = expr.annex.domain
+
     itir_type_inference.reinfer(
         expr, offset_provider_type=common.offset_provider_to_type(offset_provider)
     )
