@@ -25,7 +25,7 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Callable, Mapping
 from types import ModuleType
-from typing import Any, ClassVar, Final
+from typing import Any, ClassVar, Final, Optional
 
 import array_api_compat
 import array_api_compat.numpy as compat_numpy
@@ -188,6 +188,71 @@ class ArrayOps:
             value = self.xp.astype(value, array.dtype)
         array[key] = value  # type: ignore[index] # `NDArrayObject` typing is not complete
         return array
+
+    # The operations on a connectivity table. `static` is what the connectivity holds for the
+    # library of its table: `None`, unless the library created the connectivity with one.
+
+    def hyperslice(
+        self,
+        table: core_defs.NDArrayObject,
+        image_range: common.UnitRange,
+        skip_value: Optional[core_defs.IntegralScalar] = None,
+        *,
+        static: Any = None,
+    ) -> Optional[tuple[slice, ...]]:
+        """
+        Return the hypercube slice that contains all indices in `table` that are within `image_range`, or `None` if no such hypercube exists.
+
+        If `skip_value` is given, the selected values are ignored. It returns the smallest hypercube.
+        A bigger hypercube could be constructed by adding lines that contain only `skip_value`s.
+
+        Example:
+            table =  0  1 -1
+                     3  4 -1
+                    -1 -1 -1
+            skip_value = -1
+
+            would currently select the 2x2 range [0,2], [0,2], but could also select the 3x3 range [0,3], [0,3].
+
+        A library which cannot read the values of `table` returns all of it. What an entry
+        outside of `image_range` reads is then defined by its `gather`.
+        """
+        xp = self.xp
+        select_mask = (table >= image_range.start) & (table < image_range.stop)
+
+        if not xp.any(select_mask):
+            return None
+
+        nnz: tuple[core_defs.NDArrayObject, ...] = xp.nonzero(select_mask)
+
+        slices = tuple(
+            slice(int(xp.min(dim_nnz_indices)), int(xp.max(dim_nnz_indices)) + 1)
+            for dim_nnz_indices in nnz
+        )
+        hcube = select_mask[tuple(slices)]
+        if skip_value is not None:
+            ignore_mask = table == skip_value
+            hcube = hcube | ignore_mask[tuple(slices)]
+        if not xp.all(hcube):
+            return None
+
+        return slices
+
+    def restrict_table(
+        self,
+        table: core_defs.NDArrayObject,
+        key: common.RelativeIndexSequence,
+        *,
+        static: Any = None,
+    ) -> core_defs.NDArrayObject:
+        """Return `table[key]`."""
+        return self.asarray(table[key])
+
+    def gather(
+        self, array: core_defs.NDArrayObject, indices: tuple[core_defs.NDArrayObject, ...]
+    ) -> core_defs.NDArrayObject:
+        """Return `array[indices]` for one integer index array per axis, all of the same shape."""
+        return array[indices]
 
     def to_numpy(self, array: core_defs.NDArrayObject) -> np.ndarray:
         return np.from_dlpack(array, device="cpu", copy=None)  # type: ignore[arg-type] # `NDArrayObject` typing is not complete
