@@ -453,8 +453,6 @@ class CommonSubexpressionElimination(PreserveLocationVisitor, NodeTranslator):
     top-down, extracted expressions always land up in the outermost scope they can appear in.
     """
 
-    PRESERVED_ANNEX_ATTRS = ("type", "domain")
-
     uids: utils.IDGeneratorPool = dataclasses.field(repr=False)
 
     collect_all: bool = dataclasses.field(default=False)
