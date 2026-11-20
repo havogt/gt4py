@@ -62,3 +62,21 @@ def test_scan_out_of_bounds_column():
 
     with pytest.raises(embedded_exceptions.IndexOutOfBounds):
         _backward(a_field, out=out, offset_provider={})
+
+
+def test_scan_of_non_numpy_buffers_reads_point_by_point(monkeypatch):
+    import array_api_strict as xs
+
+    from gt4py.next.embedded import operators
+
+    def no_point_views(*args, **kwargs):
+        raise AssertionError("arguments copied to NumPy for a result that is not a NumPy array")
+
+    monkeypatch.setattr(operators, "_point_views", no_point_views)
+    domain = common.domain({I: (0, 2), K: (0, 3)})
+    a_field = common._field(xs.asarray(np.ones((2, 3))), domain=domain)
+    out = common._field(xs.asarray(np.zeros((2, 3))), domain=domain)
+
+    _backward(a_field, out=out, offset_provider={})
+
+    np.testing.assert_array_equal(out.asnumpy(), [[7.0, 3.0, 1.0], [7.0, 3.0, 1.0]])
