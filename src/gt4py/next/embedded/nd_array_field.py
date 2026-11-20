@@ -69,7 +69,7 @@ def _make_builtin(
                 arrays.append(array)
                 transformed.append(array)
             else:
-                assert core_defs.is_scalar_type(f)
+                assert array_ops.is_scalar(f)
                 transformed.append(f)
         if len(arrays) < len(transformed):
             transformed = [ops.operand(v, arrays[0]) for v in transformed]

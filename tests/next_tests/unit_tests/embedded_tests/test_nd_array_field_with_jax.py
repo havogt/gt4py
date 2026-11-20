@@ -120,6 +120,26 @@ def test_jax_traced_array_dispatch():
 
 
 @pytest.mark.requires_jax
+def test_jax_traced_scalar_operands():
+    import jax
+
+    field = common._field(jax.numpy.arange(3, dtype=np.float64), domain=common.domain({D0: 3}))
+
+    def scale(s, f):
+        return s * f - f / s
+
+    expected = scale(2.0, field)
+    for result in [jax.jit(scale)(2.0, field), scale(jax.numpy.asarray(2.0), field)]:
+        assert result.domain == field.domain
+        np.testing.assert_allclose(result.asnumpy(), expected.asnumpy())
+
+    def loss(s):
+        return jax.numpy.sum(scale(s, field).ndarray)
+
+    np.testing.assert_allclose(jax.grad(loss)(2.0), 3.0 + 3.0 / 4.0)
+
+
+@pytest.mark.requires_jax
 def test_jax_grad_through_premap_with_skip_values():
     import jax
 

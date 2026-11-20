@@ -280,6 +280,17 @@ def test_binary_arithmetic_ops(binary_arithmetic_op, nd_array_implementation, lh
     assert np.allclose(result.ndarray, expected)
 
 
+def test_binary_arithmetic_ops_with_0d_array(binary_arithmetic_op, nd_array_implementation):
+    values = [2.0, 3.0, -3.0]
+    field = _make_field_or_scalar(values, nd_array_implementation)
+
+    result = binary_arithmetic_op(field, asarray(nd_array_implementation, 2.0, dtype=np.float32))
+
+    expected = binary_arithmetic_op(np.asarray(values, dtype=np.float32), np.float32(2.0))
+    assert result.domain == field.domain
+    assert np.allclose(result.asnumpy(), expected)
+
+
 @pytest.mark.parametrize(
     "lhs, rhs",
     [
