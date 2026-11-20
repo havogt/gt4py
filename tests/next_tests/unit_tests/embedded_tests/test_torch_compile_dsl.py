@@ -391,3 +391,29 @@ def test_torch_compile_neighbor_sum_with_inductor(device):
         compiled(v, e2v, out).asnumpy(), _reference_neighbor_sum(values, table)
     )
     assert len(graphs) == 1
+
+
+@gtx.field_operator
+def _shift_and_scale(
+    a: gtx.Field[gtx.Dims[Edge, K], float],
+) -> tuple[gtx.Field[gtx.Dims[Edge, K], float], gtx.Field[gtx.Dims[Edge, K], float]]:
+    return a(K + 1), a * 2.0
+
+
+def test_torch_compile_field_operator_returning_results_on_domain(device):
+    values = np.arange(8.0).reshape(2, 4)
+    a = _field([Edge, K], values, device)
+    domain = ({Edge: (0, 2), K: (0, 3)}, {Edge: (1, 2), K: (0, 4)})
+
+    def step(a):
+        return _shift_and_scale(a, domain=domain, offset_provider={"Koff": K})
+
+    compiled, graphs = _compile(step)
+    shifted, scaled = compiled(a)
+
+    assert shifted.domain == gtx.domain(domain[0])
+    assert scaled.domain == gtx.domain(domain[1])
+    assert shifted.ndarray.device.type == device.type
+    np.testing.assert_array_equal(shifted.asnumpy(), values[:, 1:4])
+    np.testing.assert_array_equal(scaled.asnumpy(), 2.0 * values[1:2])
+    assert len(graphs) == 1
