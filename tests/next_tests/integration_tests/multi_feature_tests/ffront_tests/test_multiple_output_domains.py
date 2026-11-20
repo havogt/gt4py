@@ -241,8 +241,8 @@ def test_program_slicing(cartesian_case):
         out_b,
         inout=(out_b, out_a),
         ref=(
-            np.concatenate([out_b_.ndarray[0:2], b.ndarray[2:-2], out_b_.ndarray[-2:]]),
-            np.concatenate([out_a_.ndarray[0:1], a.ndarray[1:-1], out_a_.ndarray[-1:]]),
+            np.concatenate([out_b_.asnumpy()[0:2], b.asnumpy()[2:-2], out_b_.asnumpy()[-2:]]),
+            np.concatenate([out_a_.asnumpy()[0:1], a.asnumpy()[1:-1], out_a_.asnumpy()[-1:]]),
         ),
     )
 
@@ -333,8 +333,8 @@ def test_program_out_as_tuple_different_sizes(
         restrict_j[1],
         inout=(out),
         ref=(
-            b.ndarray[restrict_j[0] : j_size + restrict_j[1]],
-            a.ndarray[restrict_i[0] : i_size + restrict_i[1]],
+            b.asnumpy()[restrict_j[0] : j_size + restrict_j[1]],
+            a.asnumpy()[restrict_i[0] : i_size + restrict_i[1]],
         ),
     )
 
@@ -544,7 +544,7 @@ def test_program_unstructured(unstructured_case):
         unstructured_case.default_sizes[Cell],
         unstructured_case.default_sizes[Edge],
         inout=(out_a_shifted, out_a),
-        ref=((a.ndarray)[unstructured_case.offset_provider["C2E"].asnumpy()[:, 1]], a),
+        ref=(a.asnumpy()[unstructured_case.offset_provider["C2E"].asnumpy()[:, 1]], a),
     )
 
 
@@ -598,7 +598,7 @@ def test_program_temporary(unstructured_case):
         extend={Cell: (-restrict_cell[0], restrict_cell[1])},
     )()
 
-    e2v = (a.ndarray)[unstructured_case.offset_provider["E2V"].asnumpy()[:, 1]]
+    e2v = a.asnumpy()[unstructured_case.offset_provider["E2V"].asnumpy()[:, 1]]
     cases.verify(
         unstructured_case,
         prog_temporary,

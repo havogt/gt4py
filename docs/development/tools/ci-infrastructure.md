@@ -22,6 +22,14 @@ The idea is to run test sessions only when needed. This means that a set of test
 
 There is an extra CI workflow on GitHub scheduled to run daily and testing `main` with different sets of requirements: the `highest` and the `lowest-direct` `uv` resolution strategies. Failures are accessible in [GitHub web interface](https://github.com/GridTools/gt4py/actions/workflows/daily-ci.yml) and as the 'Daily CI' badge in the main [README.md](../../../README.md) file. Additionally, in case of failure a message _might_ be posted in the [#ci-notifications](https://app.slack.com/client/T0A5HP547/C0E145U65) channel of the GridTols slack, but those notifications do not work reliably.
 
+### AI-assisted PR review (PR Agent)
+
+A `PR Agent` workflow posts an advisory AI review on pull requests, using [PR Agent](https://github.com/The-PR-Agent/pr-agent) on the [CSCS inference service](https://docs.cscs.ch/services/inference/). It is a small caller of the reusable workflow in [GridTools/ci-workflows](https://github.com/GridTools/ci-workflows), pinned by commit SHA, which holds the pipeline; the key is in the `pr-agent` environment. It is never a required status check. Only `/review` runs automatically, for pull requests whose author has write access; users with write access can also invoke `/review`, `/improve`, `/ask` and `/describe` by commenting. See [pr-agent.md](pr-agent.md) for details.
+
+### Sandboxed agent review (Agent Review)
+
+An `Agent Review` workflow posts an advisory review written by a coding agent that can explore the repository, running inside the [AWF](https://github.com/github/gh-aw-firewall) sandbox, without network access, designed so that neither the inference key nor a write token is readable by the agent or by PR code. It is a small caller of the reusable workflow in [GridTools/ci-workflows](https://github.com/GridTools/ci-workflows), pinned by commit SHA, which holds the pipeline. It runs on a pull request when a user with write access adds the `agent-review` label, or by `workflow_dispatch`; it needs an Actions event policy for its workflow file that allows `pull_request_target` and `workflow_dispatch`, and a dedicated key in the `agent-review` environment. It is never a required status check. See [agent-review.md](agent-review.md) for details.
+
 ## CSCS-CI
 
 CI pipelines for all tests can be triggered via CSCS-CI. These automatically run from a Gitlab mirror for whitelisted users only, and have to be explicitly run by a whitelisted user via the comment "cscs-ci run default" on PRs from other users. There is currently no finegrained control over which subpackage tests are run. Neither can a subset be started manually from the comments nor can tests be skipped based on which files have been changed. Both are achievable (the latter with considerable effort), however given the current duration of the pipeline it does not seem worth doing so.
