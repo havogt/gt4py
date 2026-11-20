@@ -70,9 +70,9 @@ class ScanOperator(EmbeddedOperator[xtyping.MaybeNestedInTuple[core_defs.ScalarT
 
         res_extracted = arguments.extract(res)
         assert xtyping.is_maybe_nested_in_tuple_of(res_extracted, common.MutableField)  # type: ignore[type-abstract]  # MutableField is abstract/generic
-        views = _point_views(all_args, out_domain)
         targets = _point_targets(res_extracted, out_domain)
-        if views is not None and targets is not None:
+        views = _point_views(all_args, out_domain) if targets is not None else None
+        if targets is not None and views is not None:
             self._scan_points(args, kwargs, views, targets, out_domain)
             return res
 
