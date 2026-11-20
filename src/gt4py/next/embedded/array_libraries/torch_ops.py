@@ -334,8 +334,6 @@ def call(entry_point: Callable[..., Any], args: tuple, kwargs: dict[str, Any]) -
     """Call `entry_point` in a `torch.compile` region as one non-strictly traced function."""
     if "domain" in kwargs:
         kwargs = {**kwargs, "domain": _encode_domain_argument(kwargs["domain"])}
-    if isinstance(kwargs.get("offset_provider"), dict):
-        kwargs = {**kwargs, "offset_provider": _encode_offset_provider(kwargs["offset_provider"])}
     result = _nonstrict_call(id(entry_point), args, kwargs)
     return result[0] if result else None
 
@@ -354,28 +352,6 @@ def _decode_domain_argument(domain: Any) -> Any:
     return _context_domain(tuple(domain))
 
 
-_ENCODED_DIMENSION = "__gt4py_dimension__"
-
-
-def _encode_offset_provider(offset_provider: dict[str, Any]) -> dict[str, Any]:
-    # the dimensions of Cartesian offsets cannot be in a pytree context
-    return {
-        name: (_ENCODED_DIMENSION, value.value, value.kind)
-        if isinstance(value, common.Dimension)
-        else value
-        for name, value in offset_provider.items()
-    }
-
-
-def _decode_offset_provider(offset_provider: dict[str, Any]) -> dict[str, Any]:
-    return {
-        name: common.Dimension(value[1], value[2])
-        if isinstance(value, tuple) and len(value) == 3 and value[0] == _ENCODED_DIMENSION
-        else value
-        for name, value in offset_provider.items()
-    }
-
-
 @torch.compiler.nonstrict_trace
 def _nonstrict_call(entry_point_id: int, args: tuple, kwargs: dict[str, Any]) -> tuple[Any, ...]:
     global _within_nonstrict_call
@@ -383,11 +359,6 @@ def _nonstrict_call(entry_point_id: int, args: tuple, kwargs: dict[str, Any]) ->
     try:
         if "domain" in kwargs:
             kwargs = {**kwargs, "domain": _decode_domain_argument(kwargs["domain"])}
-        if isinstance(kwargs.get("offset_provider"), dict):
-            kwargs = {
-                **kwargs,
-                "offset_provider": _decode_offset_provider(kwargs["offset_provider"]),
-            }
         result = _entry_points[entry_point_id](*args, **kwargs)
     finally:
         _within_nonstrict_call = False
