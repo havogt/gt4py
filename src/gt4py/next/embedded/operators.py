@@ -13,7 +13,7 @@ from gt4py import eve
 from gt4py._core import definitions as core_defs
 from gt4py.eve import xtyping
 from gt4py.next import common, errors, field_utils, named_collections, utils
-from gt4py.next.embedded import common as embedded_common, context as embedded_context
+from gt4py.next.embedded import array_ops, common as embedded_common, context as embedded_context
 from gt4py.next.otf import arguments
 from gt4py.next.type_system import type_specifications as ts, type_translation
 
@@ -149,11 +149,11 @@ def field_operator_call(op: EmbeddedOperator[_R, _P], args: Any, kwargs: Any) ->
         ):
             full_res: Any = op(*args, **kwargs)
 
-        xp = get_array_ns(*(arguments.extract(arg) for arg in [*args, *kwargs.values()]))
+        like = _first_field(*args, *kwargs.values())
         container_extracted_res = arguments.extract(full_res)
         if not isinstance(domain, tuple):
             domain = utils.tree_map(lambda _: domain)(container_extracted_res)
-        result: Any = utils.tree_map(lambda source, dom: _field_on_domain(source, dom, xp))(
+        result: Any = utils.tree_map(lambda source, dom: _field_on_domain(source, dom, like))(
             container_extracted_res, domain
         )
         if named_collections.is_named_collection_type(type(full_res)):
@@ -174,15 +174,28 @@ def _get_vertical_range(domain: common.Domain) -> common.NamedRange | eve.Nothin
     return vertical_dim_filtered[0] if vertical_dim_filtered else eve.NOTHING
 
 
+def _first_field(*values: Any) -> Optional[common.Field]:
+    for value in values:
+        if isinstance(value, common.Field):
+            return value
+        if isinstance(value, tuple) and (field := _first_field(*value)) is not None:
+            return field
+    return None
+
+
 def _field_on_domain(
-    source: common.Field | core_defs.Scalar, domain: common.Domain, xp: Any
+    source: common.Field | core_defs.Scalar, domain: common.Domain, like: Optional[common.Field]
 ) -> common.Field:
+    """A new field on `domain` with the values of `source`, in the library and on the device of the inputs."""
     if isinstance(source, common.Field):
-        xp = source.array_ns  # type: ignore[attr-defined]
+        ops = array_ops.of(source.ndarray)
         values = source[domain].ndarray
     else:
-        values = xp.asarray(source)
-    return common._field(xp.array(xp.broadcast_to(values, domain.shape)), domain=domain)
+        ops = array_ops.of(like.ndarray) if like is not None else array_ops.default()
+        values = ops.xp.asarray(source, device=None if like is None else ops.device(like.ndarray))
+    return common._field(
+        ops.xp.asarray(ops.xp.broadcast_to(values, domain.shape), copy=True), domain=domain
+    )
 
 
 def _tuple_assign_field(
