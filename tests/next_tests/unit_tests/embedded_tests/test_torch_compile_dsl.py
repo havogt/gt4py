@@ -406,7 +406,7 @@ def test_torch_compile_field_operator_returning_results_on_domain(device):
     domain = ({Edge: (0, 2), K: (0, 3)}, {Edge: (1, 2), K: (0, 4)})
 
     def step(a):
-        return _shift_and_scale(a, domain=domain, offset_provider={"Koff": K})
+        return _shift_and_scale(a, domain=domain, offset_provider={})
 
     compiled, graphs = _compile(step)
     shifted, scaled = compiled(a)
