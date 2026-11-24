@@ -6,10 +6,11 @@
 # Please, refer to the LICENSE file in the root directory.
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""The example `examples/next/jax_diffusivity_fit.py`: gt4py stencils inside `jax.jit` and `jax.grad`."""
+"""The notebook `examples/next/jax_diffusivity_fit.ipynb`: the `jax_jit` backend inside `jax.jit` and `jax.grad`."""
 
 import functools
 import importlib.util
+import json
 import pathlib
 import types
 
@@ -27,8 +28,19 @@ OBS_CELLS = np.arange(0, N * N, 7)
 
 
 @pytest.fixture(scope="module")
-def example() -> types.ModuleType:
-    path = pathlib.Path(__file__).parents[5] / "examples" / "next" / "jax_diffusivity_fit.py"
+def example(tmp_path_factory) -> types.ModuleType:
+    """The notebook's definitions: its code cells without the twin experiment."""
+    notebook = pathlib.Path(__file__).parents[5] / "examples" / "next" / "jax_diffusivity_fit.ipynb"
+    cells = json.loads(notebook.read_text())["cells"]
+    # gt4py reads the source of field operators, so the cells go to a file
+    path = tmp_path_factory.mktemp("notebook") / "jax_diffusivity_fit.py"
+    path.write_text(
+        "\n\n".join(
+            "".join(cell["source"])
+            for cell in cells
+            if cell["cell_type"] == "code" and "experiment" not in cell["metadata"].get("tags", [])
+        )
+    )
     spec = importlib.util.spec_from_file_location("jax_diffusivity_fit", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -36,12 +48,13 @@ def example() -> types.ModuleType:
 
 
 def numpy_forecast(example, kappa, q0=None):
-    """The forecast on NumPy fields, in a Python loop: the reference, without JAX."""
+    """The forecast on NumPy fields, embedded in a Python loop: the reference, without JAX."""
     mesh, vn = example.make_mesh(N, np), example.cellular_flow(N, np)
     q = example.gaussian_blob(N, np) if q0 is None else gtx.as_field([example.Cell], q0)
     dt = example.CFL * mesh.h / np.max(np.abs(vn.asnumpy()))
+    embedded = example.advect_diffuse.with_backend(None)
     for _ in range(N_STEPS):
-        q = example.advance(q, vn, kappa, dt, mesh)
+        q = example.advance(q, vn, kappa, dt, mesh, stencil=embedded)
     return q.asnumpy()
 
 
@@ -68,6 +81,7 @@ def inputs(example):
 def test_forecast_jitted_equals_eager(example, inputs):
     import jax
 
+    assert example.advect_diffuse.backend.name == "jax_jit"
     forecast = functools.partial(example.forecast, n_steps=N_STEPS)
     args = (inputs.q0, inputs.vn, KAPPA, inputs.mesh)
 
