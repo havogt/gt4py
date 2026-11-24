@@ -21,17 +21,13 @@ import contextvars
 import dataclasses
 import inspect
 from collections.abc import Callable, Sequence
-from typing import TYPE_CHECKING, Any
+from typing import Any, cast
 
 import numpy as np
 import torch
 
+from gt4py._core import ndarray_utils as core_ndarray_utils
 from gt4py.next import backend as next_backend, common
-from gt4py.next.program_processors.runners.experimental import embedded_jit
-
-
-if TYPE_CHECKING:
-    from gt4py.next.ffront import decorator
 
 
 # Dynamo reports an exception of the embedded code as an unsupported output type
@@ -75,7 +71,7 @@ def _region(entry: Callable[..., None], static: _Static) -> Callable[..., Any]:
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
-class TorchCompileBackend(next_backend.EmbeddedJitBackend):
+class TorchCompileBackend(next_backend.EmbeddedBackend):
     """
     Runs programs and field operators embedded, under `torch.compile`.
 
@@ -84,10 +80,7 @@ class TorchCompileBackend(next_backend.EmbeddedJitBackend):
     combination of their values. The `out` fields are assigned to in place.
     """
 
-    def jit(self, entry_point: decorator.GTEntryPoint) -> Callable[..., None]:
-        return embedded_jit.jit(entry_point, self._wrap)
-
-    def _wrap(
+    def wrap(
         self,
         entry: Callable[..., None],
         signature: inspect.Signature,
@@ -125,4 +118,6 @@ class TorchCompileBackend(next_backend.EmbeddedJitBackend):
         return run
 
 
-torch_compile = TorchCompileBackend(name="torch_compile", allocator=torch)
+torch_compile = TorchCompileBackend(
+    name="torch_compile", allocator=cast(core_ndarray_utils.ArrayNamespace, torch)
+)

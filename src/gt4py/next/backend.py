@@ -8,12 +8,12 @@
 
 from __future__ import annotations
 
-import abc
 import dataclasses
-from collections.abc import Callable
+import inspect
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any, Generic
 
-from gt4py._core import definitions as core_defs
+from gt4py._core import definitions as core_defs, ndarray_utils as core_ndarray_utils
 from gt4py.next import config, custom_layout_allocators as next_allocators
 from gt4py.next.ffront import (
     foast_to_gtir,
@@ -154,7 +154,10 @@ DEFAULT_TRANSFORMS: Transforms = Transforms()
 class Backend(Generic[core_defs.DeviceTypeT]):
     name: str
     executor: workflow.Workflow[stages.CompilableProgramDef, artifacts.CompilationArtifact]
-    allocator: next_allocators.FieldBufferAllocatorProtocol[core_defs.DeviceTypeT]
+    allocator: (
+        next_allocators.FieldBufferAllocatorProtocol[core_defs.DeviceTypeT]
+        | core_ndarray_utils.ArrayNamespace
+    )
     transforms: workflow.Workflow[stages.ConcreteProgramDef, stages.CompilableProgramDef]
 
     def compile(
@@ -176,22 +179,25 @@ class Backend(Generic[core_defs.DeviceTypeT]):
     @property
     def __gt_allocator__(
         self,
-    ) -> next_allocators.FieldBufferAllocatorProtocol[core_defs.DeviceTypeT]:
+    ) -> (
+        next_allocators.FieldBufferAllocatorProtocol[core_defs.DeviceTypeT]
+        | core_ndarray_utils.ArrayNamespace
+    ):
         return self.allocator
 
 
 def _not_compiled(*args: Any, **kwargs: Any) -> Any:
-    raise RuntimeError("An embedded jit backend runs programs embedded; it does not compile them.")
+    raise RuntimeError("An embedded backend runs programs embedded; it does not compile them.")
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
-class EmbeddedJitBackend(Backend, abc.ABC):
+class EmbeddedBackend(Backend):
     """
-    Runs programs and field operators embedded, inside the tracing compiler of an array library.
+    Runs programs and field operators embedded, on arrays of its allocator's array namespace.
 
-    Instead of compiling, it wraps the embedded execution of a program or field operator once,
-    e.g. in `jax.jit`. The allocator allocates arrays of the library. A stopgap until embedded
-    execution is represented by backends.
+    It does not compile, and it raises for fields of another array library. Subclasses run the
+    embedded execution inside the tracing compiler of the library, e.g. `jax.jit`, by
+    overriding `wrap`.
     """
 
     executor: workflow.Workflow[stages.CompilableProgramDef, artifacts.CompilationArtifact] = (
@@ -201,14 +207,26 @@ class EmbeddedJitBackend(Backend, abc.ABC):
         DEFAULT_TRANSFORMS
     )
 
-    @abc.abstractmethod
-    def jit(self, entry_point: ffront_decorator.GTEntryPoint) -> Callable[..., None]:
+    def runner(self, entry_point: ffront_decorator.GTEntryPoint) -> Callable[..., None]:
         """
-        `entry_point` run embedded inside the tracing compiler, called as the entry point is.
+        `entry_point` run embedded, wrapped by `wrap`, called as the entry point is.
 
         Called once per entry point: the result is cached by it.
         """
-        ...
+        from gt4py.next.program_processors.runners.experimental import embedded
+
+        return embedded.runner(entry_point, self.wrap, self.allocator)
+
+    def wrap(
+        self, entry: Callable[..., None], signature: inspect.Signature, static_params: Sequence[str]
+    ) -> Callable[..., None]:
+        """
+        `entry`, the embedded execution called as `signature` describes, as the backend runs it.
+
+        Subclasses wrap it in a tracing compiler, with the parameters `static_params` static. The
+        arguments are fields, connectivities, scalars and (nested) tuples of them.
+        """
+        return entry
 
 
 @dataclasses.dataclass(frozen=True)
