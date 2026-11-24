@@ -402,9 +402,7 @@ def test_flatten_as_fieldop_args(uids: utils.IDGeneratorPool):
     testee = im.as_fieldop(im.lambda_(im.sym("it", it_type))(im.tuple_get(1, im.deref("it"))))(
         im.make_tuple(1, 2)
     )
-    expected = im.as_fieldop(
-        im.lambda_("__ct_flat_el_0_it", "__ct_flat_el_1_it")(im.deref("__ct_flat_el_1_it"))
-    )(1, 2)
+    expected = im.as_fieldop(im.lambda_("__ct_flat_el_1_it")(im.deref("__ct_flat_el_1_it")))(2)
     actual = CollapseTuple.apply(
         testee,
         enabled_transformations=~CollapseTuple.Transformation.PROPAGATE_TO_IF_ON_TUPLES,
@@ -429,11 +427,7 @@ def test_flatten_as_fieldop_args_nested(uids: utils.IDGeneratorPool):
     testee = im.as_fieldop(
         im.lambda_(im.sym("it", it_type))(im.tuple_get(1, im.tuple_get(1, im.deref("it"))))
     )(im.make_tuple(1, im.make_tuple(2, 3)))
-    expected = im.as_fieldop(
-        im.lambda_("__ct_flat_el_0_it", "__ct_flat_el_1_0_it", "__ct_flat_el_1_1_it")(
-            im.deref("__ct_flat_el_1_1_it")
-        )
-    )(1, 2, 3)
+    expected = im.as_fieldop(im.lambda_("__ct_flat_el_1_1_it")(im.deref("__ct_flat_el_1_1_it")))(3)
     actual = CollapseTuple.apply(
         testee,
         enabled_transformations=~CollapseTuple.Transformation.PROPAGATE_TO_IF_ON_TUPLES,
@@ -457,13 +451,11 @@ def test_flatten_as_fieldop_args_scan(uids: utils.IDGeneratorPool):
     )(im.make_tuple(1, 2))
     expected = im.as_fieldop(
         im.scan(
-            im.lambda_("state", "__ct_flat_el_0_it", "__ct_flat_el_1_it")(
-                im.deref("__ct_flat_el_1_it")
-            ),
+            im.lambda_("state", "__ct_flat_el_1_it")(im.deref("__ct_flat_el_1_it")),
             True,
             0,
         )
-    )(1, 2)
+    )(2)
     actual = CollapseTuple.apply(
         testee,
         enabled_transformations=~CollapseTuple.Transformation.PROPAGATE_TO_IF_ON_TUPLES,
@@ -493,7 +485,10 @@ def test_flatten_as_fieldop_args_no_capture_of_remapped_args(uids: utils.IDGener
             im.plus(
                 im.tuple_get(0, im.deref("x")),
                 im.plus(
-                    im.tuple_get(2, im.tuple_get(0, im.deref("d"))),
+                    im.plus(
+                        im.tuple_get(2, im.tuple_get(0, im.deref("d"))),
+                        im.tuple_get(0, im.tuple_get(1, im.deref("d"))),
+                    ),
                     im.tuple_get(2, im.deref("d")),
                 ),
             )
@@ -502,26 +497,100 @@ def test_flatten_as_fieldop_args_no_capture_of_remapped_args(uids: utils.IDGener
     expected = im.as_fieldop(
         im.lambda_(
             "__ct_flat_el_0_x",
-            "__ct_flat_el_0_0_d",
-            "__ct_flat_el_0_1_d",
             "__ct_flat_el_0_2_d",
             "__ct_flat_el_1_0_d",
-            "__ct_flat_el_1_1_d",
             "__ct_flat_el_2_d",
         )(
             im.plus(
                 im.deref("__ct_flat_el_0_x"),
-                im.plus(im.deref("__ct_flat_el_0_2_d"), im.deref("__ct_flat_el_2_d")),
+                im.plus(
+                    im.plus(im.deref("__ct_flat_el_0_2_d"), im.deref("__ct_flat_el_1_0_d")),
+                    im.deref("__ct_flat_el_2_d"),
+                ),
             )
         )
     )(
         im.plus("a", 1),
-        im.tuple_get(0, im.tuple_get(0, "d")),
-        im.tuple_get(1, im.tuple_get(0, "d")),
         im.tuple_get(2, im.tuple_get(0, "d")),
         im.tuple_get(0, im.tuple_get(1, "d")),
-        im.tuple_get(1, im.tuple_get(1, "d")),
         im.tuple_get(2, "d"),
+    )
+    actual = CollapseTuple.apply(
+        testee,
+        enabled_transformations=~CollapseTuple.Transformation.PROPAGATE_TO_IF_ON_TUPLES,
+        allow_undeclared_symbols=True,
+        within_stencil=False,
+        uids=uids,
+    )
+    assert actual == expected
+
+
+def test_flatten_as_fieldop_args_prune_unused_nested_elements(uids: utils.IDGeneratorPool):
+    d_type = ts.TupleType(
+        types=[
+            ts.TupleType(types=[int_type, int_type]),
+            ts.TupleType(types=[int_type, int_type]),
+            int_type,
+        ]
+    )
+    it_type = it_ts.IteratorType(position_dims=[], defined_dims=[], element_type=d_type)
+    testee = im.as_fieldop(
+        im.lambda_(im.sym("it", it_type))(im.tuple_get(1, im.tuple_get(0, im.deref("it"))))
+    )(im.ref("d", d_type))
+    expected = im.as_fieldop(im.lambda_("__ct_flat_el_0_1_it")(im.deref("__ct_flat_el_0_1_it")))(
+        im.tuple_get(1, im.tuple_get(0, "d"))
+    )
+    actual = CollapseTuple.apply(
+        testee,
+        enabled_transformations=~CollapseTuple.Transformation.PROPAGATE_TO_IF_ON_TUPLES,
+        allow_undeclared_symbols=True,
+        within_stencil=False,
+        uids=uids,
+    )
+    assert actual == expected
+
+
+def test_flatten_as_fieldop_args_prune_unused_tuple_arg(uids: utils.IDGeneratorPool):
+    it_type = it_ts.IteratorType(
+        position_dims=[],
+        defined_dims=[],
+        element_type=ts.TupleType(types=[int_type, int_type]),
+    )
+    testee = im.as_fieldop(
+        im.lambda_(
+            im.sym(
+                "x", it_ts.IteratorType(position_dims=[], defined_dims=[], element_type=int_type)
+            ),
+            im.sym("it", it_type),
+        )(im.deref("x"))
+    )(im.ref("a", int_type), im.make_tuple(im.plus(im.ref("b", int_type), 1), 2))
+    expected = im.as_fieldop(im.lambda_("x")(im.deref("x")))("a")
+    actual = CollapseTuple.apply(
+        testee,
+        enabled_transformations=~CollapseTuple.Transformation.PROPAGATE_TO_IF_ON_TUPLES,
+        allow_undeclared_symbols=True,
+        within_stencil=False,
+        uids=uids,
+    )
+    assert actual == expected
+
+
+def test_flatten_as_fieldop_args_prune_only_flattened_elements(uids: utils.IDGeneratorPool):
+    it_type = it_ts.IteratorType(
+        position_dims=[],
+        defined_dims=[],
+        element_type=ts.TupleType(types=[int_type, int_type]),
+    )
+    testee = im.as_fieldop(
+        im.lambda_(
+            im.sym(
+                "x", it_ts.IteratorType(position_dims=[], defined_dims=[], element_type=int_type)
+            ),
+            im.sym("it", it_type),
+        )(im.tuple_get(0, im.deref("it")))
+    )(im.ref("a", int_type), im.ref("t", it_type.element_type))
+    expected = im.as_fieldop(im.lambda_("x", "__ct_flat_el_0_it")(im.deref("__ct_flat_el_0_it")))(
+        "a", im.tuple_get(0, "t")
     )
     actual = CollapseTuple.apply(
         testee,

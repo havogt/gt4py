@@ -17,6 +17,7 @@ from gt4py.next import common, neighbor_sum
 from gt4py.next.ffront import decorator
 from gt4py.next.ffront.fbuiltins import where
 from gt4py.next.ffront.experimental import concat_where
+from gt4py.next.iterator.transforms import apply_common_transforms
 import dataclasses
 
 from next_tests.integration_tests import cases
@@ -750,3 +751,40 @@ def test_nested_named_tuple_as_domain(cartesian_case):
     ref[region] = bounds.scale * a.asnumpy()[region]
 
     cases.verify(cartesian_case, nested_bounds_as_domain_program, a, bounds, out=out, ref=ref)
+
+
+@gtx.field_operator
+def split_at_one_bound(a: cases.IJField, bounds: NestedBounds) -> cases.IJField:
+    return concat_where(IDim < bounds.i.split, a, 2 * a)
+
+
+@gtx.program
+def nested_bounds_one_leaf_program(a: cases.IJField, bounds: NestedBounds, out: cases.IJField):
+    split_at_one_bound(a, bounds, out=out)
+
+
+@pytest.mark.uses_tuple_args
+@pytest.mark.uses_concat_where
+def test_nested_named_tuple_one_used_leaf(cartesian_case):
+    bounds = _nested_bounds(cartesian_case)
+    a = cases.allocate(cartesian_case, nested_bounds_one_leaf_program, "a")()
+    out = cases.allocate(cartesian_case, nested_bounds_one_leaf_program, "out")()
+    i = np.arange(a.shape[0])[:, np.newaxis]
+
+    cases.verify(
+        cartesian_case,
+        nested_bounds_one_leaf_program,
+        a,
+        bounds,
+        out=out,
+        ref=np.where(i < bounds.i.split, a.asnumpy(), 2 * a.asnumpy()),
+    )
+
+
+def test_nested_named_tuple_one_used_leaf_stencil_params():
+    ir = apply_common_transforms(nested_bounds_one_leaf_program.gtir, offset_provider={})
+
+    (set_at,) = ir.body
+    stencil = set_at.expr.fun.args[0]
+    assert [str(arg) for arg in set_at.expr.args] == ["index(IDimₕ)", "a", "bounds[0][1]"]
+    assert len(stencil.params) == 3

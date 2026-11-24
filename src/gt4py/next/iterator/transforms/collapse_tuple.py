@@ -584,6 +584,7 @@ class CollapseTuple(
         ] = {}  # contains the arguments that are remapped, e.g. `{a, b}`
         new_params: list[itir.Sym] = []
         new_args: list[itir.Expr] = []
+        element_param_ids: list[str] = []
         for param, arg in zip(stencil.params, node.args, strict=True):
             if isinstance(arg.type, ts.TupleType):
                 assert isinstance(param.type, it_ts.IteratorType)
@@ -620,6 +621,7 @@ class CollapseTuple(
                 new_body = inline_lambdas.inline_lambda(new_body, force_inline_lift_args=True)
 
                 new_params.extend(new_params_inner)
+                element_param_ids.extend(p.id for p in new_params_inner)
             else:
                 new_params.append(param)
                 new_args.append(arg)
@@ -631,6 +633,24 @@ class CollapseTuple(
         ).visit(new_body)
         if kwargs["recurse"]:
             new_body = self.visit(new_body, **kwargs)
-        new_stencil = restore_scan(im.lambda_(*new_params)(new_body))
 
-        return im.let(*remapped_args.items())(im.as_fieldop(new_stencil, domain)(*new_args))
+        # drop the elements the stencil does not use, e.g. `b` in
+        # `as_fieldop(λ(t) → ·t[0])({a, b})` -> `as_fieldop(λ(a) → ·a)(a)`
+        used_param_ids = symbol_ref_utils.collect_symbol_refs(new_body, element_param_ids)
+        kept = [
+            (param, arg)
+            for param, arg in zip(new_params, new_args, strict=True)
+            if param.id not in element_param_ids or param.id in used_param_ids
+        ]
+        new_params = [param for param, _ in kept]
+        new_args = [arg for _, arg in kept]
+        used_remapped_ids = symbol_ref_utils.collect_symbol_refs(
+            new_args, [sym.id for sym in remapped_args]
+        )
+        remapped_args = {
+            sym: arg for sym, arg in remapped_args.items() if sym.id in used_remapped_ids
+        }
+
+        new_stencil = restore_scan(im.lambda_(*new_params)(new_body))
+        new_node = im.as_fieldop(new_stencil, domain)(*new_args)
+        return im.let(*remapped_args.items())(new_node) if remapped_args else new_node
