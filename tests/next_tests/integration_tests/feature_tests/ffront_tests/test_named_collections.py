@@ -766,6 +766,7 @@ def nested_bounds_one_leaf_program(a: cases.IJField, bounds: NestedBounds, out: 
 
 @pytest.mark.uses_tuple_args
 @pytest.mark.uses_concat_where
+@pytest.mark.uses_scalar_in_domain
 def test_nested_named_tuple_one_used_leaf(cartesian_case):
     bounds = _nested_bounds(cartesian_case)
     a = cases.allocate(cartesian_case, nested_bounds_one_leaf_program, "a")()
