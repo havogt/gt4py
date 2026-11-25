@@ -788,3 +788,34 @@ def test_nested_named_tuple_one_used_leaf_stencil_params():
     stencil = set_at.expr.fun.args[0]
     assert [str(arg) for arg in set_at.expr.args] == ["index(IDimₕ)", "a", "bounds[0][1]"]
     assert len(stencil.params) == 3
+
+
+@pytest.mark.uses_tuple_args
+@pytest.mark.uses_scalar_in_domain
+@pytest.mark.uses_scalar_in_domain_and_fo
+def test_nested_named_tuple_subscript(cartesian_case):
+    @gtx.field_operator
+    def scale_by(a: cases.IJField, scale: gtx.int32) -> cases.IJField:
+        return scale * a
+
+    @gtx.program
+    def testee(a: cases.IJField, bounds: NestedBounds, out: cases.IJField):
+        scale_by(
+            a,
+            bounds[2],
+            out=out,
+            domain={
+                IDim: (bounds[0][0], bounds[0][2]),
+                JDim: (bounds[1].lower, bounds.j[1]),
+            },
+        )
+
+    bounds = _nested_bounds(cartesian_case)
+    a = cases.allocate(cartesian_case, testee, "a")()
+    out = cases.allocate(cartesian_case, testee, "out").zeros()()
+
+    ref = np.zeros_like(out.asnumpy())
+    region = (slice(bounds.i.lower, bounds.i.upper), slice(bounds.j.lower, bounds.j.upper))
+    ref[region] = bounds.scale * a.asnumpy()[region]
+
+    cases.verify(cartesian_case, testee, a, bounds, out=out, ref=ref)
