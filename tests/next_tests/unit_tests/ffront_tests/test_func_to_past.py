@@ -7,6 +7,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 import dataclasses
+import enum
 import re
 from typing import NamedTuple
 
@@ -390,4 +391,15 @@ def test_sliced_collection_element_as_out_with_domain():
         _identity(in_field, out=t[1][0:1], domain={IDim: (0, 1)})
 
     with pytest.raises(errors.DSLError, match="Either only domain or slicing allowed"):
+        ProgramParser.apply_to_function(program)
+
+
+def test_missing_enum_member():
+    class Bounds(enum.IntEnum):
+        LOWER = 0
+
+    def program(in_field: _InField, out: _InField):
+        _identity(in_field, out=out, domain={IDim: (Bounds.LOWER, Bounds.UPPER)})
+
+    with pytest.raises(errors.MissingAttributeError, match="'UPPER'"):
         ProgramParser.apply_to_function(program)
