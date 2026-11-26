@@ -145,12 +145,19 @@ class ProgramTypeDeduction(traits.VisitorWithSymbolTableTrait, NodeTranslator):
         slice_ = self.visit(node.slice_, **kwargs)
         new_type = value.type
         if isinstance(value.type, (ts.TupleType, ts.NamedCollectionType)):
-            if not (isinstance(slice_, past.Constant) and isinstance(slice_.value, int)):
+            index = slice_.value if isinstance(slice_, past.Constant) else None
+            # `type(...) is int` rejects `bool`
+            if type(index) is not int or not 0 <= index < len(value.type.types):
                 raise errors.DSLError(
                     node.location,
-                    f"Tuples need to be indexed with literal integers, got '{node.slice_}'.",
+                    f"Tuples need to be indexed with literal integers in "
+                    f"[0, {len(value.type.types)}), got '{node.slice_}'.",
                 )
-            new_type = value.type.types[slice_.value]
+            new_type = value.type.types[index]
+        elif not isinstance(value.type, ts.FieldType):
+            raise errors.DSLError(
+                node.location, f"Values of type '{value.type}' can not be subscripted."
+            )
         return past.Subscript(value=value, slice_=slice_, type=new_type, location=node.location)
 
     def visit_Attribute(self, node: past.Attribute, **kwargs: Any) -> past.Attribute:
