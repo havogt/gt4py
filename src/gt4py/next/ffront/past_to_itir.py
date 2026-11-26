@@ -442,20 +442,18 @@ class ProgramLowering(
         return [self.visit(bound) for bound in node_domain.values_[dim_i].elts]
 
     def _split_field_and_slice(
-        self, field: past.Name | past.Subscript
-    ) -> tuple[past.Name, list[past.Slice] | None]:
-        if isinstance(field, past.Subscript):
-            assert isinstance(field.value, past.Name)
+        self, field: past.Name | past.Subscript | past.Attribute
+    ) -> tuple[past.Expr, list[past.Slice] | None]:
+        if isinstance(field, past.Subscript) and isinstance(field.value.type, ts.FieldType):
             return field.value, _compute_field_slice(field)
-        else:
-            assert isinstance(field, past.Name)
-            return field, None
+        return field, None
 
     def _visit_stencil_call_out_arg(
         self, out_arg: past.Expr, domain_arg: Optional[past.Expr], **kwargs: Any
     ) -> tuple[itir.Expr, itir.FunCall]:
-        assert isinstance(out_arg, (past.Subscript, past.Name, past.TupleExpr)), (
-            "Unexpected 'out' argument. Must be a 'past.Subscript', 'past.Name' or 'past.TupleExpr' node."
+        assert isinstance(out_arg, (past.Subscript, past.Attribute, past.Name, past.TupleExpr)), (
+            "Unexpected 'out' argument. Must be a 'past.Subscript', 'past.Attribute', 'past.Name' or"
+            " 'past.TupleExpr' node."
         )
 
         @utils.tree_map(
@@ -467,7 +465,7 @@ class ProgramLowering(
         def impl(out_type: ts.FieldType, path: tuple[int, ...]) -> tuple[itir.Expr, itir.Expr]:
             out_field, path_remainder = _unwrap_tuple_expr(out_arg, path)
 
-            assert isinstance(out_field, (past.Name, past.Subscript))
+            assert isinstance(out_field, (past.Name, past.Subscript, past.Attribute))
             out_field, slice_info = self._split_field_and_slice(out_field)
 
             domain_element = (

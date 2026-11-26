@@ -329,3 +329,18 @@ def test_locally_defined_named_tuple_subscript():
     lower, upper = past_node.body[0].kwargs["domain"].values_[0].elts
     assert lower.type == ts.ScalarType(kind=ts.ScalarKind.INT32)
     assert upper.type == ts.ScalarType(kind=ts.ScalarKind.INT64)
+
+
+def test_collection_element_as_out_with_domain():
+    def program(in_field: _InField, t: tuple[_InField, _InField]):
+        _identity(in_field, out=t[1], domain={IDim: (0, 1)})
+
+    ProgramParser.apply_to_function(program)
+
+
+def test_sliced_collection_element_as_out_with_domain():
+    def program(in_field: _InField, t: tuple[_InField, _InField]):
+        _identity(in_field, out=t[1][0:1], domain={IDim: (0, 1)})
+
+    with pytest.raises(errors.DSLError, match="Either only domain or slicing allowed"):
+        ProgramParser.apply_to_function(program)

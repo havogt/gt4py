@@ -233,6 +233,67 @@ def test_tuple_subscript_in_domain(identity_def, gtir_identity_fundef):
     )
 
 
+class OutFields(NamedTuple):
+    a: gtx.Field[[IDim], float64]
+    b: gtx.Field[[IDim], float64]
+
+
+def _out_domain(field: itir.Expr, start: itir.Expr | None = None, stop: itir.Expr | None = None):
+    domain_range = lambda i: im.tuple_get(
+        i, im.call("get_domain_range")(field, im.axis_literal(IDim))
+    )
+    return im.domain(
+        gtx.GridType.CARTESIAN,
+        {IDim: (start or domain_range(0), stop or domain_range(1))},
+    )
+
+
+def test_collection_element_as_out(identity_def, gtir_identity_fundef):
+    identity = gtx.field_operator(identity_def)
+
+    def program(
+        in_field: gtx.Field[[IDim], float64],
+        t: tuple[gtx.Field[[IDim], float64], gtx.Field[[IDim], float64]],
+        nt: OutFields,
+    ):
+        identity(in_field, out=t[1])
+        identity(in_field, out=nt.b)
+
+    itir_node = ProgramLowering.apply(
+        ProgramParser.apply_to_function(program),
+        function_definitions=[gtir_identity_fundef],
+        grid_type=gtx.GridType.CARTESIAN,
+    )
+
+    for set_at, target in zip(
+        itir_node.body, [im.tuple_get(1, "t"), im.tuple_get(1, "nt")], strict=True
+    ):
+        assert set_at.target == target
+        assert set_at.domain == _out_domain(target)
+
+
+def test_sliced_collection_element_as_out(identity_def, gtir_identity_fundef):
+    identity = gtx.field_operator(identity_def)
+
+    def program(
+        in_field: gtx.Field[[IDim], float64],
+        t: tuple[gtx.Field[[IDim], float64], gtx.Field[[IDim], float64]],
+    ):
+        identity(in_field, out=t[1][1:2])
+
+    itir_node = ProgramLowering.apply(
+        ProgramParser.apply_to_function(program),
+        function_definitions=[gtir_identity_fundef],
+        grid_type=gtx.GridType.CARTESIAN,
+    )
+
+    target = im.tuple_get(1, "t")
+    start = im.tuple_get(0, im.call("get_domain_range")(target, im.axis_literal(IDim)))
+    (set_at,) = itir_node.body
+    assert set_at.target == target
+    assert set_at.domain == _out_domain(target, im.plus(start, 1), im.plus(start, 2))
+
+
 make_tuple_op_definition = itir.FunctionDefinition(
     id="make_tuple_op", params=[itir.Sym(id="inp")], expr=im.make_tuple("inp", "inp")
 )

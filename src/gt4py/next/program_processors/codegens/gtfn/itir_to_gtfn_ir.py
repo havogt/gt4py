@@ -543,7 +543,7 @@ class GTFN_lowering(eve.NodeTranslator, eve.VisitorWithSymbolTableTrait):
             expr=self.visit(node.expr, **kwargs),
         )
 
-    def _visit_output_argument(self, node: itir.Expr) -> SidComposite | SymRef:
+    def _visit_output_argument(self, node: itir.Expr) -> SidComposite | SymRef | FunCall:
         lowered_output = self.visit(node)
 
         # just a sanity check, identity function otherwise
@@ -559,7 +559,7 @@ class GTFN_lowering(eve.NodeTranslator, eve.VisitorWithSymbolTableTrait):
             tuple_constructor=lambda _, elements: SidComposite(values=list(elements)),
         )
 
-        assert isinstance(lowered_output_as_sid, (SidComposite, SymRef))
+        assert isinstance(lowered_output_as_sid, (SidComposite, SymRef, FunCall))
         return lowered_output_as_sid
 
     @staticmethod

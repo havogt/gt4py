@@ -192,8 +192,15 @@ class Stmt(Node):
 class StencilExecution(Stmt):
     backend: Backend
     stencil: SymRef
-    output: Union[SymRef, SidComposite]
+    output: Union[SymRef, SidComposite, FunCall]
     inputs: list[Union[SymRef, SidComposite, SidFromScalar, FunCall]]
+
+    @datamodels.validator("output")
+    def _output_validator(
+        self: datamodels.DataModelTP, attribute: datamodels.Attribute, output: Expr
+    ) -> None:
+        if not _is_tuple_expr_of(lambda expr: isinstance(expr, (SymRef, SidComposite)), output):
+            raise ValueError("Only 'SymRef', 'SidComposite' or tuple expr thereof allowed.")
 
     @datamodels.validator("inputs")
     def _arg_validator(

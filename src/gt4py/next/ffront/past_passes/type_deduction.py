@@ -19,17 +19,19 @@ from gt4py.next.type_system import type_info, type_specifications as ts
 
 def _ensure_no_sliced_field(entry: past.Expr) -> None:
     """
-    Check that all arguments are of type past.Name or past.TupleExpr.
+    Check that no (nested) element of an `out` argument is a sliced field.
 
-    In the latter case, unfold tuple.
-
-    For example, if argument is of type past.Subscript, this function will throw an error as both slicing and domain are being applied
+    For example, `out=(a[1:], b)` together with a domain raises, as both slicing and a domain
+    are being applied, while `out=(a, t[0], nt.b)` does not.
     """
-    if not isinstance(entry, past.Name) and not isinstance(entry, past.TupleExpr):
+    if _contains_sliced_field(entry):
         raise ValueError("Either only domain or slicing allowed.")
-    elif isinstance(entry, past.TupleExpr):
-        for param in entry.elts:
-            _ensure_no_sliced_field(param)
+
+
+def _contains_sliced_field(expr: past.Expr) -> bool:
+    if isinstance(expr, past.TupleExpr):
+        return any(_contains_sliced_field(elt) for elt in expr.elts)
+    return isinstance(expr, past.Subscript) and isinstance(expr.value.type, ts.FieldType)
 
 
 def _is_integral_scalar(expr: past.Expr) -> bool:

@@ -782,3 +782,68 @@ def test_nested_named_tuple_subscript(cartesian_case):
     ref[region] = bounds.scale * a.asnumpy()[region]
 
     cases.verify(cartesian_case, testee, a, bounds, out=out, ref=ref)
+
+
+@gtx.field_operator
+def double_ij(a: gtx.Field[[IDim, JDim], gtx.float32]) -> gtx.Field[[IDim, JDim], gtx.float32]:
+    return a + a
+
+
+@pytest.mark.uses_tuple_args
+def test_named_collection_element_as_out(cartesian_case):
+    @gtx.program
+    def testee(
+        a: gtx.Field[[IDim, JDim], gtx.float32],
+        out: tuple[gtx.Field[[IDim, JDim], gtx.float32], NamedTupleNamedCollection],
+    ):
+        double_ij(a, out=out[1].v)
+
+    a = cases.allocate(cartesian_case, testee, "a")()
+    out = cases.allocate(cartesian_case, testee, "out").zeros()()
+
+    cases.run(cartesian_case, testee, a, out)
+
+    np.testing.assert_array_equal(out[1].v.asnumpy(), 2 * a.asnumpy())
+    np.testing.assert_array_equal(out[1].u.asnumpy(), 0)
+    np.testing.assert_array_equal(out[0].asnumpy(), 0)
+
+
+@pytest.mark.uses_tuple_args
+@pytest.mark.uses_program_with_sliced_out_arguments
+def test_sliced_tuple_element_as_out(cartesian_case):
+    @gtx.program
+    def testee(
+        a: gtx.Field[[IDim, JDim], gtx.float32],
+        out: tuple[gtx.Field[[IDim, JDim], gtx.float32], gtx.Field[[IDim, JDim], gtx.float32]],
+    ):
+        double_ij(a, out=out[0][1:3, 2:4])
+
+    a = cases.allocate(cartesian_case, testee, "a")()
+    out = cases.allocate(cartesian_case, testee, "out").zeros()()
+
+    cases.run(cartesian_case, testee, a, out)
+
+    ref = np.zeros_like(a.asnumpy())
+    ref[1:3, 2:4] = 2 * a.asnumpy()[1:3, 2:4]
+    np.testing.assert_array_equal(out[0].asnumpy(), ref)
+    np.testing.assert_array_equal(out[1].asnumpy(), 0)
+
+
+@pytest.mark.uses_tuple_args
+def test_tuple_element_as_out_with_domain(cartesian_case):
+    @gtx.program
+    def testee(
+        a: gtx.Field[[IDim, JDim], gtx.float32],
+        out: tuple[gtx.Field[[IDim, JDim], gtx.float32], gtx.Field[[IDim, JDim], gtx.float32]],
+    ):
+        double_ij(a, out=out[1], domain={IDim: (1, 3), JDim: (0, 2)})
+
+    a = cases.allocate(cartesian_case, testee, "a")()
+    out = cases.allocate(cartesian_case, testee, "out").zeros()()
+
+    cases.run(cartesian_case, testee, a, out)
+
+    ref = np.zeros_like(a.asnumpy())
+    ref[1:3, 0:2] = 2 * a.asnumpy()[1:3, 0:2]
+    np.testing.assert_array_equal(out[1].asnumpy(), ref)
+    np.testing.assert_array_equal(out[0].asnumpy(), 0)
