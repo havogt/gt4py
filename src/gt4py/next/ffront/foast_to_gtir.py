@@ -324,6 +324,21 @@ class FieldOperatorLowering(eve.PreserveLocationVisitor, eve.NodeTranslator):
                             )
                         )
                     )(current_expr)
+                # `field(Dim + expr)` (where `expr` is integral, its value known at compile time)
+                case foast.BinOp(
+                    op=dialect_ast_enums.BinaryOperator.ADD | dialect_ast_enums.BinaryOperator.SUB,
+                    left=foast.LocatedNode(type=ts.DimensionType(dim=common.Dimension() as dim)),
+                    right=right,
+                ):
+                    offset = self.visit(right, **kwargs)
+                    if arg.op == dialect_ast_enums.BinaryOperator.SUB:
+                        offset = im.call("neg")(offset)
+                    shift = im.call("shift")(im.cartesian_offset(dim), offset)
+                    # the location of the shift is the location of a `NonStaticShiftError`
+                    shift.location = arg.location
+                    current_expr = im.as_fieldop(
+                        im.lambda_("__it")(im.deref(im.call(shift)("__it")))
+                    )(current_expr)
                 # `field(as_offset(Off, offset_field))`
                 case foast.Call(func=foast.Name(id="as_offset")):
                     func_args = arg

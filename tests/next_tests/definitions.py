@@ -185,6 +185,7 @@ USES_MATH_OUTSIDE_ARRAY_API = "uses_math_outside_array_api"
 USES_MESH_WITH_SKIP_VALUES = "uses_mesh_with_skip_values"
 USES_PROGRAM_METRICS = "uses_program_metrics"
 USES_SCALAR_IN_DOMAIN_AND_FO = "uses_scalar_in_domain_and_fo"
+USES_RUNTIME_SHIFT_DISTANCE = "uses_runtime_shift_distance"
 USES_CONCAT_WHERE = "uses_concat_where"
 EMBEDDED_CONCAT_WHERE_INFINITE_DOMAIN = "embedded_concat_where_infinite_domain"
 EMBEDDED_CONCAT_WHERE_NON_CONTIGUOUS_DOMAIN = "embedded_concat_where_non_contiguous_domain"
@@ -231,6 +232,7 @@ COMMON_SKIP_TEST_LIST = [
 # Markers to skip because of missing features in the domain inference
 DOMAIN_INFERENCE_SKIP_LIST = [
     (USES_STRIDED_NEIGHBOR_OFFSET, XFAIL, UNSUPPORTED_MESSAGE),
+    (USES_RUNTIME_SHIFT_DISTANCE, XFAIL, UNSUPPORTED_MESSAGE),
 ]
 DACE_SKIP_TEST_LIST = (
     COMMON_SKIP_TEST_LIST
@@ -275,6 +277,7 @@ JAX_EMBEDDED_SKIP_LIST = EMBEDDED_SKIP_LIST + [
 ]
 #: under a tracing compiler, scalar arguments are traced unless they are in `static_params`
 TRACED_SCALARS_SKIP_LIST = [
+    (USES_RUNTIME_SHIFT_DISTANCE, XFAIL, UNSUPPORTED_MESSAGE),
     (USES_SCALAR_IN_CONTROL_FLOW, XFAIL, UNSUPPORTED_MESSAGE),
     (USES_SCALAR_IN_DOMAIN, XFAIL, UNSUPPORTED_MESSAGE),
     (USES_SCAN_CARRY_IN_CONTROL_FLOW, XFAIL, UNSUPPORTED_MESSAGE),

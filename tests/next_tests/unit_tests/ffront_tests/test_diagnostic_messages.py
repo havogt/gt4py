@@ -16,6 +16,7 @@ regress. When changing a message, update the expectation here alongside.
 """
 
 import ast
+import pickle
 import re
 import types
 
@@ -383,3 +384,78 @@ def test_indexed_dimension_shift_is_rejected_with_a_hint():
     assert err.hints == ["Write the displacement directly, e.g. 'IDim + 1'."]
     assert any("already contains its displacement" in note for note in err.notes)
     assert "return a((IDim + 1)[0])" in str(err)
+
+
+def test_non_literal_cartesian_offset_must_be_integral():
+    def foo(a: gtx.Field[[IDim], float64], x: float64) -> gtx.Field[[IDim], float64]:
+        return a(IDim + x)
+
+    err = parse_error(foo)
+
+    assert err.message == (
+        "Cartesian offsets with a non-literal right-hand side must be integral, "
+        "but 'float64' is not."
+    )
+    assert err.hints == ["Use a literal such as 'IDim + 0.5' to shift to the staggered dimension."]
+    rendered = str(err)
+    assert "return a(IDim + x)" in rendered
+    assert re.search(r"\| +\^(?!\^)", rendered), rendered
+
+
+def _shift_by_scalar_program():
+    @gtx.field_operator
+    def shift_by(a: gtx.Field[[IDim], float64], m: gtx.int32) -> gtx.Field[[IDim], float64]:
+        return a(IDim + (m - 1))
+
+    @gtx.program
+    def testee(a: gtx.Field[[IDim], float64], m: gtx.int32, out: gtx.Field[[IDim], float64]):
+        shift_by(a, m, out=out)
+
+    return testee
+
+
+_NAMED_HINT = "Make 'm' a static parameter, e.g. 'with_static_params(\"m\")', or use a literal."
+_TRACED_HINT = (
+    "Make the distance a static parameter, e.g. 'with_static_params(\"<name>\")', or use a literal."
+)
+
+
+@pytest.mark.parametrize(
+    "backend_name, label, hint",
+    [
+        ("gtfn_cpu", "depends on 'm'", _NAMED_HINT),
+        ("dace_cpu", "depends on 'm'", _NAMED_HINT),
+        pytest.param("jax_jit", "a traced value", _TRACED_HINT, marks=pytest.mark.requires_jax),
+    ],
+)
+def test_non_static_shift_distance(backend_name, label, hint):
+    if backend_name == "jax_jit":
+        from gt4py.next.program_processors.runners.experimental.jax_jit import jax_jit as backend
+    else:
+        backend = getattr(gtx, backend_name)
+    a = gtx.zeros({IDim: 5}, dtype=float64, allocator=backend)
+    out = gtx.zeros({IDim: 5}, dtype=float64, allocator=backend)
+
+    with pytest.raises(errors.NonStaticShiftError) as exc_info:
+        _shift_by_scalar_program().with_backend(backend)(a, gtx.int32(1), out, offset_provider={})
+
+    err = exc_info.value
+    assert err.message == (
+        "The distance of a Cartesian shift along 'IDim' is not known at compile time."
+    )
+    assert err.label == label
+    rendered = str(err)
+    assert "return a(IDim + (m - 1))" in rendered
+    assert re.search(r"\| +\^{14}(?!\^)", rendered), rendered
+    assert err.hints == [hint]
+
+
+def test_dsl_error_survives_pickling():
+    err = errors.NonStaticShiftError(None, "IDim", ["m"])
+    err.add_note("Extra context.")
+
+    restored = pickle.loads(pickle.dumps(err))
+
+    assert type(restored) is errors.NonStaticShiftError
+    assert str(restored) == str(err)
+    assert restored.__notes__ == ["Extra context."]
