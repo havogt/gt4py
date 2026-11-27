@@ -16,7 +16,7 @@ In the context of field operators that index, shift or select by a variable, e.g
 A value can be needed before run time for three reasons:
 
 - **It determines a type.** `t[i]` on a tuple `(a, b)` of different types has the type of the `i`-th element. `I + 0.5` shifts to the staggered dimension (ADR 0026), `I + 1` does not.
-- **It determines a domain.** Domain inference (`trace_shifts`, `SymbolicDomain.translate`) translates the accessed domain by the shift distance, and a neighbor or local index (`V2E[i]`, `V2EDim(i)`) selects which connectivity column is read.
+- **It determines a domain.** Domain inference (`trace_shifts`, `SymbolicDomain.translate`) translates the accessed domain by the shift distance, and an offset index (`Ioff[i]`, `V2E[i]`) selects the shift distance or the connectivity column that is read.
 - **It determines a shape or control flow, only under a tracing compiler.** The compiled backends take program domains and `concat_where` bounds at run time (ADR 0020). The tracing embedded backends (`jax_jit`, `torch_compile`) compute domains in Python at trace time, so a traced scalar can not determine a program domain, a `concat_where` bound or a Python `if`.
 
 JAX draws the same line under `jax.jit`. A traced value may decide _where_ to read, e.g. the start of `lax.dynamic_slice`, `jnp.roll` or `x[k]`, but not a _shape_, e.g. the size of `lax.dynamic_slice`, `jnp.zeros(n)` or a slice `x[k:]`, nor the structure of a pytree. A static argument lifts all of these restrictions, because `jax.jit` traces once per binding of the static arguments.
@@ -31,7 +31,6 @@ This covers:
 | --------------------------------------- | ------------------------------------------------------ |
 | Cartesian shift distance, `f(I + m)`    | domain                                                 |
 | offset index, `f(Ioff[m])`, `f(V2E[m])` | domain                                                 |
-| local index, `f(V2E)[V2EDim(m)]`        | domain                                                 |
 | tuple index, `t[m]`                     | type                                                   |
 | half-integer shift distance, `f(I + h)` | type                                                   |
 | program domain, `concat_where` bound    | shape, under `jax_jit` and `torch_compile` only        |
@@ -43,7 +42,7 @@ A value that is not known at compile time is an error at the first call, which n
 
 ### Implementation
 
-- **Value-independent types.** For an integral shift distance the type of the result does not depend on the value, so the frontend accepts any integral expression and lowers it symbolically. After static substitution and constant folding, `CanonicalizeShiftOffsets` turns the distance into an `OffsetLiteral`, or raises `NonStaticShiftError` if it still refers to a scalar argument. `jax_jit` and `torch_compile` raise the same error for a traced distance. Offset and local indices have value-independent types too and are to take the same path; for now the frontend still requires a literal (or closed-over constant) for them.
+- **Value-independent types.** For an integral shift distance the type of the result does not depend on the value, so the frontend accepts any integral expression and lowers it symbolically. After static substitution and constant folding, `CanonicalizeShiftOffsets` turns the distance into an `OffsetLiteral`, or raises `NonStaticShiftError` if it still refers to a scalar argument. `jax_jit` and `torch_compile` raise the same error for a traced distance. Offset indices have value-independent types too and are to take the same path; for now the frontend still requires a literal (or closed-over constant) for them.
 - **Value-dependent types.** A tuple index and a half-integer shift distance determine the type, so they need type deduction after static binding, once per specialization rather than once per definition. Until then, the frontend requires a literal (or closed-over constant) for them.
 
 ## Consequences
