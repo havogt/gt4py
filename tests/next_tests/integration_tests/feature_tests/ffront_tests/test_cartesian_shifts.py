@@ -53,6 +53,44 @@ def test_fold_shifts(cartesian_case):
     cases.verify(cartesian_case, testee, a, b, out=out, ref=a.asnumpy()[1:] + b.asnumpy()[2:])
 
 
+@gtx.field_operator
+def _shift_by_scalar(a: cases.IJKField, m: gtx.int32) -> cases.IJKField:
+    return a(IDim + m) + a(IDim - (m - 1))
+
+
+@gtx.program
+def _shift_by_scalar_program(a: cases.IJKField, m: gtx.int32, out: cases.IJKField):
+    _shift_by_scalar(a, m, out=out)
+
+
+def _verify_shift_by_scalar(cartesian_case, program):
+    m = 2
+    a = cases.allocate(cartesian_case, program, "a").extend({IDim: (m - 1, m)})()
+    out = cases.allocate(cartesian_case, program, "out")()
+    size = cartesian_case.default_sizes[IDim]
+
+    cases.verify(
+        cartesian_case,
+        program,
+        a,
+        gtx.int32(m),
+        out,
+        inout=out,
+        ref=a.asnumpy()[2 * m - 1 :] + a.asnumpy()[:size],
+    )
+
+
+@pytest.mark.uses_cartesian_shift
+def test_shift_by_static_scalar(cartesian_case):
+    _verify_shift_by_scalar(cartesian_case, _shift_by_scalar_program.with_static_params("m"))
+
+
+@pytest.mark.uses_cartesian_shift
+@pytest.mark.uses_runtime_shift_distance
+def test_shift_by_runtime_scalar(cartesian_case):
+    _verify_shift_by_scalar(cartesian_case, _shift_by_scalar_program)
+
+
 @pytest.mark.uses_cartesian_shift
 @pytest.mark.uses_dynamic_offsets
 def test_offset_field(cartesian_case):

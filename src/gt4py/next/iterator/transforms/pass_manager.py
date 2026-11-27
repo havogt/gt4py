@@ -34,7 +34,10 @@ from gt4py.next.iterator.transforms.fuse_maps import FuseMaps
 from gt4py.next.iterator.transforms.inline_lambdas import InlineLambdas
 from gt4py.next.iterator.transforms.inline_scalar import InlineScalar
 from gt4py.next.iterator.transforms.merge_let import MergeLet
-from gt4py.next.iterator.transforms.normalize_shifts import NormalizeShifts
+from gt4py.next.iterator.transforms.normalize_shifts import (
+    CanonicalizeShiftOffsets,
+    NormalizeShifts,
+)
 from gt4py.next.iterator.transforms.unroll_reduce import UnrollReduce
 from gt4py.next.iterator.type_system.inference import infer
 
@@ -176,6 +179,7 @@ def apply_common_transforms(
     ir = dead_code_elimination.dead_code_elimination(
         ir, uids=uids, offset_provider_type=offset_provider_type
     )  # domain inference does not support dead-code
+    ir = CanonicalizeShiftOffsets().visit(ir)
     ir = inline_dynamic_shifts.InlineDynamicShifts.apply(
         ir, offset_provider_type=offset_provider_type, uids=uids
     )  # domain inference does not support dynamic offsets yet
@@ -295,6 +299,7 @@ def apply_fieldview_transforms(
     ir = dead_code_elimination.dead_code_elimination(
         ir, offset_provider_type=offset_provider_type, uids=uids
     )
+    ir = CanonicalizeShiftOffsets().visit(ir)
     ir = inline_dynamic_shifts.InlineDynamicShifts.apply(
         ir, offset_provider_type=offset_provider_type, uids=uids
     )  # domain inference does not support dynamic offsets yet

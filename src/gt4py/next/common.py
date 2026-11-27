@@ -12,7 +12,10 @@ import abc
 import dataclasses
 import enum
 import functools
+import inspect
 import math
+import numbers
+import sys
 import types
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import (
@@ -84,6 +87,8 @@ class Dimension:
         return NamedIndex(self, val)
 
     def __add__(self, offset: int | float) -> Connectivity:
+        if not isinstance(offset, numbers.Real):
+            offset = _concrete_shift_distance(self, offset)
         return connectivity_for_cartesian_shift(self, offset)
 
     def __sub__(self, offset: int | float) -> Connectivity:
@@ -1356,6 +1361,33 @@ def as_non_staggered(dim: Dimension) -> Dimension:
     if is_staggered(dim):
         return flip_staggered(dim)
     return dim
+
+
+def _concrete_shift_distance(dim: Dimension, offset: Any) -> int | float:
+    """The value of a 0-d array `offset`; raises if it has none, as a traced scalar under `jax.jit`."""
+    from gt4py.eve import SourceLocation
+    from gt4py.next import errors
+    from gt4py.next.embedded import array_ops
+
+    value = array_ops.of(offset).scalar(offset)
+    if isinstance(value, numbers.Real):
+        return cast(int | float, value)
+    frame = sys._getframe(1)
+    while frame.f_code.co_filename == __file__ and frame.f_back is not None:
+        frame = frame.f_back
+    pos = inspect.getframeinfo(frame).positions
+    location = (
+        SourceLocation(
+            frame.f_code.co_filename,
+            pos.lineno,
+            pos.col_offset + 1,
+            pos.end_lineno,
+            pos.end_col_offset + 1 if pos.end_col_offset is not None else None,
+        )
+        if pos is not None and pos.lineno is not None and pos.col_offset is not None
+        else None
+    )
+    raise errors.NonStaticShiftError(location, dim.value)
 
 
 def connectivity_for_cartesian_shift(dim: Dimension, offset: int | float) -> CartesianConnectivity:
