@@ -24,12 +24,14 @@ import jax
 import jax.numpy as jnp
 
 from gt4py._core import ndarray_utils as core_ndarray_utils
-from gt4py.next import backend as next_backend, common
+from gt4py.next import backend as next_backend
 from gt4py.next.embedded import nd_array_field
 
 
+# `common.Field` and `common.Connectivity` are runtime-checkable protocols: `isinstance` against
+# them inspects every protocol member, too slow for a check on each argument of each call.
 def _is_field(x: Any) -> bool:
-    return isinstance(x, common.Field)
+    return isinstance(x, nd_array_field.NdArrayField)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -43,7 +45,7 @@ jax.tree_util.register_static(_Alias)
 
 
 def _is_field_or_alias(x: Any) -> bool:
-    return isinstance(x, common.Field | _Alias)
+    return isinstance(x, nd_array_field.NdArrayField | _Alias)
 
 
 def _mark_aliases(tree: Any) -> Any:
@@ -51,7 +53,7 @@ def _mark_aliases(tree: Any) -> Any:
     first: dict[int, int] = {}
     aliased = False
     for i, leaf in enumerate(leaves):
-        if isinstance(leaf, common.Field) and (index := first.setdefault(id(leaf), i)) != i:
+        if _is_field(leaf) and (index := first.setdefault(id(leaf), i)) != i:
             leaves[i] = _Alias(index)
             aliased = True
     return jax.tree.unflatten(treedef, leaves) if aliased else tree
@@ -68,8 +70,7 @@ def _assignable_fields(tree: Any) -> list[nd_array_field.NdArrayField]:
     return [
         leaf
         for leaf in jax.tree.leaves(tree, is_leaf=_is_field)
-        if isinstance(leaf, nd_array_field.NdArrayField)
-        and not isinstance(leaf, common.Connectivity)
+        if _is_field(leaf) and not isinstance(leaf, nd_array_field.NdArrayConnectivityField)
     ]
 
 
