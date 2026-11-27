@@ -18,6 +18,7 @@ from .exceptions import (
     MissingArgumentError,
     MissingAttributeError,
     MissingParameterAnnotationError,
+    NonStaticShiftError,
     UndefinedSymbolError,
     UnsupportedPythonFeatureError,
 )
@@ -32,6 +33,7 @@ __all__ = [
     "MissingArgumentError",
     "MissingAttributeError",
     "MissingParameterAnnotationError",
+    "NonStaticShiftError",
     "UndefinedSymbolError",
     "UnsupportedPythonFeatureError",
 ]

@@ -42,6 +42,13 @@ def _did_you_mean(name: str, candidates: Iterable[str]) -> list[str]:
     return [f"Did you mean {' or '.join(f'{m!r}' for m in matches)}?"]
 
 
+def _rebuild_error(cls: type[DSLError], args: tuple[Any, ...], state: dict[str, Any]) -> DSLError:
+    error = cls.__new__(cls)
+    error.args = args
+    error.__dict__.update(state)
+    return error
+
+
 class DSLError(GT4PyError):
     """
     Error in user code of one of the GT4Py-embedded DSLs.
@@ -86,6 +93,11 @@ class DSLError(GT4PyError):
         self.notes = list(notes)
         self.hints = list(hints)
         super().__init__(message)
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        # the default calls `__init__` with `args`, i.e. the message only: raised in a compile
+        # worker, the error could not be unpickled and the process pool would break
+        return (_rebuild_error, (type(self), self.args, self.__dict__))
 
     def with_location(self, location: Optional[SourceLocation]) -> Self:
         self.location = location
@@ -214,6 +226,41 @@ class InvalidParameterAnnotationError(DSLTypeError):
         )
         self.param_name = param_name
         self.annotated_type = type_
+
+
+class NonStaticShiftError(DSLError):
+    code: ClassVar[str] = "non-static-shift"
+
+    dim_name: str
+    symbols: list[str]
+
+    def __init__(
+        self,
+        location: Optional[SourceLocation],
+        dim_name: str,
+        symbols: Sequence[str] = (),
+    ) -> None:
+        names = ", ".join(f"'{s}'" for s in symbols)
+        static_params = ", ".join(f'"{s}"' for s in symbols) if symbols else '"<name>"'
+        super().__init__(
+            location,
+            f"The distance of a Cartesian shift along '{dim_name}' is not known at compile time.",
+            label=f"depends on {names}" if symbols else "a traced value",
+            notes=[
+                (
+                    "Shift distances must be known at compile time, as they determine the "
+                    "domains that are accessed."
+                )
+            ],
+            hints=[
+                (
+                    f"Make {names or 'the distance'} a static parameter, e.g. "
+                    f"'with_static_params({static_params})', or use a literal."
+                )
+            ],
+        )
+        self.dim_name = dim_name
+        self.symbols = list(symbols)
 
 
 class CompilationError(GT4PyError):
